@@ -1,0 +1,34 @@
+name: Godot 4.7.2 regression tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  headless:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Godot 4.7.2 editor
+        shell: bash
+        run: |
+          set -euo pipefail
+          GODOT_URL="https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip"
+          curl --fail --location --retry 3 "$GODOT_URL" -o /tmp/godot.zip
+          # Godot release archive checksum has not yet been independently verified.
+          # Do not pin an invented SHA256. Verify the official checksum before release use.
+          unzip -q /tmp/godot.zip -d /tmp/godot_bin
+          chmod +x /tmp/godot_bin/Godot_v4.7.2-stable_linux.x86_64
+          /tmp/godot_bin/Godot_v4.7.2-stable_linux.x86_64 --version
+      - name: Run real Godot tests
+        run: |
+          python3 tools_run_engine_tests.py --godot /tmp/godot_bin/Godot_v4.7.2-stable_linux.x86_64 --project .
+      - name: Preserve test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-engine-logs
+          path: test_results/
+          if-no-files-found: warn

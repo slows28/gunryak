@@ -1,0 +1,31 @@
+PASS: Godot project file exists
+PASS: main scene exists
+PASS: war simulation code exists
+PASS: headless test suite exists
+PASS: Godot generated cache not packaged
+PASS: diagnostic.tscn resource reference scripts/diagnostic.gd
+PASS: main.tscn resource reference scripts/game.gd
+PASS: project.godot resource reference main.tscn
+PASS: tests/smoke.gd: balanced delimiters and strings
+PASS: smoke.gd: no duplicate functions
+PASS: smoke.gd resource reference tests/smoke.gd
+PASS: smoke.gd resource reference scripts/war_sim.gd
+PASS: tests/scene_smoke.gd: balanced delimiters and strings
+PASS: scene_smoke.gd: no duplicate functions
+PASS: scene_smoke.gd resource reference tests/scene_smoke.gd
+PASS: scene_smoke.gd resource reference main.tscn
+PASS: scripts/war_sim.gd: balanced delimiters and strings
+PASS: war_sim.gd: no duplicate functions
+PASS: scripts/diagnostic.gd: balanced delimiters and strings
+PASS: diagnostic.gd: no duplicate functions
+PASS: scripts/game.gd: balanced delimiters and strings
+PASS: game.gd: no duplicate functions
+PASS: game.gd resource reference scripts/war_sim.gd
+PASS: GL compatibility renderer configured
+PASS: no hard-coded D3D12 renderer
+PASS: model feature: func validate_state()
+PASS: model feature: func _nearest_visible_enemy(
+PASS: model feature: func _formation_transition(
+PASS: model feature: func _update_couriers(
+PASS: model feature: func _supply_logic(
+GUNRYAK_STATIC_PASS - no Godot interpreter was run
