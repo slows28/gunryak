@@ -351,24 +351,51 @@ static func _mirror_sample(value:int,size:int)->int:
     return i if i<size else size*2-1-i
 
 # Irregular silhouettes and leaf material instead of smooth spheres.
+# Multi-lobed natural crown with visible trunk, overlapping foliage and cast shadow.
 static func _painted_tree(leaf:Image,index:int)->Image:
     var image:=Image.create_empty(64,64,false,Image.FORMAT_RGBA8)
     var noise:=FastNoiseLite.new()
     noise.seed=832+index*29
-    noise.frequency=0.12
+    noise.frequency=0.17
+    var rng:=RandomNumberGenerator.new()
+    rng.seed=3021+index*221
+    var crowns: Array[Vector2]=[]
+    var radii: Array[float]=[]
+    for j in range(13):
+        var angle: float=float(j)*TAU/13.0
+        var radius: float=rng.randf_range(6.0,16.0)
+        crowns.append(Vector2(28,25)+Vector2.from_angle(angle)*radius*Vector2(1.0,0.78))
+        radii.append(rng.randf_range(7.0,13.0))
+    crowns.append(Vector2(26,21))
+    radii.append(14.0)
+    var deep: Color=Color("#203a2c")
+    var top: Color=Color("#a0ad6b") if index%2==0 else Color("#9a9b58")
     for y in range(64):
         for x in range(64):
             var p:=Vector2(x,y)
-            var shade:float=1.0-smoothstep(0.70,1.0,((p-Vector2(36,41))/Vector2(28,16)).length())
-            var d:float=((p-Vector2(28,28))/Vector2(24,23)).length()
+            var shade:float=1.0-smoothstep(0.48,1.0,((p-Vector2(39,45))/Vector2(24,12)).length())
+            var c:=Color(0.055,0.075,0.035,shade*0.48)
+            var trunk: float=1.0-smoothstep(1.0,3.0,absf(float(x)-29.0-(float(y)-32.0)*0.06))
+            if y>=29 and y<=51 and trunk>0.0:
+                var bark: Color=Color("#5b4a34").lerp(Color("#a48c64"),clampf((29.0-float(x))*0.24+0.4,0.0,1.0))
+                bark.a=trunk
+                c=c.blend(bark)
             var n:float=noise.get_noise_2d(x,y)
-            var crown:float=1.0-smoothstep(0.80,1.0,d+n*0.27)
-            var c:=Color(0.06,0.09,0.045,shade*0.42)
-            if crown>0.0:
+            var coverage:float=0.0
+            var value:float=0.0
+            for j in range(crowns.size()):
+                var q:Vector2=(p-crowns[j])/Vector2(1.0,0.86)
+                var d:float=q.length()/radii[j]+n*0.14
+                var alpha:float=1.0-smoothstep(0.82,1.0,d)
+                if alpha>0.0:
+                    var light:float=clampf(0.54-q.x/radii[j]*0.25-q.y/radii[j]*0.32-d*0.14+n*0.15,0.0,1.0)
+                    value=lerpf(value,light,alpha)
+                    coverage=maxf(coverage,alpha)
+            if coverage>0.0:
                 var material:Color=leaf.get_pixel(_mirror_sample(x*2+index*13,112),_mirror_sample(y*2+index*17,112))
-                var light:float=clampf(0.77-float(x+y)/120.0+n*0.22,0.0,1.0)
-                var foliage:Color=Color("#243b28").lerp(Color("#a1aa69"),light).lerp(material,0.48)
-                foliage.a=crown
+                var foliage:Color=deep.lerp(top,clampf(value+n*0.20,0.0,1.0)).lerp(material,0.20)
+                foliage=foliage.lightened(maxf(0.0,n)*0.20)
+                foliage.a=coverage
                 c=c.blend(foliage)
             image.set_pixel(x,y,c)
     return image
