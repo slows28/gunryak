@@ -172,7 +172,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
         "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
         "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
-        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0
+        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0
     }
     _set_general_profile(unit)
     if unit_type == "기병":
@@ -696,7 +696,7 @@ func _decide(unit: Dictionary) -> void:
             action = "보급 호위"
             reason = "군단 후방 및 군량 보호"
             goal = base_pos+Vector2(65.0 if side == 0 else -65.0,0)
-    if six_armies and str(unit["type"]) == "궁병" and enemy_distance > 165.0 and action in ["진격","거점 점령","거점 방어","전열 지원","명령 수행"]:
+    if six_armies and str(unit["type"]) == "궁병" and enemy_distance > 165.0 and action in ["진격","거점 점령","거점 방어","전열 지원","명령 수행"] and str(unit["mission"]) not in ["측후방 기동","구원 지원"]:
         var screen: Dictionary = _infantry_screen(unit)
         if not screen.is_empty():
             var screen_pos: Vector2 = screen["pos"]
@@ -704,6 +704,11 @@ func _decide(unit: Dictionary) -> void:
             goal = screen_pos+behind*100.0
             action = "전열 지원"
             reason = "보병 엄호 하에 후방 사격 위치 확보"
+    if six_armies:
+        var cooperation: Dictionary = _coordinated_order(unit,nearest,action,reason,goal)
+        action=cooperation["action"]
+        reason=cooperation["reason"]
+        goal=cooperation["goal"]
     var planned: Dictionary = _apply_planned_route(unit, action, reason, goal, enemy_distance)
     action = str(planned["action"])
     reason = str(planned["reason"])
@@ -733,6 +738,8 @@ func _decide(unit: Dictionary) -> void:
         elif str(unit["type"]) == "궁병": wanted = "안행진"
         elif action in ["돌파","반격","교전"]: wanted = "어린진"
         else: wanted = "학익진"
+    if six_armies and action=="협동 엄호" and str(unit["type"])=="보병": wanted="방진"
+    if six_armies and action=="협동 우회" and str(unit["type"])=="기병": wanted="봉시진"
     if str(unit["policy"]).ends_with(" 유지") and str(unit["policy"]).replace(" 유지","") in LARGE_FORMATIONS and action != "패주":
         wanted = str(unit["policy"]).replace(" 유지", "")
     # Cancel an obsolete re-formation order before it completes; otherwise
@@ -782,7 +789,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var pos: Vector2 = unit["pos"]
     var goal: Vector2 = unit["goal"]
     var enemy: Dictionary = _nearest_visible_enemy(unit)
-    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결"]:
+    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
@@ -829,7 +836,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     if six_armies: _emit_march_dust(unit,pos,actual_move)
     if str(unit["type"]) == "기병":
         _update_charge(unit, actual_move, dt)
-    if not enemy.is_empty() and pos.distance_to(enemy["pos"]) < 168.0 and str(unit["action"]) not in ["후퇴", "패주", "재집결", "측면 우회", "기지 습격", "보급 복귀", "탄약 보충", "매복"]:
+    if not enemy.is_empty() and pos.distance_to(enemy["pos"]) < 168.0 and str(unit["action"]) not in ["후퇴", "패주", "재집결", "측면 우회", "기지 습격", "보급 복귀", "탄약 보충", "매복","협동 우회","협동 엄호"]:
         var front: Vector2 = (enemy["pos"] as Vector2) - (unit["pos"] as Vector2)
         if front.length_squared() > 1.0:
             unit["facing"] = (unit["facing"] as Vector2).lerp(front.normalized(), minf(1.0, dt * 2.0)).normalized()
@@ -849,14 +856,17 @@ func _body_distance(a: Dictionary, b: Dictionary) -> float:
 
 func _frontline_power(unit: Dictionary, enemy: Dictionary, direction: Vector2) -> float:
     var factor: float = 1.0
+    if six_armies: factor *= tactical_matchup(unit,enemy,false)
+    var formation_factor: float = 1.0
     match str(unit["formation"]):
-        "횡대": factor = 1.06
-        "종대": factor = 0.77
-        "방진": factor = 1.28
-        "어린진": factor = 1.19
-        "학익진": factor = 1.10
-        "봉시진": factor = 1.18
-        "안행진": factor = 0.85
+        "횡대": formation_factor = 1.06
+        "종대": formation_factor = 0.77
+        "방진": formation_factor = 1.28
+        "어린진": formation_factor = 1.19
+        "학익진": formation_factor = 1.10
+        "봉시진": formation_factor = 1.18
+        "안행진": formation_factor = 0.85
+    factor *= formation_factor
     if str(unit["type"]) == "기병":
         factor *= 1.16 if str(enemy["formation"]) != "방진" else 0.70
         if _in_forest(unit["pos"]):
@@ -1102,6 +1112,9 @@ func _combat(dt: float) -> void:
         supply_factor *= 0.65 + 0.35 * float(unit["rations"]) / 100.0
         attack *= (1.0 - 0.30 * float(unit["fatigue"]) / 100.0) * (0.55 + 0.45 * float(unit["cohesion"]) / 100.0)
         unit["fatigue"] = minf(100.0, float(unit["fatigue"]) + dt * 0.60)
+        var counter: float = tactical_matchup(unit,enemy,flank or rear) if six_armies else 1.0
+        var link: bool = six_armies and _has_combined_arms(unit,enemy)
+        attack *= counter*(1.15 if link else 1.0)
         var damage: float = attack * (float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"]))) * (float(unit["morale"]) / 100.0) * exposure * supply_factor * dt
         if wide_field:
             damage *= float(unit.get("strength_share",1.0))
@@ -1117,7 +1130,7 @@ func _combat(dt: float) -> void:
                 "방진": damage *= 0.84
             shock *= ARMY_SCALE
         if wide_field: shock *= float(unit.get("strength_share",1.0))
-        damage_entries.append({"target":int(enemy["id"]), "source":int(unit["id"]), "damage":maxf(0.0, damage + shock), "flank":flank or rear, "shock":shock, "ambush":ambush})
+        damage_entries.append({"target":int(enemy["id"]), "source":int(unit["id"]), "damage":maxf(0.0, damage + shock), "flank":flank or rear, "shock":shock, "ambush":ambush, "counter":counter, "linked":link})
         if shock > 0.0 or battle_time - float(unit["last_visual"]) >= (0.9 if unit_type == "궁병" else 0.55):
             unit["last_visual"] = battle_time
             visual_effects.append({"from":pos,"to":ep,"side":int(unit["side"]),"kind":"돌격" if shock > 0.0 else ("화살" if unit_type == "궁병" else "근접"),"time":battle_time})
@@ -1144,6 +1157,10 @@ func _combat(dt: float) -> void:
         var source: Dictionary = find_unit(int(entry["source"]))
         if not source.is_empty():
             source["damage_dealt"] = float(source["damage_dealt"]) + actual_damage
+            if six_armies:
+                if bool(entry["linked"]): source["linked_hits"] += actual_damage
+                if float(entry["counter"])>1.01: source["counter_damage"] += actual_damage
+                if bool(entry["flank"]): source["flank_damage"] += actual_damage
         var morale_loss: float = 0.11 if bool(entry["flank"]) else 0.07
         defender["morale"] = maxf(0.0, float(defender["morale"]) - pressure_damage * morale_loss)
         if float(defender["troops"]) <= 0.0:
@@ -1614,7 +1631,7 @@ func _update_charge(unit: Dictionary, moved: Vector2, dt: float) -> void:
     var speed: float = moved.length() / maxf(dt, 0.001)
     var direction: Vector2 = moved.normalized()
     var old_direction: Vector2 = unit["charge_dir"]
-    var eligible: bool = str(unit["action"]) in ["돌파", "교전", "반격", "측면 우회"] and terrain_at(unit["pos"]) != "숲" and not bool(unit["routed"])
+    var eligible: bool = str(unit["action"]) in ["돌파", "교전", "반격", "측면 우회","협동 우회"] and terrain_at(unit["pos"]) not in ["숲","하천","교량"] and not bool(unit["routed"])
     if eligible and speed > 48.0 and float(unit["charge_cooldown"]) <= 0.0:
         if old_direction.length_squared() > 0.5 and direction.dot(old_direction) < 0.82:
             unit["charge"] = float(unit["charge"]) * 0.3
@@ -2450,3 +2467,85 @@ func _emit_march_dust(unit: Dictionary,previous: Vector2,displacement: Vector2) 
         var radius: float = (17.0 if cavalry else 12.0)*(0.8+absf(variation)*0.5)
         dust_effects.append({"pos":foot,"dir":forward,"time":battle_time,"radius":radius,"side":unit["side"],"phase":variation,"surface":"도로"})
         if dust_effects.size()>DUST_LIMIT: dust_effects.pop_front()
+
+# Contextual counter relations. The numerical factor is a prototype, not an
+# automatic victory: range, direction, formation, fatigue and terrain still matter.
+func tactical_matchup(attacker: Dictionary,defender: Dictionary,side_attack: bool) -> float:
+    var a: String=str(attacker["type"])
+    var d: String=str(defender["type"])
+    var af: String=str(attacker["formation"])
+    var df: String=str(defender["formation"])
+    var factor: float=1.0
+    if a=="기병" and d=="궁병": factor=1.35
+    elif a=="기병" and d=="보병":
+        factor=0.65 if df=="방진" and not side_attack else (1.22 if side_attack else 1.04)
+    elif a=="보병" and d=="기병":
+        factor=1.30 if af=="방진" and not side_attack else 0.91
+    elif a=="궁병" and d=="보병":
+        factor=1.16 if df!="방진" else 0.84
+    elif a=="궁병" and d=="기병":
+        factor=0.80 if (attacker["pos"] as Vector2).distance_to(defender["pos"])<95.0 else 1.08
+    elif a=="보병" and d=="궁병": factor=1.15
+    if a=="기병" and terrain_at(attacker["pos"]) in ["숲","하천","교량"]: factor*=0.72
+    if df=="봉시진" and a=="보병" and af=="방진" and not side_attack: factor*=1.12
+    return factor
+
+func _has_combined_arms(unit: Dictionary,enemy: Dictionary) -> bool:
+    var p: Vector2=unit["pos"]
+    var ep: Vector2=enemy["pos"]
+    for ally in units:
+        if int(ally["side"])!=int(unit["side"]) or int(ally["id"])==int(unit["id"]) or bool(ally["routed"]) or float(ally["troops"])<600.0 or float(ally["cohesion"])<35.0: continue
+        if str(ally["type"])==str(unit["type"]) or p.distance_to(ally["pos"])>245.0: continue
+        var ally_reach: float=173.0 if str(ally["type"])=="궁병" else 30.0
+        if formation_contacts(ally,enemy,ally_reach)<=0: continue
+        var a: Vector2=(p-ep).normalized()
+        var b: Vector2=((ally["pos"] as Vector2)-ep).normalized()
+        if str(ally["type"])=="궁병" or str(unit["type"])=="궁병" or a.dot(b)<0.45: return true
+    return false
+
+# Cooperation uses a friendly anchor and local observation, not an omniscient
+# enemy position. A flank waypoint stays committed until reached or timed out.
+func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason: String,goal: Vector2) -> Dictionary:
+    var original: Dictionary={"action":action,"reason":reason,"goal":goal}
+    var mission: String=str(unit["mission"])
+    if mission not in ["전열 엄호","측후방 기동","구원 지원"]: return original
+    if action in ["후퇴","패주","재집결","휴식","탄약 보충","보급 복귀","거리 유지","측면 방어"]: return original
+    var p: Vector2=unit["pos"]
+    var ally: Dictionary={}
+    var best: float=INF
+    for friend in units:
+        if int(friend["side"])!=int(unit["side"]) or int(friend["id"])==int(unit["id"]) or bool(friend["routed"]) or float(friend["troops"])<600.0: continue
+        if str(friend["mission"]) in ["본진 방어","측후방 기동","전열 엄호","구원 지원"]: continue
+        if mission=="전열 엄호" and str(friend["type"])!="보병": continue
+        var score: float=p.distance_to(friend["pos"])-float(friend["front_pressure"])*180.0
+        if mission=="구원 지원": score-=maxf(0.0,70.0-float(friend["morale"]))*3.0
+        if int(friend["id"])==int(unit["link_id"]): score-=65.0
+        if score<best: best=score; ally=friend
+    if ally.is_empty(): return original
+    unit["link_id"]=ally["id"]
+    var ap: Vector2=ally["pos"]
+    var forward: Vector2=ally["facing"]
+    if forward.length_squared()<0.01: forward=Vector2.RIGHT if int(unit["side"])==0 else Vector2.LEFT
+    if mission=="전열 엄호":
+        var support_point: Vector2=ap-forward*108.0+forward.orthogonal()*36.0
+        if str(unit["type"])!="궁병": support_point=ap+forward.orthogonal()*95.0-forward*25.0
+        return {"action":"협동 엄호","reason":str(ally["name"])+"군 후방·측면 엄호","goal":support_point}
+    if mission=="구원 지원":
+        return {"action":"구원 지원","reason":str(ally["name"])+"군 압박 완화","goal":ap+forward.orthogonal()*90.0}
+    if enemy.is_empty():
+        unit["flank_target"]=-1
+        return {"action":"협동 우회","reason":str(ally["name"])+"군과 측면 전개","goal":ap+forward.orthogonal()*165.0}
+    var ep: Vector2=enemy["pos"]
+    var ef: Vector2=enemy["facing"]
+    if ef.length_squared()<0.01: ef=-forward
+    var lateral: Vector2=ef.orthogonal()
+    if int(unit["flank_target"])!=int(enemy["id"]) or battle_time>=float(unit["flank_until"]):
+        var sign_value: float=1.0 if lateral.dot(p-ep)>=0.0 else -1.0
+        unit["flank_target"]=enemy["id"]
+        unit["flank_goal"]=_field_point(ep+lateral*sign_value*155.0-ef*45.0)
+        unit["flank_until"]=battle_time+18.0
+        unit["flank_phase"]=0
+    if p.distance_to(unit["flank_goal"])<30.0: unit["flank_phase"]=1
+    if int(unit["flank_phase"])==1:
+        return {"action":"돌파","reason":str(ally["name"])+"군 정면 압박에 맞춰 측후방 공격","goal":ep}
+    return {"action":"협동 우회","reason":str(ally["name"])+"군과 협동 측면 기동","goal":unit["flank_goal"]}
