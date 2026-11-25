@@ -196,6 +196,7 @@ func _run() -> void:
     game.planning_dialog.hide()
     game.call("_leave_title")
     check(game.order_view.visible and not game.sim.started,"independent planning map opens before battle")
+    check(int(game.order_view.partner_choice.get_item_metadata(0))==-1,"no-partner selection retains explicit sentinel")
     var map_sim=game.sim
     var dest:=Vector2(790,900)
     check(map_sim.issue_map_order(1,"전열 엄호",dest,0),"map order accepts destination action and partner")
