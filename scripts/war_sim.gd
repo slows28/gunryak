@@ -2541,11 +2541,24 @@ func _expand_layout() -> void:
         var old: Rect2 = forests[i]
         var size: Vector2 = old.size*1.75
         forests[i] = Rect2(layout_point(old.get_center())-size*0.5,size)
-    # Additional cover away from the primary objectives creates alternate routes.
-    forests.append(Rect2(570,520,230,250))
-    forests.append(Rect2(1830,1130,280,220))
-    forests.append(Rect2(1110,1270,210,180))
-    forests.append(Rect2(1920,240,220,190))
+    # Scenario-specific tactical terrain, shared by pathing, AI vision, movement,
+    # battle painting and the separate order map. Bridge and road topology stays fixed.
+    match scenario_id:
+        0:
+            forests.append_array([Rect2(570,520,230,250),Rect2(1830,1130,280,220),Rect2(1110,1270,210,180),Rect2(1920,240,220,190)])
+        1:
+            # Central plateau: screened north and south approaches, open crest.
+            forests.append_array([Rect2(620,200,230,270),Rect2(1660,170,310,250),Rect2(710,1130,280,290),Rect2(1820,1150,350,230)])
+        2:
+            # Defense: broken cover on approaches to the defensive perimeter;
+            # retain a clear deployment and withdrawal corridor behind the wall.
+            forests.append_array([Rect2(850,160,180,260),Rect2(890,1040,180,240),Rect2(1510,510,260,240),Rect2(1740,1190,340,260)])
+        3:
+            # Convoy: cover north and south of the actual road, not on the crossing.
+            forests.append_array([Rect2(610,410,270,220),Rect2(610,1080,260,230),Rect2(1430,330,320,260),Rect2(1850,1010,320,270)])
+        4:
+            # Siege: screened approach, more exposed ground immediately at the gate.
+            forests.append_array([Rect2(560,170,310,250),Rect2(600,1210,300,230),Rect2(1420,210,270,240),Rect2(1470,1260,270,220)])
     var hill_size: Vector2 = hill.size*1.8
     hill = Rect2(layout_point(hill.get_center())-hill_size*0.5,hill_size)
     for structure in structures:
