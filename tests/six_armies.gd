@@ -38,6 +38,46 @@ func _run() -> void:
     dust_sim.battle_time+=WarSim.DUST_LIFE+0.1
     dust_sim._record_presentation()
     check(dust_sim.dust_effects.is_empty(),"dust expires after stopping")
+    # Controlled tactical comparisons use the real damage and movement engine.
+    var tactics := WarSim.new()
+    tactics.set_six_armies(true)
+    var cavalry: Dictionary=tactics.find_unit(2)
+    var infantry: Dictionary=tactics.find_unit(3)
+    var archer: Dictionary=tactics.find_unit(1)
+    var target: Dictionary=tactics.find_unit(4)
+    cavalry["pos"]=Vector2(600,880)
+    infantry["pos"]=Vector2(650,880)
+    archer["pos"]=Vector2(500,880)
+    target["pos"]=Vector2(700,880)
+    infantry["formation"]="방진"
+    var front_counter: float=tactics.tactical_matchup(cavalry,infantry,false)
+    var flank_counter: float=tactics.tactical_matchup(cavalry,infantry,true)
+    check(front_counter<0.8 and flank_counter>1.0,"cavalry counter depends on formation and attack direction")
+    check(tactics.tactical_matchup(cavalry,target,false)>1.0,"cavalry counters archers")
+    check(tactics.tactical_matchup(infantry,cavalry,false)>1.0,"square infantry counters cavalry")
+    # Isolate two attackers and one defender; run the actual combat function.
+    for u in tactics.units:
+        if int(u["id"]) not in [0,1,3]: u["troops"]=0.0
+    var main: Dictionary=tactics.find_unit(0)
+    main["pos"]=Vector2(600,880)
+    main["facing"]=Vector2.RIGHT
+    main["formation"]="어린진"
+    infantry["facing"]=Vector2.LEFT
+    infantry["pos"]=Vector2(650,880)
+    archer["pos"]=Vector2(500,880)
+    archer["facing"]=Vector2.RIGHT
+    check(tactics._has_combined_arms(main,infantry),"bow and infantry actually in shared contact range")
+    tactics._combat(0.1)
+    var linked_damage: float=float(main["linked_hits"])
+    check(linked_damage>0.0,"actual linked combat damage recorded")
+    archer["pos"]=Vector2(250,880)
+    check(not tactics._has_combined_arms(main,infantry),"no cooperation bonus outside actual range")
+    archer["mission"]="전열 엄호"
+    var escort: Dictionary=tactics._coordinated_order(archer,{},"진격","",Vector2.ZERO)
+    check(escort["action"]=="협동 엄호" and int(archer["link_id"])==int(main["id"]),"archer links to friendly frontline")
+    var support_goal: Vector2=escort["goal"]
+    check(support_goal.x<float(main["pos"].x),"archer takes position behind infantry")
+    print("TACTICAL_EVIDENCE "+JSON.stringify({"cavalry_front_square":front_counter,"cavalry_flank_square":flank_counter,"linked_damage":linked_damage,"escort_goal":str(support_goal)}))
     for scenario in range(5):
         var sim := WarSim.new()
         sim.set_six_armies(true)
@@ -50,6 +90,10 @@ func _run() -> void:
             within_range = within_range and float(unit["troops"])>=3000.0 and float(unit["troops"])<=5000.0
         check(within_range,"every initial army 3000–5000")
         check(sim.select_unit_mission(8,"본진 방어","명령 엄수"),"sixth commander receives preplan")
+        if scenario==0:
+            sim.select_unit_mission(1,"전열 엄호","안행진 유지")
+            sim.select_unit_mission(2,"측후방 기동","봉시진 유지")
+            sim.select_unit_mission(7,"구원 지원","재량 위임")
         sim.start()
         check(sim.units.size()==12,"no hidden duplicate formations")
         var issued: bool = false
@@ -59,6 +103,15 @@ func _run() -> void:
             if sim.turn>=6 and not issued:
                 issued=sim.request_order(8,"중앙 진격","재량 위임")
         check(sim.finished and sim.validate_state().is_empty() and sim.units.size()<=14,"battle valid, at most seven per faction")
+        var linked: float=0.0
+        var counter: float=0.0
+        var flanking: float=0.0
+        for u in sim.units:
+            if int(u["side"])==0:
+                linked+=float(u["linked_hits"])
+                counter+=float(u["counter_damage"])
+                flanking+=float(u["flank_damage"])
+        print("COOPERATION_ROW "+JSON.stringify({"scenario":scenario,"linked_damage":linked,"counter_damage":counter,"flank_damage":flanking}))
         print("SIX_ARMY_ROW "+JSON.stringify({"scenario":scenario,"seconds":sim.battle_time,"winner":sim.winning_side,"blue":sim.total_troops(0),"red":sim.total_troops(1),"delivered":sim.delivered_orders,"intercepted":sim.intercepted_orders,"issued":issued,"result":sim.result}))
     var model := Campaign.new()
     model.set_six_armies(true)
