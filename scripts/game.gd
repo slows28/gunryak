@@ -7,6 +7,7 @@ const CampaignView = preload("res://scripts/campaign_view.gd")
 const OrderMap = preload("res://scripts/order_map.gd")
 const PAINTED_ART = preload("res://assets/art/painted_atlas.webp")
 const SOLDIER_ART = preload("res://assets/art/soldier_sprites.svg")
+const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const PAINTED_FX = preload("res://assets/art/painted_fx.webp")
 const TITLE_ART = preload("res://assets/art/title_art.webp")
@@ -617,14 +618,15 @@ func _draw_map(_canvas: Control) -> void:
         map_layer.draw_rect(map_rect,Color("#58684e"))
     if sim.wide_field and camera_zoom >= 0.65:
         _draw_river_detail()
+    if sim.wide_field and camera_zoom >= 0.60:
+        for crossing in [390.0,850.0,1300.0]:
+            _draw_bridge(Vector2(sim.river_x(crossing),crossing))
     if fog_enabled and sim.started and not sim.finished and visibility_texture != null:
         map_layer.draw_texture_rect(visibility_texture,map_rect,false)
     _draw_terrain_texture()
     if sim.wide_field:
         for crossing in [390.0,850.0,1300.0]:
             var bridge := Vector2(sim.river_x(crossing),crossing)
-            if camera_zoom >= 0.75:
-                _draw_bridge(bridge)
             if detailed_map and camera_zoom >= 0.75:
                 _map_plate(_bridge_name(crossing),bridge+Vector2(0,-45),COL_GOLD,11)
     if not sim.started:
@@ -645,7 +647,7 @@ func _draw_map(_canvas: Control) -> void:
         if detailed_map or (known and int(site["challenger"])>=0):
             map_layer.draw_arc(site_pos, WarSim.OUTPOST_RADIUS, 0.0, TAU, 44, Color(color.r,color.g,color.b,0.20),1.2,true)
         var marker_scale: float = maxf(1.0,0.75/camera_zoom)
-        _field_art(7,Rect2(site_pos-Vector2(42,65)*marker_scale,Vector2(84,84)*marker_scale))
+        _scenery_tile(1,Rect2(site_pos-Vector2(54,86)*marker_scale,Vector2(108,108)*marker_scale))
         _paint_tile(40 if owner < 0 else 38+owner,Rect2(site_pos+Vector2(10,-25)*marker_scale,Vector2(24,30)*marker_scale))
         map_layer.draw_circle(site_pos+Vector2(10,-6),3.5,color)
         var state: String = ("중립" if owner < 0 else ("아군" if owner == 0 else "적군")) if known else "미확인"
@@ -664,8 +666,8 @@ func _draw_map(_canvas: Control) -> void:
         var accent: Color = COL_BLUE if side == 0 else COL_RED
         if str(base["state"]) == "가동" and not sim.started:
             map_layer.draw_arc(p,WarSim.SUPPLY_RADIUS,0.0,TAU,56,Color(accent,0.18),1.0)
-        _paint_tile(43,Rect2(p-Vector2(31,34),Vector2(62,60)))
-        _paint_tile(44,Rect2(p+Vector2(21,-6),Vector2(35,31)))
+        _scenery_tile(2,Rect2(p-Vector2(49,65),Vector2(98,98)))
+        _paint_tile(44,Rect2(p+Vector2(27,-3),Vector2(32,28)))
         map_layer.draw_circle(p+Vector2(15,-10),4.0,accent)
         _map_plate("군량 %d" % int(base.get("stock",100.0)),p+Vector2(0,32),accent,11)
     for commander in sim.commanders:
@@ -2043,31 +2045,33 @@ func _draw_march_dust(view: Rect2) -> void:
         var opacity: float = (1.0-age)*(1.0-age)*0.68
         map_layer.draw_texture_rect(dust_texture,Rect2(p-Vector2(radius,radius*0.67),Vector2(radius*2.0,radius*1.34)),false,Color(1.0,0.96,0.86,opacity))
 
+func _scenery_tile(tile: int,rect: Rect2,tint: Color=Color.WHITE) -> void:
+    var source:=Rect2((tile%3)*256,floori(float(tile)/3.0)*256,256,256)
+    map_layer.draw_texture_rect_region(SCENERY_ART,rect,source,tint)
+
 func _draw_river_detail() -> void:
     var top: float = maxf(0.0,camera_center.y-MAP_SIZE.y*0.5/camera_zoom)
     var bottom: float = minf(sim.field_size.y,camera_center.y+MAP_SIZE.y*0.5/camera_zoom)
-    for y in range(int(top/24.0)*24,int(bottom)+24,24):
+    # Fine animated surface streaks stay within the existing river collision boundary.
+    for y in range(int(top/12.0)*12,int(bottom)+12,12):
         if sim.near_crossing(float(y)): continue
         var rx: float=sim.river_x(float(y))
-        var a: float=0.16+0.10*sin(float(y)*0.04+render_clock*2.4)
-        var shift: float=sin(float(y)*0.31+render_clock*1.5)*5.0
-        map_layer.draw_line(Vector2(rx-17.0,float(y)+shift),Vector2(rx-5.0,float(y)+shift+4.0),Color(0.75,0.88,0.80,a),1.4,true)
-        map_layer.draw_line(Vector2(rx+6.0,float(y)-shift),Vector2(rx+21.0,float(y)-shift+5.0),Color(0.64,0.84,0.81,a*0.8),1.2,true)
+        for lane in range(4):
+            var offset: float=-19.0+float(lane)*12.0
+            var shift: float=sin(float(y)*0.21+float(lane)*3.7+render_clock*1.4)*4.5
+            var q:=Vector2(rx+offset,float(y)+shift)
+            var alpha: float=0.08+0.11*(0.5+0.5*sin(float(y)*0.13+lane+render_clock*2.1))
+            var points:=PackedVector2Array([q,q+Vector2(2,3),q+Vector2(1,7)])
+            map_layer.draw_polyline(points,Color(0.78,0.90,0.84,alpha),0.8,true)
+        for bank in [-1.0,1.0]:
+            var q:=Vector2(rx+bank*24.0,float(y))
+            var next:=Vector2(sim.river_x(float(y)+8.0)+bank*24.0,float(y)+8.0)
+            map_layer.draw_line(q,next,Color(0.87,0.90,0.76,0.14+0.12*sin(float(y)*0.19+render_clock)),1.3,true)
 
 func _draw_bridge(p: Vector2) -> void:
-    # Actual 76-unit crossing width; timber rails, supports and a cast shadow.
-    var deck:=Rect2(p-Vector2(32,38),Vector2(64,76))
-    map_layer.draw_rect(Rect2(deck.position+Vector2(4,7),deck.size),Color(0.10,0.13,0.10,0.35))
-    map_layer.draw_rect(deck,Color("#8a7353"))
-    for x in range(-30,32,6):
-        map_layer.draw_rect(Rect2(p+Vector2(x,-37),Vector2(5,74)),Color("#b39a6c").darkened(0.10+0.10*sin(float(x))))
-        map_layer.draw_line(p+Vector2(x+5,-36),p+Vector2(x+5,36),Color("#554831"),0.9,true)
-    for y in [-38.0,38.0]:
-        map_layer.draw_line(p+Vector2(-35,y+3),p+Vector2(35,y+3),Color("#423527"),5.0,true)
-        map_layer.draw_line(p+Vector2(-35,y),p+Vector2(35,y),Color("#b59a69"),3.0,true)
-        for x in [-32.0,-11.0,11.0,32.0]:
-            map_layer.draw_rect(Rect2(p+Vector2(x-2,y-6),Vector2(4,9)),Color("#59462f"))
-            map_layer.draw_rect(Rect2(p+Vector2(x-2,y-6),Vector2(4,2)),Color("#d3b680"))
+    # Texture aligns the walkable deck to the existing 76-unit north/south opening.
+    # Rails, supports and shadows are visual only, not new collision objects.
+    _scenery_tile(0,Rect2(p-Vector2(49,85),Vector2(98,186)))
 
 func _draw_cooperation_links() -> void:
     var unit: Dictionary=sim.find_unit(selected_id)
