@@ -23,6 +23,8 @@ var message: Label
 var attack: Button
 var slot_choice: OptionButton
 var type_choice: OptionButton
+var formation_choice: OptionButton
+const SHAPES = ["횡대","종대","방진","어린진","학익진","봉시진","안행진"]
 var difficulty_choice: OptionButton
 var map_canvas: Control
 var land_texture: ImageTexture
@@ -78,12 +80,15 @@ func _ready() -> void:
     _button("저장",Vector2(544,697),Vector2(105,44),_save)
     _button("타이틀",Vector2(659,697),Vector2(125,44),exit_to_title)
     _label("군단 편성",Vector2(869,113),Vector2(370,35),23)
-    slot_choice = _choice(Vector2(869,151),Vector2(180,35),["제1군","제2군","제3군","제4군","제5군","제6군"])
+    slot_choice = _choice(Vector2(869,151),Vector2(114,35),["제1군","제2군","제3군","제4군","제5군","제6군"])
     slot_choice.item_selected.connect(_choose_slot)
-    type_choice = _choice(Vector2(1060,151),Vector2(180,35),["보병","궁병","기병"])
+    type_choice = _choice(Vector2(991,151),Vector2(111,35),["보병","궁병","기병"])
     type_choice.item_selected.connect(_choose_type)
+    formation_choice = _choice(Vector2(1110,151),Vector2(130,35),SHAPES)
+    formation_choice.item_selected.connect(func(index: int):
+        _tell(campaign.set_formation(selected_slot,SHAPES[index]),"진형 설정"))
     troops = _label("",Vector2(869,190),Vector2(370,128),14)
-    _button("병력 20명 보충 · 15",Vector2(869,317),Vector2(371,38),_replenish)
+    _button("병력 500명 보충 · 15",Vector2(869,317),Vector2(371,38),_replenish)
     _label("장수 명부 · 등용 55",Vector2(869,360),Vector2(370,28),18)
     roster = ItemList.new()
     roster.position = Vector2(869,389)
@@ -146,10 +151,11 @@ func refresh() -> void:
     var lines: PackedStringArray = []
     for i in range(state["active"].size()):
         var idx: int = int(state["active"][i])
-        lines.append("%s %s · %s · %d명" % ["▶" if i == selected_slot else "  ",Campaign.OFFICERS[idx]["name"],state["types"][i],state["troops"][i]])
+        lines.append("%s %s · %s · %s · %d명" % ["▶" if i == selected_slot else "  ",Campaign.OFFICERS[idx]["name"],state["types"][i],state["formations"][i] if campaign.six_armies else "횡대",state["troops"][i]])
     troops.text = "\n".join(lines)
     slot_choice.select(selected_slot)
     type_choice.select(["보병","궁병","기병"].find(state["types"][selected_slot]))
+    if campaign.six_armies: formation_choice.select(SHAPES.find(state["formations"][selected_slot]))
     difficulty_choice.select(int(state["difficulty"]))
     roster.clear()
     for i in range(state["roster"].size()):
@@ -244,7 +250,7 @@ func _difficulty(index: int) -> void:
     campaign.state["difficulty"] = index
     refresh()
 func _replenish() -> void:
-    _tell(campaign.replenish(selected_slot),"병력 20명 보충")
+    _tell(campaign.replenish(selected_slot),"병력 500명 보충")
 func _recruit() -> void:
     _tell(campaign.recruit(selected_officer),"장수 등용 완료")
 func _assign() -> void:
