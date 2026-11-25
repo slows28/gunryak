@@ -81,6 +81,10 @@ var mind_report: RichTextLabel
 var mind_button: Button
 var thought_feed: Label
 var general_cards: Array[Button]=[]
+var map_label_areas: Array[Rect2]=[]
+var fallen_marks: Array[Dictionary]=[]
+var loss_carry: Dictionary={}
+var battle_warning: String=""
 var sector_cards: Array[Button]=[]
 var sector_snapshot: Array[Dictionary]=[]
 var sector_selection: int=-1
@@ -245,7 +249,8 @@ func _build_interface() -> void:
     speed_btn = _button("속도 ×1",Vector2(556,16),Vector2(100,39),_speed)
     _button("초기화",Vector2(662,16),Vector2(78,39),_reset)
     _primary_button(_button("작전 지도",Vector2(746,16),Vector2(182,39),_open_order_map))
-    status_label = _label("",Vector2(955,9),Vector2(307,64),14,COL_TEXT)
+    status_label = _label("",Vector2(955,5),Vector2(307,48),12,COL_TEXT)
+    status_label.clip_text=true
     objective_label = _label("",Vector2(26,77),Vector2(412,22),13,COL_GOLD)
     _label("軍  /  전황 관측",Vector2(956,101),Vector2(270,29),22,COL_GOLD)
     friendly_tab=_button("아군 6",Vector2(950,130),Vector2(94,23),_show_friendly_roster)
@@ -274,12 +279,13 @@ func _build_interface() -> void:
     add_child(enemy_list)
     enemy_list.item_selected.connect(_inspect_enemy_row)
     enemy_list.hide()
-    _label("02  현재 작전",Vector2(956,365),Vector2(267,20),15,COL_GOLD)
+    _label("02  명령과 현장 행동",Vector2(956,365),Vector2(290,20),15,COL_GOLD)
     mission_choice = _options(Vector2(950,363),["중앙 진격","북측 확보","남측 우회","본진 방어","전열 엄호","측후방 기동","구원 지원"])
     mission_choice.size.x = 306
     mission_choice.item_selected.connect(_on_choices_changed)
     mission_choice.hide()
-    live_order_label = _label("",Vector2(956,389),Vector2(292,65),15,COL_TEXT)
+    live_order_label = _label("",Vector2(956,389),Vector2(292,65),14,COL_TEXT)
+    live_order_label.clip_text=true
     live_order_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     policy_choice = _options(Vector2(950,420),["현장 판단","명령 엄수","재량 위임","횡대 유지","종대 유지","방진 유지","어린진 유지","학익진 유지","봉시진 유지","안행진 유지"])
     policy_choice.size.x = 306
@@ -296,7 +302,7 @@ func _build_interface() -> void:
     details_label = _label("",Vector2(1034,590),Vector2(221,38),12,COL_TEXT)
     details_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     details_label.clip_text=true
-    decision_label=_label("",Vector2(1034,629),Vector2(221,44),12,COL_TEXT)
+    decision_label=_label("",Vector2(950,625),Vector2(306,48),13,COL_TEXT)
     decision_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     decision_label.clip_text=true
     feed_toggle=_button("장수 판단",Vector2(27,692),Vector2(112,28),_toggle_feed)
@@ -341,6 +347,7 @@ func _build_interface() -> void:
         _open_order_map()
         _open_situations())
     warning_label = _label("",Vector2(26,669),Vector2(892,17),12,COL_GOLD)
+    warning_label.hide()
     warning_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func _label(message: String, where: Vector2, extent: Vector2, font_size: int, color: Color) -> Label:
@@ -550,6 +557,9 @@ func _start() -> void:
     if is_instance_valid(order_view): order_view.hide()
     battle_samples.clear()
     recent_losses.clear()
+    fallen_marks.clear()
+    loss_carry.clear()
+    battle_warning=""
     previous_centers.clear()
     contact_cache.clear()
     contact_cache_step=-1
@@ -644,6 +654,9 @@ func _reset() -> void:
     sim.reset()
     battle_samples.clear()
     recent_losses.clear()
+    fallen_marks.clear()
+    loss_carry.clear()
+    battle_warning=""
     previous_centers.clear()
     contact_cache.clear()
     contact_cache_step=-1
@@ -787,7 +800,7 @@ func _refresh_hud() -> void:
         var psyche: Dictionary=unit.get("mind",{})
         details_label.text = "%s · %s\n자신감 %d / 긴장 %d" % [str(psyche.get("mood","준비")),str(unit["formation"]),roundi(float(psyche.get("confidence",0.0))),roundi(float(psyche.get("stress",0.0)))]
         details_label.modulate=_mood_color(str(psyche.get("mood","준비")))
-        decision_label.text = str(unit["reason"])
+        decision_label.text = "판단: "+str(unit["reason"])
         var suggestion: String=str(psyche.get("proposal",""))
         if not suggestion.is_empty(): decision_label.text+="\n건의: "+suggestion
         decision_label.tooltip_text=str(unit["reason"])+"\n"+str(psyche.get("observed",""))+"\n우려: "+str(psyche.get("concern",""))+"\n최근 명령: "+str(psyche.get("last_order",""))
@@ -841,6 +854,8 @@ func _refresh_hud() -> void:
         notice_label.text = "장수 선택 후 전령 파견\n실제 전장 이동 중 차단될 수 있습니다."
     if runtime_notice != "":
         notice_label.text = runtime_notice
+    elif not battle_warning.is_empty():
+        notice_label.text = battle_warning
 
 func _toggle_feed() -> void:
     show_general_feed=not show_general_feed
@@ -955,12 +970,26 @@ func _latest_general_reports() -> String:
 func _build_mind_report() -> void:
     mind_dialog=AcceptDialog.new()
     mind_dialog.title="장수 보고실 · 실시간 심리 및 판단 (전투 계속 진행)"
+    mind_dialog.theme=theme
+    var window_style:=StyleBoxFlat.new()
+    window_style.bg_color=Color("#14211f")
+    window_style.border_color=Color("#8c7951")
+    window_style.set_border_width_all(2)
+    window_style.content_margin_left=16
+    window_style.content_margin_right=16
+    window_style.content_margin_top=14
+    window_style.content_margin_bottom=14
+    mind_dialog.add_theme_stylebox_override("panel",window_style)
+    mind_dialog.add_theme_stylebox_override("embedded_border",window_style)
+    mind_dialog.add_theme_stylebox_override("embedded_unfocused_border",window_style)
     mind_dialog.ok_button_text="전장으로"
     add_child(mind_dialog)
     mind_report=RichTextLabel.new()
     mind_report.custom_minimum_size=Vector2(840,590)
     mind_report.bbcode_enabled=true
     mind_report.add_theme_font_size_override("normal_font_size",15)
+    mind_report.add_theme_constant_override("line_separation",5)
+    mind_report.add_theme_color_override("default_color",COL_TEXT)
     mind_report.scroll_active=true
     mind_dialog.add_child(mind_report)
 
@@ -977,10 +1006,10 @@ func _refresh_mind_report() -> void:
         if m.is_empty(): continue
         var age: float=maxf(0.0,sim.battle_time-float(m["decision_at"]))*sim.operation_scale()
         var mood: String=str(m["mood"])
-        lines.append("[color=#8ed5e7][b]%s[/b][/color]  %s / %s  ·  [color=#%s]%s[/color]  ·  %d명" % [str(u["name"]),str(u["personality"]),str(u["type"]),_mood_color(mood).to_html(false),mood,roundi(float(u["troops"]))])
+        lines.append("[color=#8ed5e7][b][font_size=19]%s[/font_size][/b][/color]  %s / %s  ·  [color=#%s]%s[/color]  ·  %d명" % [str(u["name"]),str(u["personality"]),str(u["type"]),_mood_color(mood).to_html(false),mood,roundi(float(u["troops"]))])
         lines.append("자신감 %d   긴장 %d   명령 신뢰 %d   병사 사기 %d   |   판단 %.1f초 전" % [roundi(float(m["confidence"])),roundi(float(m["stress"])),roundi(float(m["trust"])),roundi(float(u["morale"])),age])
-        lines.append("판단: %s  →  %s" % [str(m["action"]),str(m["reason"])])
-        lines.append("관측: %s   |   우려: %s" % [str(m["observed"]),str(m["concern"])])
+        lines.append("[color=#efc878][b]판단:[/b][/color] %s  →  %s" % [str(m["action"]),str(m["reason"])])
+        lines.append("[color=#a6b6b4]관측:[/color] %s   |   [color=#a6b6b4]우려:[/color] %s" % [str(m["observed"]),str(m["concern"])])
         var pending: String=""
         for courier in sim.couriers:
             if int(courier["unit_id"])==id:
@@ -1135,7 +1164,7 @@ func _draw() -> void:
 
 func _draw_force_balance() -> void:
     # Current manpower share, not win probability; no data in recon mode.
-    var area:=Rect2(960,57,290,5)
+    var area:=Rect2(960,62,290,3)
     draw_rect(area,Color("#353f40"))
     if fog_enabled and not sim.finished: return
     var own: float=float(sim.total_troops(0))
@@ -1172,6 +1201,10 @@ func _draw_field_site(kind: int,p: Vector2,scale_factor: float) -> void:
 
 func _draw_map(_canvas: Control) -> void:
     map_layer.draw_set_transform(MAP_SIZE * 0.5 - camera_center * camera_zoom, 0.0, Vector2.ONE * camera_zoom)
+    map_label_areas.clear()
+    var screen_corner: Vector2=camera_center-MAP_SIZE*0.5/camera_zoom
+    map_label_areas.append(Rect2(screen_corner+Vector2(5,5)/camera_zoom,Vector2(666,58)/camera_zoom))
+    map_label_areas.append(Rect2(screen_corner+Vector2(839,5)/camera_zoom,Vector2(55,55)/camera_zoom))
     var map_rect: Rect2 = Rect2(Vector2.ZERO,sim.field_size)
     if terrain_cache != null:
         map_layer.draw_texture_rect(terrain_cache,map_rect,false)
@@ -1194,7 +1227,7 @@ func _draw_map(_canvas: Control) -> void:
         for y in range(22,int(sim.field_size.y)-18,36):
             map_layer.draw_line(Vector2(270*sim.layout_scale,y),Vector2(270*sim.layout_scale,y+16),Color(COL_BLUE,0.5),1.5)
     # Static gate art removed: show the actual, potentially relocating supply bases only.
-    if camera_zoom >= 0.75:
+    if detailed_map and camera_zoom >= 0.75:
         _map_text("북로",sim.layout_point(Vector2(440,106)),Color("#d6cfaa"),11)
         _map_text("중앙 고지",sim.hill.get_center()+Vector2(-29,-22),Color("#e2d9b5"),11)
         _map_text("남로",sim.layout_point(Vector2(440,466)),Color("#d6cfaa"),11)
@@ -1209,7 +1242,8 @@ func _draw_map(_canvas: Control) -> void:
         var marker_scale: float = maxf(1.0,0.75/camera_zoom)
         _draw_control_marker(site_pos,color,known and owner>=0)
         var state: String = ("미확보" if owner < 0 else ("아군 확보" if owner == 0 else "적군 확보")) if known else "미확인"
-        _map_plate(str(site["name"])+" · "+state,site_pos+Vector2(0,-18)*marker_scale,color,maxi(11,roundi(11.0/camera_zoom)))
+        if detailed_map or not sim.started or owner>=0:
+            _map_plate(str(site["name"])+" · "+state,site_pos+Vector2(0,-18)*marker_scale,color,12)
         if known and int(site["challenger"]) >= 0:
             var progress: float = clampf(float(site["progress"]) / sim.capture_duration(), 0.0, 1.0)
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60, 4)), Color("#243138"))
@@ -1261,7 +1295,7 @@ func _draw_map(_canvas: Control) -> void:
         var report: Dictionary = sim.intelligence[0][id]
         var report_p: Vector2 = _screen(report["pos"])
         var age: float = maxf(0.0, sim.battle_time - float(report["time"]))
-        if sim.player_can_see(report_p): continue
+        if not fog_enabled or sim.player_can_see(report_p): continue
         map_layer.draw_arc(report_p, 12.0, 0.0, TAU, 24, Color(COL_GOLD, maxf(0.15, 0.65 - age * 0.025)), 1.5)
         _draw_string("정찰 %.0f초 전 · %d%%" % [age*sim.operation_scale(),int(float(report.get("confidence",0.0))*100.0)], report_p + Vector2(-30, 19), 10, COL_GOLD)
     for letter in sim.couriers:
@@ -1306,8 +1340,11 @@ func _draw_map(_canvas: Control) -> void:
     for report in sim.open_situations():
         var rp: Vector2 = report["pos"]
         var pulse: float = 0.65+0.25*sin(render_clock*5.0)
-        map_layer.draw_arc(rp,46.0,0.0,TAU,40,Color(1.0,0.72,0.30,pulse),2.0,true)
-        _draw_string("!",rp+Vector2(31,-33),21,COL_GOLD)
+        var k: float=1.0/camera_zoom
+        if detailed_map:
+            map_layer.draw_arc(rp,46.0,0.0,TAU,40,Color(1.0,0.72,0.30,pulse),2.0,true)
+        map_layer.draw_circle(rp+Vector2(15,-20)*k,7*k,Color("#574323"))
+        _draw_string("!",rp+Vector2(12,-16)*k,maxi(8,roundi(13*k)),COL_GOLD)
     if not sim.convoy.is_empty():
         var wagon: Vector2 = sim.convoy["pos"]
         var cargo: Dictionary = sim.convoy_status()
@@ -1326,6 +1363,7 @@ func _draw_map(_canvas: Control) -> void:
             visible_units.append(unit)
     visible_units.sort_custom(func(a: Dictionary,b: Dictionary) -> bool: return (a["pos"] as Vector2).y < (b["pos"] as Vector2).y)
     var field_view := Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom).grow(125.0)
+    _draw_fallen(field_view)
     _draw_march_dust(field_view)
     _draw_contact_fronts(visible_units,field_view)
     if camera_zoom>=0.65:
@@ -1336,11 +1374,12 @@ func _draw_map(_canvas: Control) -> void:
         if field_view.has_point(unit["pos"]): _draw_unit(unit)
     _draw_combat_effects()
     _draw_loss_markers()
-    var label_areas: Array[Rect2] = []
+    var label_areas: Array[Rect2] = map_label_areas
+    var focus_id: int=observed_enemy_id if observing_enemy else selected_id
     visible_units.sort_custom(func(a: Dictionary,b: Dictionary) -> bool:
-        if int(a["id"]) == selected_id:
-            return int(b["id"]) != selected_id
-        if int(b["id"]) == selected_id:
+        if int(a["id"]) == focus_id:
+            return int(b["id"]) != focus_id
+        if int(b["id"]) == focus_id:
             return false
         return int(a["id"]) < int(b["id"]))
     for unit in visible_units:
@@ -1441,24 +1480,23 @@ func _draw_unit(unit: Dictionary) -> void:
     elif float(unit["ambush_ready"]) >= 3.0:
         accent = Color(accent, 0.64)
     if camera_zoom < 0.65:
-        var k: float = 1.0/camera_zoom
-        var sub: bool = unit.has("parent_id")
-        var extent: Vector2 = Vector2(13,8)*k if sub else Vector2(16,10)*k
-        var block := Rect2(p-extent*0.5,extent)
-        map_layer.draw_rect(block,Color("#192a2d"))
-        map_layer.draw_rect(block,accent,false,1.5*k)
-        if int(unit["id"]) == selected_id and side == 0:
-            map_layer.draw_rect(block.grow(4.0*k),COL_GOLD,false,1.5*k)
-        var ratio: float = clampf(float(unit["troops"])/maxf(1.0,float(unit["initial_troops"])),0.0,1.0)
-        map_layer.draw_rect(Rect2(block.position+Vector2(0,extent.y+2*k),Vector2(extent.x*ratio,2*k)),accent)
-        if not sub:
-            if sim.six_armies:
-                var mini_slots: Array[Vector2] = sim.formation_slots(unit)
-                for spot in mini_slots:
-                    map_layer.draw_circle(p+(spot-p)*0.50*k,1.65*k,Color(accent,0.93))
-            _paint_tile(38+side,Rect2(p-Vector2(11,30)*k,Vector2(22,27)*k),Color(1,1,1,accent.a))
-        else:
-            map_layer.draw_line(p,p+(unit["facing"] as Vector2)*8*k,accent,1.5*k,true)
+        # Draw the actual formation footprint in overview, not a flag pile or a
+        # scaled copy of slot positions that expands beyond its real area.
+        var k:float=1.0/camera_zoom
+        var slots: Array[Vector2]=sim.formation_slots(unit)
+        if slots.size()>=3:
+            var hull: PackedVector2Array=Geometry2D.convex_hull(PackedVector2Array(slots))
+            if hull.size()>=4:
+                map_layer.draw_colored_polygon(hull,Color(accent,0.15))
+                map_layer.draw_polyline(hull,Color(accent,0.75),1.0*k,true)
+        for spot in slots:
+            map_layer.draw_circle(spot,1.45*k,Color("#15201d"))
+            map_layer.draw_circle(spot,0.95*k,accent)
+        var center_color: Color=COL_GOLD if int(unit["id"])==(observed_enemy_id if observing_enemy else selected_id) else accent
+        map_layer.draw_circle(p,3.7*k,Color("#17221f"))
+        map_layer.draw_circle(p,3.0*k,center_color,false,1.1*k,true)
+        var front: Vector2=(unit["facing"] as Vector2).normalized()
+        map_layer.draw_line(p+front*4*k,p+front*8*k,center_color,1.4*k,true)
         return
     var slots: Array[Vector2] = _visual_slots(unit)
     if sim.six_armies and slots.size()>2 and int(unit["id"])==selected_id and side==0:
@@ -1546,7 +1584,7 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     var label: String = str(unit["name"])
     if rich or camera_zoom>=0.9: label += "  "+_number_text(roundi(float(unit["troops"])))
     if rich and detailed_map: label += " · "+str(unit["formation"])
-    if not state.is_empty(): label += " · "+state
+    if not state.is_empty() and (rich or state in ["패주","포위","전사","부상"]): label += " · "+state
     if side==0 and selected:
         label+=" / "+str(unit.get("mind",{}).get("mood","준비"))
     var fs: int = 14 if selected else 12
@@ -1557,7 +1595,7 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     var best_score: float = INF
     var vertical: float = maxf(42.0,36.0*inv)
     var horizontal: float = maxf(54.0,52.0*inv)
-    for offset in [Vector2(0,-vertical),Vector2(0,vertical),Vector2(-horizontal,-vertical*0.5),Vector2(horizontal,-vertical*0.5),Vector2(-horizontal,vertical*0.5),Vector2(horizontal,vertical*0.5),Vector2(0,-vertical*1.6),Vector2(0,vertical*1.6)]:
+    for offset in [Vector2(0,-vertical),Vector2(0,vertical),Vector2(-horizontal,-vertical*0.5),Vector2(horizontal,-vertical*0.5),Vector2(-horizontal,vertical*0.5),Vector2(horizontal,vertical*0.5),Vector2(0,-vertical*1.6),Vector2(0,vertical*1.6),Vector2(-horizontal*1.8,-vertical),Vector2(horizontal*1.8,-vertical),Vector2(-horizontal*1.8,vertical),Vector2(horizontal*1.8,vertical)]:
         var candidate := Rect2(p+offset-Vector2(width*0.5,height*0.5),Vector2(width,height))
         if not view.encloses(candidate): continue
         var score: float = (candidate.get_center()-p).length()
@@ -1571,8 +1609,7 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
             best_score=score
             found=true
     if not found or best_score>=10000.0:
-        if not selected: return
-        chosen=Rect2(Vector2(clampf(p.x-width*0.5,view.position.x,view.end.x-width),clampf(p.y-vertical,view.position.y,view.end.y-height)),Vector2(width,height))
+        return # the selected officer still has a permanent information panel
     occupied.append(chosen)
     var attachment: Vector2 = chosen.get_center()
     if selected or detailed_map:
@@ -1724,6 +1761,9 @@ func _change_scenario(index: int) -> void:
     if sim.set_scenario(index):
         battle_samples.clear()
         recent_losses.clear()
+        fallen_marks.clear()
+        loss_carry.clear()
+        battle_warning=""
         previous_centers.clear()
         contact_cache.clear()
         contact_cache_step=-1
@@ -1872,7 +1912,7 @@ func _build_presentation() -> void:
     _button("음향",Vector2(663,74),Vector2(65,28),_toggle_sound)
     var card := RenderLayer.new()
     card.position = Vector2(950,555)
-    card.size = Vector2(76,118)
+    card.size = Vector2(68,68)
     card.mouse_filter = Control.MOUSE_FILTER_IGNORE
     card.painter = _draw_portrait
     add_child(card)
@@ -1965,19 +2005,12 @@ func _draw_minimap() -> void:
     draw_rect(mini_rect,Color("#9caa9b"),false,1.0)
 
 func _draw_portrait(canvas: Control) -> void:
-    var unit: Dictionary = sim.find_unit(observed_enemy_id if observing_enemy else selected_id)
+    var unit: Dictionary=sim.find_unit(observed_enemy_id if observing_enemy else selected_id)
     if unit.is_empty(): return
-    canvas.draw_rect(Rect2(0,0,76,118),Color("#142427"))
-    canvas.draw_texture_rect(_commander_icon(str(unit["name"]),int(unit["side"])),Rect2(1,1,74,74),false)
-    canvas.draw_rect(Rect2(0,0,76,118),Color("#8d896e"),false,1.2)
-    canvas.draw_string(korean_font,Vector2(6,86),"사기",HORIZONTAL_ALIGNMENT_LEFT,-1,10,COL_MUTED)
-    canvas.draw_rect(Rect2(6,92,64,6),Color("#0f1c23"))
-    canvas.draw_rect(Rect2(6,92,64*float(unit["morale"])/100.0,6),COL_BLUE if int(unit["side"])==0 else COL_RED)
-    if int(unit["side"])==0:
-        var mood: String=str(unit.get("mind",{}).get("mood","준비"))
-        canvas.draw_rect(Rect2(1,101,74,16),Color("#202923"))
-        var w:float=korean_font.get_string_size(mood,HORIZONTAL_ALIGNMENT_LEFT,-1,11).x
-        canvas.draw_string(korean_font,Vector2((76-w)*0.5,113),mood,HORIZONTAL_ALIGNMENT_LEFT,-1,11,_mood_color(mood))
+    canvas.draw_rect(Rect2(0,0,68,68),Color("#142427"))
+    canvas.draw_texture_rect(_commander_icon(str(unit["name"]),int(unit["side"])),Rect2(1,1,66,66),false)
+    canvas.draw_rect(Rect2(0,0,68,68),Color("#8d896e"),false,1.2)
+
 
 func _draw_terrain_texture() -> void:
     # Small compass and a clean frame give orientation without repeated labels.
@@ -2034,7 +2067,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     var moving: bool = float(unit.get("motion_speed",0.0)) > 2.0 and sim.started and not sim.finished
     var kind: int = 1 if str(unit["type"])=="궁병" else (2 if str(unit["type"])=="기병" else 0)
     # The atlas uses a shared foot anchor. Taller silhouettes, compact lateral footprint.
-    var extent: Vector2 = Vector2(17,22) if kind==2 else Vector2(12,17)
+    var extent: Vector2 = Vector2(13,18) if kind==2 else Vector2(9,13)
     if not sim.six_armies: extent*=1.25
     # Front and rear ranks no longer perform the same thrust on every tick.
     var visual_contact: bool=target!=Vector2.INF
@@ -2077,6 +2110,37 @@ func _sample_battle_losses() -> void:
         var change: int=roundi(maxf(0.0,total-previous))
         if change>0 and _visible_unit(u):
             recent_losses[id]={"count":change,"time":sim.battle_time,"pos":u["pos"],"side":u["side"]}
+            _record_fallen(u,change)
+
+# Non-graphic representative fallen soldiers derive only from measured casualties.
+# Keep a remainder per unit so small losses accumulate instead of fabricating bodies.
+func _record_fallen(u: Dictionary,change: int) -> void:
+    var id: int=int(u["id"])
+    var total: int=int(loss_carry.get(id,0))+change
+    var count: int=mini(10,floori(float(total)/65.0))
+    loss_carry[id]=total-count*65
+    if count<=0: return
+    var anchors: Array[Vector2]=sim.formation_slots(u)
+    if anchors.is_empty(): anchors.append(u["pos"])
+    for i in range(count):
+        var k: int=posmod(sim.step_count*7+i*11+id*17,anchors.size())
+        var p: Vector2=anchors[k]+Vector2.from_angle(float(k+i)*2.39996)*4.0
+        if sim.terrain_at(p)=="하천": continue
+        fallen_marks.append({"point":p,"side":u["side"],"kind":str(u["type"]),"angle":float(posmod(sim.step_count+i*47+id*13,628))/100.0})
+    while fallen_marks.size()>480: fallen_marks.pop_front()
+
+func _draw_fallen(view: Rect2) -> void:
+    if camera_zoom<0.65: return
+    var offset: Vector2=MAP_SIZE*0.5-camera_center*camera_zoom
+    for entry in fallen_marks:
+        var p: Vector2=entry["point"]
+        if not view.has_point(p) or (fog_enabled and not sim.finished and not sim.player_can_see(p)): continue
+        var side: int=int(entry["side"])
+        var kind: int=1 if str(entry["kind"])=="궁병" else (2 if str(entry["kind"])=="기병" else 0)
+        var region:=Rect2(0,(side*3+kind)*96,96,96)
+        map_layer.draw_set_transform(offset+p*camera_zoom,float(entry["angle"]),Vector2.ONE*camera_zoom)
+        map_layer.draw_texture_rect_region(SOLDIER_ART,Rect2(-6,-5,12,10),region,Color(0.57,0.55,0.48,0.70))
+    map_layer.draw_set_transform(offset,0.0,Vector2.ONE*camera_zoom)
 
 func _draw_loss_markers() -> void:
     if not sim.started or sim.finished or camera_zoom<0.70: return
@@ -2201,6 +2265,7 @@ func _update_audio_and_warning() -> void:
         if bool(unit["routed"]) or bool(unit["surrounded"]) or float(unit["rations"]) < 20.0:
             warning = "%s: %s" % [str(unit["name"]),"패주" if bool(unit["routed"]) else ("포위 위험" if bool(unit["surrounded"]) else "보급 부족")]
             break
+    battle_warning=warning
     warning_label.text = warning
     if warning != "" and warning != last_warning:
         _play_cue(230.0,0.25)
@@ -2502,6 +2567,9 @@ func _begin_campaign() -> void:
     if is_instance_valid(order_view): order_view.hide()
     campaign.reset()
     campaign_active = true
+    fallen_marks.clear()
+    loss_carry.clear()
+    battle_warning=""
     contact_cache.clear()
     contact_cache_step=-1
     sector_selection=-1
@@ -2787,6 +2855,15 @@ func _map_plate(value: String,p: Vector2,accent: Color,fs: int) -> void:
     var origin: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
     map_layer.draw_set_transform(origin+p*camera_zoom,0.0,Vector2.ONE)
     var rect := Rect2(Vector2(-w*0.5,-12),Vector2(w,21))
+    var world_rect:=Rect2(p+rect.position/camera_zoom,rect.size/camera_zoom)
+    var view:=Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom)
+    var blocked: bool=not view.encloses(world_rect)
+    for prior in map_label_areas:
+        if prior.grow(3.0/camera_zoom).intersects(world_rect): blocked=true
+    if blocked:
+        map_layer.draw_set_transform(origin,0.0,Vector2.ONE*camera_zoom)
+        return
+    map_label_areas.append(world_rect)
     map_layer.draw_rect(rect,Color(0.07,0.10,0.09,0.86))
     map_layer.draw_rect(Rect2(rect.position,Vector2(2,21)),accent)
     _draw_string(value,Vector2(-w*0.5+7,3),pixel_font,COL_TEXT)
@@ -2967,7 +3044,10 @@ func _bronze_frame(rect:Rect2)->void:
 func _commander_icon(name:String,side:int)->AtlasTexture:
     var icon:=AtlasTexture.new()
     var id: int=PORTRAIT_NAMES.find(name)
-    if id>=0:
+    if name in ["왕평","마속","위연","장합"]:
+        icon.atlas=PAINTED_ART
+        icon.region=_art_region(_portrait_tile(name))
+    elif id>=0:
         icon.atlas=GENERAL_PORTRAITS
         icon.region=Rect2((id%4)*288,floori(float(id)/4.0)*288,288,288)
     else:
