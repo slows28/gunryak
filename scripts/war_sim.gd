@@ -3,6 +3,7 @@ extends RefCounted
 ## Intentionally bounded fixed-step updates; safe for headless simulation tests.
 
 const GeneralMind = preload("res://scripts/general_mind.gd")
+const FieldGeometry=preload("res://scripts/field_geometry.gd")
 const FIELD_W: float = 900.0
 const FIELD_H: float = 570.0
 # Compact mode remains available for legacy regression fixtures. The game uses wide mode.
@@ -2515,10 +2516,8 @@ func layout_point(p: Vector2) -> Vector2:
     return p*layout_scale
 
 func road_y(x: float,lane: int) -> float:
-    var y: float = [131.0,282.0,435.0][lane]*layout_scale
-    if wide_field:
-        y += sin(x/220.0+float(lane)*1.6)*48.0+sin(x/94.0+float(lane))*19.0
-    return y
+    return FieldGeometry.road_y(x,lane,layout_scale,scenario_id)
+
 
 func _expand_layout() -> void:
     layout_scale = 3.0 if wide_field else 1.0
@@ -2625,7 +2624,7 @@ func corps_report(id: int) -> Dictionary:
     return report
 
 func river_x(y: float) -> float:
-    return 1120.0+sin(y/225.0)*100.0+sin(y/89.0)*34.0
+    return FieldGeometry.river_x(y)
 
 func near_crossing(y: float) -> bool:
     for crossing in [390.0,850.0,1300.0]:
