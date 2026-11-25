@@ -145,8 +145,8 @@ func reset() -> void:
             units[i]["initial_troops"] = float(manpower[i])
             units[i]["formation"] = shapes[i]
             units[i]["policy"] = "현장 판단"
-    outposts.append({"name":"북측 요충지", "pos":Vector2(435, 148), "owner":-1, "challenger":-1, "progress":0.0, "hold":0.0})
-    outposts.append({"name":"남측 관문", "pos":Vector2(470, 423), "owner":-1, "challenger":-1, "progress":0.0, "hold":0.0})
+    outposts.append({"name":"북측 접근로", "pos":Vector2(435, 148), "owner":-1, "challenger":-1, "progress":0.0, "hold":0.0})
+    outposts.append({"name":"남측 접근로", "pos":Vector2(470, 423), "owner":-1, "challenger":-1, "progress":0.0, "hold":0.0})
     bases.append(_base(0, Vector2(116, 310)))
     bases.append(_base(1, Vector2(781, 310)))
     commanders.append({"side":0, "pos":Vector2(54, 515), "goal":Vector2(54, 515)})
@@ -1967,7 +1967,7 @@ func _configure_scenario() -> void:
         scenario_limit = 180.0
         hill = Rect2(390,190,130,130)
         forests = [Rect2(260,70,105,100),Rect2(510,390,105,100)]
-        outposts[0]["name"] = "천수 성문 앞"
+        outposts[0]["name"] = "천수 성문 뒤 진입로"
         outposts[0]["pos"] = Vector2(705,282)
         for unit in units:
             if str(unit["type"]) == "보병": unit["mission"] = "중앙 진격"
@@ -2566,7 +2566,7 @@ func _expand_layout() -> void:
         structure["rect"] = Rect2(layout_point(old.position),Vector2(old.size.x,old.size.y*3.0))
     scenario_limit = [360.0,330.0,300.0,390.0,360.0][scenario_id]
     if six_armies and scenario_id == 0:
-        outposts.append({"name":"중앙 교량 거점","pos":Vector2(1370,850),"owner":-1,"challenger":-1,"progress":0.0,"hold":0.0})
+        outposts.append({"name":"중앙 동쪽 접근로","pos":Vector2(1370,850),"owner":-1,"challenger":-1,"progress":0.0,"hold":0.0})
         scenario_goal = "6턴 이후 세 거점 중 두 곳을 8초 확보"
     if scenario_id == 1:
         scenario_goal = "6턴 이후 중앙 고지 30초 연속 확보"
