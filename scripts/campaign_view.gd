@@ -78,16 +78,16 @@ func _ready() -> void:
     _button("저장",Vector2(544,697),Vector2(105,44),_save)
     _button("타이틀",Vector2(659,697),Vector2(125,44),exit_to_title)
     _label("군단 편성",Vector2(869,113),Vector2(370,35),23)
-    slot_choice = _choice(Vector2(869,151),Vector2(180,35),["제1군","제2군","제3군"])
+    slot_choice = _choice(Vector2(869,151),Vector2(180,35),["제1군","제2군","제3군","제4군","제5군","제6군"])
     slot_choice.item_selected.connect(_choose_slot)
     type_choice = _choice(Vector2(1060,151),Vector2(180,35),["보병","궁병","기병"])
     type_choice.item_selected.connect(_choose_type)
-    troops = _label("",Vector2(869,195),Vector2(370,82),15)
-    _button("병력 20명 보충 · 15",Vector2(869,272),Vector2(371,38),_replenish)
-    _label("장수 명부 · 등용 55",Vector2(869,326),Vector2(370,28),18)
+    troops = _label("",Vector2(869,190),Vector2(370,128),14)
+    _button("병력 20명 보충 · 15",Vector2(869,317),Vector2(371,38),_replenish)
+    _label("장수 명부 · 등용 55",Vector2(869,360),Vector2(370,28),18)
     roster = ItemList.new()
-    roster.position = Vector2(869,361)
-    roster.size = Vector2(371,181)
+    roster.position = Vector2(869,389)
+    roster.size = Vector2(371,149)
     roster.add_theme_font_size_override("font_size",14)
     roster.fixed_icon_size = Vector2i(28,28)
     roster.item_selected.connect(func(index: int): selected_officer = index)
@@ -141,10 +141,10 @@ func refresh() -> void:
         region_info.text = "북벌 중단 — 세 차례 패배. 타이틀에서 새 캠페인을 시작할 수 있습니다."
     else:
         var node: Dictionary = Campaign.NODES[selected_node]
-        region_info.text = "%s  |  적 전력 지수 %d  |  출전 군량 35\n%s" % [node["name"],state["garrison"][selected_node],node["story"]]
-    attack.disabled = not campaign.available(selected_node) or int(state["food"]) < 35
+        region_info.text = "%s  |  적 전력 지수 %d  |  출전 군량 55\n%s" % [node["name"],state["garrison"][selected_node],node["story"]]
+    attack.disabled = not campaign.available(selected_node) or int(state["food"]) < (55 if campaign.six_armies else 35)
     var lines: PackedStringArray = []
-    for i in range(3):
+    for i in range(state["active"].size()):
         var idx: int = int(state["active"][i])
         lines.append("%s %s · %s · %d명" % ["▶" if i == selected_slot else "  ",Campaign.OFFICERS[idx]["name"],state["types"][i],state["troops"][i]])
     troops.text = "\n".join(lines)
@@ -152,7 +152,7 @@ func refresh() -> void:
     type_choice.select(["보병","궁병","기병"].find(state["types"][selected_slot]))
     difficulty_choice.select(int(state["difficulty"]))
     roster.clear()
-    for i in range(Campaign.OFFICERS.size()):
+    for i in range(state["roster"].size()):
         var p: Dictionary = state["roster"][i]
         var officer: Dictionary = Campaign.OFFICERS[i]
         var status: String = "전사" if p["dead"] else ("HP %d · 경험 %d" % [p["hp"],p["xp"]] if p["recruited"] else "미등용")
