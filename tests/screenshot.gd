@@ -44,12 +44,23 @@ func _capture() -> void:
     game.call("_leave_title")
     await process_frame
     await RenderingServer.frame_post_draw
+    if not game.order_view.visible:
+        push_error("VISUAL_CAPTURE_FAIL: dedicated planning map missing")
+        quit(1)
+        return
     if not _save_frame("before_battle.png"):
         quit(1)
         return
 
     # Simulate a deterministic 12 seconds of battle without waiting in real time.
     game.set_process(false)
+    game.sim.issue_map_order(1,"전열 엄호",Vector2(790,900),0)
+    game.order_view.call("_select",1)
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("paper_orders.png"):
+        quit(1)
+        return
     game.call("_start")
     var dust_captured: bool = false
     for i in range(120):
