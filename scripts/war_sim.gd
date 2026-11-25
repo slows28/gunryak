@@ -174,6 +174,8 @@ func _log(message: String) -> void:
 func start() -> void:
     if started or finished:
         return
+    if wide_field:
+        _deploy_detachments()
     started = true
     _log("전투 개시. " + scenario_goal)
 
@@ -385,16 +387,17 @@ func _supply_logic(dt: float) -> void:
         unit["supplied"] = provided
         if provided and float(own_base["stock"]) > 0.1:
             unit["out_supply"] = 0.0
-            var ration_fill: float = minf(minf(100.0 - float(unit["rations"]), dt * 2.5), float(own_base["stock"]))
+            var share: float = float(unit.get("strength_share",1.0))
+            var ration_fill: float = minf(minf(100.0 - float(unit["rations"]), dt * 2.5), float(own_base["stock"])/share)
             unit["rations"] = float(unit["rations"]) + ration_fill
-            own_base["stock"] = maxf(0.0, float(own_base["stock"]) - ration_fill)
+            own_base["stock"] = maxf(0.0, float(own_base["stock"]) - ration_fill*share)
             if str(unit["type"]) == "궁병":
-                var ammo_fill: float = minf(minf(100.0 - float(unit["ammo"]), dt * 2.0), float(own_base["stock"]))
+                var ammo_fill: float = minf(minf(100.0 - float(unit["ammo"]), dt * 2.0), float(own_base["stock"])/share)
                 unit["ammo"] = float(unit["ammo"]) + ammo_fill
-                own_base["stock"] = maxf(0.0, float(own_base["stock"]) - ammo_fill)
+                own_base["stock"] = maxf(0.0, float(own_base["stock"]) - ammo_fill*share)
         else:
             unit["supplied"] = false
-            unit["rations"] = maxf(0.0, float(unit["rations"]) - dt * 0.65)
+            unit["rations"] = maxf(0.0, float(unit["rations"]) - dt * (0.44 if wide_field else 0.65))
             unit["out_supply"] = float(unit["out_supply"]) + dt
             if float(unit["out_supply"]) >= TURN_SECONDS * 3.0:
                 unit["morale"] = maxf(0.0, float(unit["morale"]) - dt * 0.15)
@@ -655,6 +658,16 @@ func _decide(unit: Dictionary) -> void:
         action = "호위" if side == 0 else "차단"
         reason = "군량 수레 접근"
         goal = (convoy["pos"] as Vector2) + Vector2(34 if side == 0 else 70,0)
+    if wide_field and unit.has("parent_id") and enemy_distance > 165.0 and action not in ["후퇴","패주","재집결","휴식","보급 복귀","탄약 보충","매복"]:
+        var parent: Dictionary = find_unit(int(unit["parent_id"]))
+        if not parent.is_empty() and float(parent["troops"]) > 0.0 and not bool(parent["routed"]):
+            var front: Vector2 = parent["facing"]
+            var flank: Vector2 = front.orthogonal()*float(unit["wing"])*64.0
+            goal = (parent["goal"] as Vector2)+flank-front*34.0
+            if (parent["pos"] as Vector2).distance_to(pos) > 180.0:
+                goal = (parent["pos"] as Vector2)+flank-front*34.0
+            action = "분견 지원"
+            reason = "본대 측면 엄호 및 합류"
     var planned: Dictionary = _apply_planned_route(unit, action, reason, goal, enemy_distance)
     action = str(planned["action"])
     reason = str(planned["reason"])
@@ -754,6 +767,8 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         unit["charge_cooldown"] = maxf(0.0, float(unit["charge_cooldown"]) - dt)
     var actual_move: Vector2 = Vector2.ZERO
     if pos.distance_to(goal) > 2.0:
+        if wide_field and (enemy.is_empty() or pos.distance_to(enemy["pos"]) > 180.0):
+            goal = _crossing_route(pos,goal)
         if not structures.is_empty() and (str(unit["type"]) == "기병" or bool(unit["routed"])):
             goal = _detour_goal(unit,pos,goal)
         var new_pos: Vector2 = pos.move_toward(goal, rate * dt)
@@ -849,6 +864,8 @@ func _field_point(p: Vector2) -> Vector2:
 
 # Terrain layout is the same geometry used by game.gd's tactical map.
 func terrain_at(p: Vector2) -> String:
+    if wide_field and absf(p.x-river_x(p.y)) < 27.0:
+        return "교량" if near_crossing(p.y) else "하천"
     if _in_forest(p):
         return "숲"
     if hill.has_point(p):
@@ -860,6 +877,8 @@ func terrain_at(p: Vector2) -> String:
 
 func _terrain_movement_multiplier(unit: Dictionary, p: Vector2) -> float:
     match terrain_at(p):
+        "교량": return 1.08
+        "하천": return 0.34 if str(unit["type"]) == "기병" else 0.48
         "도로":
             return 1.23
         "숲":
@@ -1019,6 +1038,11 @@ func _combat(dt: float) -> void:
         attack *= (1.0 - 0.30 * float(unit["fatigue"]) / 100.0) * (0.55 + 0.45 * float(unit["cohesion"]) / 100.0)
         unit["fatigue"] = minf(100.0, float(unit["fatigue"]) + dt * 0.60)
         var damage: float = attack * (float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"]))) * (float(unit["morale"]) / 100.0) * exposure * supply_factor * dt
+        if wide_field:
+            damage *= float(unit.get("strength_share",1.0))
+            if terrain_at(pos) == "하천": damage *= 0.68
+            if terrain_at(ep) == "하천": damage *= 1.18
+        if wide_field: shock *= float(unit.get("strength_share",1.0))
         damage_entries.append({"target":int(enemy["id"]), "source":int(unit["id"]), "damage":maxf(0.0, damage + shock), "flank":flank or rear, "shock":shock, "ambush":ambush})
         if shock > 0.0 or battle_time - float(unit["last_visual"]) >= (0.9 if unit_type == "궁병" else 0.55):
             unit["last_visual"] = battle_time
@@ -1124,8 +1148,9 @@ func battle_report() -> Array[String]:
     for unit in units:
         if int(unit["side"]) != 0 or int(unit["id"]) >= 3:
             continue
+        var report: Dictionary = corps_report(int(unit["id"]))
         rows.append("%s[%s] | 판단 %d · 피해 %d · 손실 %d · 이탈 %d · 공적 %d" %
-            [str(unit["name"]), str(unit["general_state"]), int(unit["decisions"]), int(round(float(unit["damage_dealt"]))), int(round(float(unit["casualties_taken"]))), int(round(float(unit["deserted"]))), merit(unit)])
+            [str(unit["name"]),str(unit["general_state"]),int(report["decisions"]),roundi(report["damage_dealt"]),roundi(report["casualties_taken"]),roundi(report["deserted"]),int(report["merit"])])
     return rows
 
 func _check_victory() -> void:
@@ -1544,7 +1569,7 @@ func _update_reserves() -> void:
         var assigned: Dictionary = {}
         var worst: float = -1.0
         for unit in units:
-            if int(unit["side"]) != side or bool(unit["reserve"]):
+            if int(unit["side"]) != side or bool(unit["reserve"]) or unit.has("parent_id"):
                 continue
             if float(unit["troops"]) > 0.0 and not bool(unit["routed"]):
                 active += 1
@@ -2152,3 +2177,66 @@ func _expand_layout() -> void:
     elif scenario_id == 2:
         scenario_goal = "300초 동안 아군 보급기지 사수"
     reserve_next = [36.0,36.0]
+
+# Wide-field corps are split into actual autonomous detachments, never extra
+# fictional soldiers. Main commanders remain IDs 0–5; reserves follow.
+func _deploy_detachments() -> void:
+    var leaders: Array[Dictionary] = units.duplicate()
+    for leader in leaders:
+        var total: float = float(leader["troops"])
+        if total < 60.0 or bool(leader["reserve"]) or leader.has("parent_id"):
+            continue
+        var detached: float = floorf(total*0.32)
+        var share: float = detached/total
+        leader["troops"] = total-detached
+        leader["initial_troops"] = leader["troops"]
+        leader["strength_share"] = 1.0-share
+        var wing: float = -1.0 if int(leader["id"])%2 == 0 else 1.0
+        var front: Vector2 = leader["facing"]
+        var start_pos: Vector2 = _field_point((leader["pos"] as Vector2)+front.orthogonal()*wing*78.0-front*38.0)
+        _add_unit(int(leader["side"]),str(leader["name"])+" 별동대",str(leader["type"]),"균형",float(leader["ability"])*0.85,start_pos,str(leader["mission"]),detached)
+        var sub: Dictionary = units.back()
+        sub["parent_id"] = int(leader["id"])
+        sub["wing"] = wing
+        sub["strength_share"] = share
+        sub["rations"] = leader["rations"]
+        sub["ammo"] = leader["ammo"]
+        sub["supply_priority"] = leader["supply_priority"]
+        sub["formation"] = leader["formation"]
+        sub["policy"] = leader["policy"]
+        sub["obedience"] = leader["obedience"]
+        sub["specialty"] = leader.get("specialty","")
+        for key in ["leadership","martial","intelligence","judgment","loyalty"]:
+            sub[key] = maxf(35.0,float(leader[key])*0.86)
+    _log("군단 편성: 본대와 별동대 전개")
+
+func corps_report(id: int) -> Dictionary:
+    var report: Dictionary = {"troops":0.0,"damage_dealt":0.0,"casualties_taken":0.0,"deserted":0.0,"decisions":0,"merit":0}
+    for member in units:
+        if int(member["id"]) != id and int(member.get("parent_id",-1)) != id: continue
+        for key in ["troops","damage_dealt","casualties_taken","deserted","decisions"]:
+            report[key] += member[key]
+        report["merit"] += merit(member)
+    return report
+
+func river_x(y: float) -> float:
+    return 1120.0+sin(y/225.0)*100.0+sin(y/89.0)*34.0
+
+func near_crossing(y: float) -> bool:
+    for crossing in [390.0,850.0,1300.0]:
+        if absf(y-crossing) <= 38.0: return true
+    return false
+
+func _crossing_route(p: Vector2,goal: Vector2) -> Vector2:
+    if absf(p.x-river_x(p.y)) < 36.0: return goal
+    if (p.x-river_x(p.y))*(goal.x-river_x(goal.y)) >= 0.0: return goal
+    var best_y: float = 850.0
+    var best_score: float = INF
+    for y in [390.0,850.0,1300.0]:
+        var crossing := Vector2(river_x(y),y)
+        var score: float = p.distance_to(crossing)+crossing.distance_to(goal)
+        if score < best_score:
+            best_score = score
+            best_y = y
+    if absf(p.y-best_y) < 30.0: return Vector2(river_x(best_y)+(65.0 if p.x < river_x(p.y) else -65.0),best_y)
+    return Vector2(river_x(best_y)+(-58.0 if p.x < river_x(p.y) else 58.0),best_y)
