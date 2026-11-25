@@ -11,6 +11,33 @@ func check(ok: bool,label: String) -> void:
 func _initialize() -> void:
     call_deferred("_run")
 func _run() -> void:
+    var dust_sim := WarSim.new()
+    dust_sim.set_six_armies(true)
+    var u_dust: Dictionary = dust_sim.find_unit(0)
+    u_dust["formation"]="종대"
+    u_dust["facing"]=Vector2.RIGHT
+    var road := Vector2(250.0,dust_sim.road_y(250.0,0))
+    var grass := Vector2(250.0,650.0)
+    check(dust_sim.dusty_ground(road) and not dust_sim.dusty_ground(grass),"soil and grass classification")
+    check(not dust_sim.dusty_ground(Vector2(dust_sim.river_x(390.0),390.0)) and not dust_sim.dusty_ground(Vector2(dust_sim.river_x(600.0),600.0)),"no soil dust on bridge or river")
+    u_dust["pos"]=road
+    dust_sim._emit_march_dust(u_dust,road,Vector2.ZERO)
+    check(dust_sim.dust_effects.is_empty(),"stationary road produces no dust")
+    dust_sim._emit_march_dust(u_dust,road-Vector2(12,0),Vector2(12,0))
+    check(not dust_sim.dust_effects.is_empty(),"marching on soil produces dust")
+    var valid_soil: bool=true
+    for puff in dust_sim.dust_effects:
+        valid_soil=valid_soil and dust_sim.dusty_ground(puff["pos"])
+    check(valid_soil,"every puff originates on exposed soil")
+    dust_sim.dust_effects.clear()
+    u_dust["pos"]=grass
+    dust_sim._emit_march_dust(u_dust,grass-Vector2(12,0),Vector2(12,0))
+    check(dust_sim.dust_effects.is_empty(),"marching across grass produces no dust")
+    u_dust["pos"]=road
+    dust_sim._emit_march_dust(u_dust,road-Vector2(12,0),Vector2(12,0))
+    dust_sim.battle_time+=WarSim.DUST_LIFE+0.1
+    dust_sim._record_presentation()
+    check(dust_sim.dust_effects.is_empty(),"dust expires after stopping")
     for scenario in range(5):
         var sim := WarSim.new()
         sim.set_six_armies(true)
