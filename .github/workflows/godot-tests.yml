@@ -25,6 +25,42 @@ jobs:
       - name: Run real Godot tests
         run: |
           python3 tools_run_engine_tests.py --godot /tmp/godot_bin/Godot_v4.7.2-stable_linux.x86_64 --project .
+      - name: Capture actual game frames with virtual display
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v xvfb-run >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y xvfb libgl1-mesa-dri
+          fi
+          mkdir -p test_results/screenshots
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            env LIBGL_ALWAYS_SOFTWARE=1 \
+            /tmp/godot_bin/Godot_v4.7.2-stable_linux.x86_64 \
+            --rendering-driver opengl3 --path . \
+            --script res://tests/screenshot.gd
+          python3 - <<'PY'
+          import pathlib, struct
+          folder = pathlib.Path("test_results/screenshots")
+          for name in ("before_battle.png", "battle_12s.png"):
+              file = folder/name
+              if not file.exists():
+                  raise SystemExit(f"Screenshot missing: {file}")
+              data = file.read_bytes()
+              if data[:8] != bytes([137, 80, 78, 71, 13, 10, 26, 10]):
+                  raise SystemExit(f"Invalid PNG signature: {name}")
+              width, height = struct.unpack(">II", data[16:24])
+              if width < 1000 or height < 700 or len(data) < 5000:
+                  raise SystemExit(f"Blank/small screenshot: {name} {width}x{height}, {len(data)} bytes")
+              print(f"SCREENSHOT_PASS {name}: {width}x{height}, {len(data)} bytes")
+          PY
+      - name: Upload actual game screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-game-screenshots
+          path: test_results/screenshots/*.png
+          if-no-files-found: warn
       - name: Preserve test evidence
         if: always()
         uses: actions/upload-artifact@v4
