@@ -1087,6 +1087,22 @@ func formation_contacts(attacker: Dictionary, defender: Dictionary, weapon_reach
                 break
     return engaged
 
+# Representative contact point, evaluated only when a visual event is emitted.
+# Authoritative contacts and damage remain unchanged.
+func visual_contact_pair(attacker: Dictionary,defender: Dictionary) -> Array[Vector2]:
+    var left: Array[Vector2]=formation_slots(attacker)
+    var right: Array[Vector2]=formation_slots(defender)
+    var pair: Array[Vector2]=[attacker["pos"],defender["pos"]]
+    var best: float=INF
+    for p in left:
+        for q in right:
+            var distance: float=p.distance_squared_to(q)
+            if distance<best:
+                best=distance
+                pair[0]=p
+                pair[1]=q
+    return pair
+
 func _combat(dt: float) -> void:
     # Precompute strikes before taking losses. Both sides resolve simultaneously.
     var damage_entries: Array[Dictionary] = []
@@ -1219,7 +1235,8 @@ func _combat(dt: float) -> void:
         damage_entries.append({"guarding":guarding, "target":int(enemy["id"]), "source":int(unit["id"]), "damage":maxf(0.0, damage + shock), "flank":flank or rear, "shock":shock, "ambush":ambush, "counter":counter, "linked":link})
         if shock > 0.0 or battle_time - float(unit["last_visual"]) >= (0.9 if unit_type == "궁병" else 0.55):
             unit["last_visual"] = battle_time
-            visual_effects.append({"from":pos,"to":ep,"side":int(unit["side"]),"kind":"돌격" if shock > 0.0 else ("화살" if unit_type == "궁병" else "근접"),"time":battle_time})
+            var contact_pair: Array[Vector2]=visual_contact_pair(unit,enemy)
+            visual_effects.append({"from":pos,"to":ep,"visual_from":contact_pair[0],"visual_to":contact_pair[1],"side":int(unit["side"]),"kind":"돌격" if shock > 0.0 else ("화살" if unit_type == "궁병" else "근접"),"time":battle_time})
             if visual_effects.size() > 100:
                 visual_effects.pop_front()
     for entry in damage_entries:
