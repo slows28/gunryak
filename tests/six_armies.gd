@@ -111,7 +111,7 @@ func _run() -> void:
     print("TACTICAL_EVIDENCE "+JSON.stringify({"cavalry_front_square":front_counter,"cavalry_flank_square":flank_counter,"linked_damage":linked_damage,"escort_goal":str(support_goal)}))
     for scenario in range(5):
         var sim := WarSim.new()
-        sim.set_six_armies(true)
+        sim.set_long_operation(true)
         sim.set_scenario(scenario)
         sim.tactical_enabled = true
         check(sim.command_ids(0).size()==6 and sim.command_ids(1).size()==6 and sim.units.size()==12,"six distinct leaders scenario "+str(scenario))
@@ -128,11 +128,12 @@ func _run() -> void:
         sim.start()
         check(sim.units.size()==12,"no hidden duplicate formations")
         var issued: bool = false
-        for i in range(4200):
+        for i in range(4250):
             if sim.finished: break
             sim.step(0.1)
             if sim.turn>=6 and not issued:
                 issued=sim.request_order(8,"중앙 진격","재량 위임")
+        check(sim.operation_limit()==(1680.0 if scenario==3 else 1500.0),"25-minute scenario budget / 28-minute escort")
         check(sim.finished and sim.validate_state().is_empty() and sim.units.size()<=14,"battle valid, at most seven per faction")
         var linked: float=0.0
         var counter: float=0.0
@@ -151,7 +152,7 @@ func _run() -> void:
                 completed+=int(u["flank_completed"])
                 screened+=float(u["screened_damage"])
         print("COOPERATION_ROW "+JSON.stringify({"scenario":scenario,"linked_damage":linked,"counter_damage":counter,"flank_damage":flanking,"maneuver_distance":maneuver,"support_seconds":support,"flank_completed":completed,"screened_damage":screened}))
-        print("SIX_ARMY_ROW "+JSON.stringify({"scenario":scenario,"seconds":sim.battle_time,"winner":sim.winning_side,"blue":sim.total_troops(0),"red":sim.total_troops(1),"delivered":sim.delivered_orders,"intercepted":sim.intercepted_orders,"issued":issued,"result":sim.result}))
+        print("SIX_ARMY_ROW "+JSON.stringify({"scenario":scenario,"seconds":sim.operation_elapsed(),"model_seconds":sim.battle_time,"winner":sim.winning_side,"blue":sim.total_troops(0),"red":sim.total_troops(1),"delivered":sim.delivered_orders,"intercepted":sim.intercepted_orders,"issued":issued,"result":sim.result}))
     var model := Campaign.new()
     model.set_six_armies(true)
     model.save_path = "user://gunryak_six_test.json"
@@ -204,6 +205,16 @@ func _run() -> void:
     check(map_unit["policy"]=="현장 판단" and map_unit["order_destination"]==dest and int(map_unit["assigned_link"])==0,"general retains formation judgment")
     game.call("_start")
     check(not game.order_view.visible and map_sim.started,"battle view is separate")
+    game.set_process(false)
+    game.game_speed=1.0
+    var prior: float=map_sim.operation_elapsed()
+    for i in range(40): game.call("_process",0.1)
+    check(absf(map_sim.operation_elapsed()-prior-4.0)<0.5,"normal playback clock matches elapsed active real time")
+    game.game_speed=4.0
+    prior=map_sim.operation_elapsed()
+    for i in range(40): game.call("_process",0.1)
+    check(absf(map_sim.operation_elapsed()-prior-16.0)<0.5,"four times playback clock")
+    game.game_speed=1.0
     map_sim.turn=6
     game.call("_open_order_map")
     check(game.order_view.visible and map_sim.paused,"midbattle map pauses simulation")
