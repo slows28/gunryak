@@ -248,13 +248,13 @@ func _courier_intercepted(letter: Dictionary) -> bool:
     for unit in units:
         if float(unit["troops"]) <= 0.0:
             continue
-        if int(unit["side"]) != side and (unit["pos"] as Vector2).distance_to(p) <= 24.0:
+        if int(unit["side"]) != side and not bool(unit["routed"]) and (unit["pos"] as Vector2).distance_to(p) <= 24.0:
             threatened = true
             break
     if not threatened:
         return false
     for escort in units:
-        if int(escort["side"]) == side and float(escort["troops"]) > 0.0:
+        if int(escort["side"]) == side and float(escort["troops"]) > 0.0 and not bool(escort["routed"]):
             if (escort["pos"] as Vector2).distance_to(p) <= 48.0:
                 return false
     return true
@@ -267,7 +267,7 @@ func _supply_logic(dt: float) -> void:
         var bp: Vector2 = base["pos"]
         # An observed enemy unit close to an undefended base can disable it.
         for unit in units:
-            if int(unit["side"]) != side and float(unit["troops"]) > 0.0:
+            if int(unit["side"]) != side and float(unit["troops"]) > 0.0 and not bool(unit["routed"]):
                 var ep: Vector2 = unit["pos"]
                 if ep.distance_to(bp) < 22.0 and not _supply_is_guarded(base):
                     base["alive"] = false
@@ -322,7 +322,7 @@ func _supply_logic(dt: float) -> void:
 
 func _supply_is_guarded(base: Dictionary) -> bool:
     for guard in units:
-        if int(guard["side"]) == int(base["side"]) and float(guard["troops"]) > 18.0:
+        if int(guard["side"]) == int(base["side"]) and float(guard["troops"]) > 18.0 and not bool(guard["routed"]):
             if (guard["pos"] as Vector2).distance_to(base["pos"]) <= 76.0:
                 return true
     return false
@@ -389,7 +389,7 @@ func _nearest_enemy(unit: Dictionary) -> Dictionary:
 
 func _nearest_visible_enemy(unit: Dictionary) -> Dictionary:
     var nearest: Dictionary = {}
-    var nearest_distance: float = AI_VISION_RANGE * 1.15
+    var nearest_distance: float = AI_VISION_RANGE * 1.25
     var position: Vector2 = unit["pos"]
     for enemy in units:
         if int(enemy["side"]) == int(unit["side"]) or float(enemy["troops"]) <= 0.0:
@@ -893,7 +893,7 @@ func _combat(dt: float) -> void:
                 unit["charge_speed"] = 0.0
                 _log("%s: 기병 충격 돌격" % str(unit["name"]))
         var ambush: bool = false
-        if float(unit["ambush_ready"]) >= 3.0 and distance <= 110.0:
+        if float(unit["ambush_ready"]) >= 3.0 and distance <= 110.0 and _in_forest(pos):
             unit["ambush_ready"] = 0.0
             unit["ambush_until"] = battle_time + 3.0
             unit["ambushes"] = int(unit["ambushes"]) + 1
@@ -999,9 +999,9 @@ func battle_report() -> Array[String]:
     for unit in units:
         if int(unit["side"]) != 0 or int(unit["id"]) >= 3:
             continue
-        rows.append("%s | 판단 %d · 피해 %d · 손실 %d · 거점 %.0f초 · 응집 %d" %
-            [str(unit["name"]), int(unit["decisions"]), int(round(float(unit["damage_dealt"]))),
-            int(round(float(unit["casualties_taken"]))), float(unit["objective_time"]), int(unit["cohesion"])])
+        rows.append("%s[%s] | 피해 %d · 손실 %d · 이탈 %d · 돌격 %d · 패주 %d" %
+            [str(unit["name"]), str(unit["general_state"]), int(round(float(unit["damage_dealt"]))),
+            int(round(float(unit["casualties_taken"]))), int(round(float(unit["deserted"]))), int(unit["charges"]), int(unit["rout_count"])])
     return rows
 
 func _check_victory() -> void:
@@ -1031,15 +1031,17 @@ func _check_victory() -> void:
         if float(unit["troops"]) > 0.0 and not bool(unit["routed"]):
             side_alive[int(unit["side"])] += 1
     if side_alive[0] == 0:
-        if reinforcements_used[0] >= 2 or total_troops(0) == 0:
+        if reinforcements_used[0] >= 2:
             _finish("아군 전투부대 전멸 또는 패주 — 패배")
     elif side_alive[1] == 0:
-        if reinforcements_used[1] >= 2 or total_troops(1) == 0:
+        if reinforcements_used[1] >= 2:
             _finish("적 전투부대 전멸 또는 패주 — 승리")
-    elif battle_time >= MAX_SECONDS:
+    if not finished and battle_time >= MAX_SECONDS:
         var blue: float = 0.0
         var red: float = 0.0
         for unit in units:
+            if bool(unit["routed"]):
+                continue
             if int(unit["side"]) == 0:
                 blue += float(unit["troops"])
             else:
