@@ -152,16 +152,18 @@ func _capture() -> void:
         push_error("VISUAL_CAPTURE_FAIL: general portrait atlas unavailable")
         quit(1)
         return
-    var regions: Array[Rect2]=[]
+    var regions: Array[String]=[]
+    var painted: Texture2D=load("res://assets/art/painted_atlas.webp")
     for side in range(2):
         for id in game.sim.command_ids(side):
             var u: Dictionary=game.sim.find_unit(id)
             var icon: AtlasTexture=game.call("_commander_icon",str(u["name"]),side)
-            if icon.atlas!=portraits or regions.has(icon.region):
+            var key: String=icon.atlas.resource_path+":"+str(icon.region)
+            if icon.atlas not in [portraits,painted] or regions.has(key):
                 push_error("VISUAL_CAPTURE_FAIL: commander portrait reused or missing")
                 quit(1)
                 return
-            regions.append(icon.region)
+            regions.append(key)
     print("GENERAL_PORTRAITS_PASS: "+str(regions.size())+" distinct live portrait regions")
     if not game.mind_report.text.contains("건의:"):
         push_error("VISUAL_CAPTURE_FAIL: general proposal not presented")
@@ -199,6 +201,13 @@ func _capture() -> void:
     if not _save_frame("commander_live_board.png"):
         quit(1)
         return
+    for i in range(game.map_label_areas.size()):
+        for j in range(i+1,game.map_label_areas.size()):
+            if game.map_label_areas[i].intersects(game.map_label_areas[j]):
+                push_error("VISUAL_CAPTURE_FAIL: overlapping allocated map labels")
+                quit(1)
+                return
+    print("MAP_LABEL_LAYOUT_PASS")
     print("COMMANDER_BOARD_AND_SITES_PASS")
     print("GENERAL_REPORT_VISUAL_PASS")
 
