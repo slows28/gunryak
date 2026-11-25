@@ -307,6 +307,7 @@ func step(dt: float) -> void:
         mind_sample_at=battle_time+0.25
         for u in units:
             if not u.has("parent_id"): u["mind"]=GeneralMind.update(u,battle_time)
+        _update_response_outcomes()
     _record_presentation()
 
 func _on_new_turn() -> void:
@@ -327,6 +328,7 @@ func _update_couriers(dt: float) -> void:
         var letter: Dictionary = couriers[i]
         var target: Dictionary = find_unit(int(letter["unit_id"]))
         if target.is_empty() or float(target["troops"]) <= 0.0:
+            _response_delivery(letter,"수신 부대 상실")
             couriers.remove_at(i)
             continue
         var p: Vector2 = letter["pos"]
@@ -335,6 +337,7 @@ func _update_couriers(dt: float) -> void:
         letter["pos"] = p.move_toward(route_goal, 140.0 * dt)
         if _courier_intercepted(letter):
             intercepted_orders += 1
+            _response_delivery(letter,"전령 차단")
             _log("%s에게 가던 전령이 적에 의해 차단됨" % str(target["name"]))
             couriers.remove_at(i)
             continue
@@ -1431,6 +1434,7 @@ func _finish(msg: String) -> void:
     result = msg
     winning_side = 1 if "패배" in msg or msg.ends_with("적군") else 0
     finished = true
+    _update_response_outcomes()
     _log("전투 종료: %s" % msg)
 
 func validate_state() -> Array[String]:
@@ -2305,8 +2309,61 @@ func _scan_situations() -> void:
         situation_serial += 1
         var delay: float = 2.0+(unit["pos"] as Vector2).distance_to(commanders[0]["pos"])/150.0
         situation_reports.append({"id":situation_serial,"unit_id":unit["id"],"title":str(unit["name"])+" · "+kind+(" / "+proposal+" 건의" if not proposal.is_empty() else ""),"kind":kind,"proposal":proposal,"pos":unit["pos"],"arrive":battle_time+delay,"expires":battle_time+delay+26.0,"status":"대기"})
-        if situation_reports.size() > 40:
-            situation_reports.pop_front()
+        if situation_reports.size() > 80:
+            for j in range(situation_reports.size()):
+                if str(situation_reports[j]["status"]) not in ["대기","미대응","전령 파견","명령 수령","실행 중"]:
+                    situation_reports.remove_at(j)
+                    break
+
+# Follow actual courier and tactical execution, rather than treating dispatch as success.
+func _response_delivery(letter: Dictionary,status: String) -> void:
+    var id: int=int(letter.get("report_id",-1))
+    if id<0: return
+    for report in situation_reports:
+        if int(report["id"])!=id: continue
+        report["status"]=status
+        report["resolved_at"]=battle_time
+        if status=="명령 수령":
+            var actor: Dictionary=find_unit(int(letter["unit_id"]))
+            if actor.is_empty(): return
+            report["received_at"]=battle_time
+            report["until"]=float(actor["tactical_until"])
+            report["loss_start"]=float(actor["casualties_taken"])
+            report["damage_start"]=float(actor["damage_dealt"])
+            report["executed"]=false
+            report["action_seen"]=""
+            report["loss_delta"]=0
+            report["damage_delta"]=0
+        return
+
+func _update_response_outcomes() -> void:
+    for report in situation_reports:
+        var status: String=str(report["status"])
+        if status=="전령 파견" and finished:
+            report["status"]="종전 · 미전달"
+            continue
+        if status not in ["명령 수령","실행 중"]: continue
+        var actor: Dictionary=find_unit(int(report.get("executor",-1)))
+        if actor.is_empty():
+            report["status"]="수신 부대 상실"
+            continue
+        if absf(float(actor["tactical_until"])-float(report.get("until",0.0)))>0.01:
+            report["status"]="후속 지시로 종료"
+            report["resolved_at"]=battle_time
+            continue
+        var expected: String=str({"지원":"긴급 지원","사수":"긴급 방어","재집결":"전술 재집결","철수":"전술 철수"}.get(str(report.get("response","")),""))
+        var actual: String=str(actor["action"])
+        if not expected.is_empty() and actual==expected and battle_time<=float(report.get("until",0.0)):
+            report["executed"]=true
+            report["action_seen"]=actual
+            report["status"]="실행 중"
+        report["loss_delta"]=roundi(maxf(0.0,float(actor["casualties_taken"])-float(report.get("loss_start",0.0))))
+        report["damage_delta"]=roundi(maxf(0.0,float(actor["damage_dealt"])-float(report.get("damage_start",0.0))))
+        if float(actor["troops"])<=0.0:
+            report["status"]="실행 부대 상실"
+        elif finished or battle_time>=float(report.get("until",0.0)):
+            report["status"]="실행 종료" if bool(report.get("executed",false)) else "실행 미확인"
+            report["resolved_at"]=battle_time
 
 func open_situations() -> Array[Dictionary]:
     var result_reports: Array[Dictionary] = []
@@ -2346,6 +2403,11 @@ func respond_situation(report_id: int, response: String) -> bool:
         elif not request_tactical(id,response):
             return false
         report["status"] = "전령 파견"
+        var letter: Dictionary=couriers.back()
+        letter["report_id"]=report_id
+        report["response"]=response
+        report["executor"]=int(letter["unit_id"])
+        report["sent_at"]=battle_time
         return true
     return false
 
@@ -2377,6 +2439,7 @@ func _deliver_tactical(unit: Dictionary, letter: Dictionary) -> void:
     var advantage: bool = not enemy.is_empty() and float(unit["troops"]) > float(enemy["troops"])*1.15
     if order == "철수" and str(unit["personality"]) == "공격" and str(unit["obedience"]) != "명령 엄수" and (GeneralMind.confidence_to_refuse(unit) if long_operation else float(unit["loyalty"])) < 60.0 and advantage and float(unit["morale"]) > 60.0:
         tactical_refused += 1
+        _response_delivery(letter,"명령 거부")
         GeneralMind.order(unit,"거부: 철수 / 현장 우세 판단",battle_time,true)
         _log(str(unit["name"])+": 우세 판단으로 철수 명령 거부")
         return
@@ -2386,6 +2449,7 @@ func _deliver_tactical(unit: Dictionary, letter: Dictionary) -> void:
     unit["tactical_target"] = int(letter.get("support_id",-1))
     unit["tactical_anchor"] = unit["pos"]
     unit["tactical_until"] = battle_time+24.0
+    _response_delivery(letter,"명령 수령")
     unit["ai_cooldown"] = 0.0
     _log(str(unit["name"])+": 긴급 "+order+" 명령 도착")
 
