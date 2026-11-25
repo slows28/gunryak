@@ -167,6 +167,39 @@ func _capture() -> void:
         push_error("VISUAL_CAPTURE_FAIL: general proposal not presented")
         quit(1)
         return
+    if game.general_cards.size()!=6:
+        push_error("VISUAL_CAPTURE_FAIL: persistent six commander cards missing")
+        quit(1)
+        return
+    for i in range(6):
+        if not game.general_cards[i].visible or game.general_cards[i].text.is_empty():
+            push_error("VISUAL_CAPTURE_FAIL: commander card missing live state")
+            quit(1)
+            return
+    game.call("_select_general_card",2)
+    if game.selected_id!=game.sim.command_ids(0)[2]:
+        push_error("VISUAL_CAPTURE_FAIL: commander card did not select real leader")
+        quit(1)
+        return
+    game.call("_select_general_card",0)
+    var sites: Texture2D=load("res://assets/art/field_sites.svg")
+    if sites==null or sites.get_size()!=Vector2(1536,384):
+        push_error("VISUAL_CAPTURE_FAIL: site art unavailable")
+        quit(1)
+        return
+    for i in range(4):
+        if sites.get_image().get_region(Rect2i(i*384,0,384,384)).get_used_rect().size.x<100:
+            push_error("VISUAL_CAPTURE_FAIL: empty site texture")
+            quit(1)
+            return
+    game.call("_reset_camera")
+    game.map_layer.queue_redraw()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("commander_live_board.png"):
+        quit(1)
+        return
+    print("COMMANDER_BOARD_AND_SITES_PASS")
     print("GENERAL_REPORT_VISUAL_PASS")
 
     if not game.combat_brief.text.contains("아군 손실") or not game.live_order_label.text.contains("현재:"):
