@@ -211,6 +211,29 @@ func _capture() -> void:
     print("SOLDIER_MOTION_PASS: 108 atlas cells and deterministic attack/march timing")
 
 
+    # Verify presentation-only density, the real high-resolution terrain and shared skin.
+    var skin: Texture2D=load("res://assets/art/command_skin.svg")
+    if skin==null or skin.get_size()!=Vector2(768,256):
+        push_error("VISUAL_CAPTURE_FAIL: command skin atlas dimensions invalid")
+        quit(1)
+        return
+    var terrain_size: Vector2=game.terrain_cache.get_size()
+    if terrain_size.x<2025 or terrain_size.y<1282:
+        push_error("VISUAL_CAPTURE_FAIL: terrain resolution did not improve")
+        quit(1)
+        return
+    var sample_army: Dictionary=game.sim.find_unit(0).duplicate(true)
+    sample_army["troops"]=4680.0
+    sample_army["next_formation"]=""
+    var slots: Array=game.call("_visual_slots",sample_army)
+    if slots.size()!=72:
+        push_error("VISUAL_CAPTURE_FAIL: increased formation density missing")
+        quit(1)
+        return
+    if float(game.sim.find_unit(0)["troops"])==4680.0:
+        print("VISUAL_NOTE: actual unit coincidentally has sample strength")
+    print("INTEGRATED_VISUAL_PASS: terrain "+str(terrain_size)+" / 72 presentation slots / command skin")
+
     # Same simulation tick, same camera: compare quiet and detailed presentation.
     var frozen_time: float = game.sim.battle_time
     game.call("_toggle_map_detail")
@@ -239,9 +262,28 @@ func _capture() -> void:
         quit(1)
         return
     # Record a later wide-field overview and a zoomed contact view.
+    var combat_captured: bool=false
     for i in range(600):
         if game.sim.finished: break
         game.call("_process",0.1)
+        if combat_captured: continue
+        for fx in game.sim.visual_effects:
+            var age: float=game.sim.battle_time-float(fx["time"])
+            if age<0.1 or age>0.35: continue
+            if not game.sim.player_can_see(fx["from"]) or not game.sim.player_can_see(fx["to"]): continue
+            game.camera_center=(fx["from"] as Vector2).lerp(fx["to"],0.5)
+            game.camera_zoom=1.8
+            game.call("_clamp_camera")
+            game.map_layer.queue_redraw()
+            await process_frame
+            await RenderingServer.frame_post_draw
+            if not _save_frame("live_combat_effect.png"):
+                quit(1)
+                return
+            combat_captured=true
+            break
+    if not combat_captured:
+        print("VISUAL_NOTE: no visible combat event in capture window")
     game.call("_reset_camera")
     await process_frame
     await RenderingServer.frame_post_draw
