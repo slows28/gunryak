@@ -172,7 +172,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
         "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
         "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
-        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0
+        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0
     }
     _set_general_profile(unit)
     if unit_type == "기병":
@@ -833,6 +833,12 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
             unit["fatigue"] = minf(100.0, float(unit["fatigue"]) + moved.length() * (0.030 if str(unit["type"]) == "기병" else 0.042) * (0.48 if wide_field else 1.0))
             unit["facing"] = moved.normalized()
     unit["motion_speed"] = actual_move.length()/maxf(dt,0.001)
+    if six_armies:
+        if str(unit["action"])=="협동 우회": unit["maneuver_distance"]+=actual_move.length()
+        if str(unit["action"]) in ["협동 엄호","구원 지원"]:
+            var ally: Dictionary=find_unit(int(unit["link_id"]))
+            if not ally.is_empty() and float(ally["troops"])>0.0 and (unit["pos"] as Vector2).distance_to(ally["pos"])<=150.0:
+                unit["support_seconds"]+=dt
     if six_armies: _emit_march_dust(unit,pos,actual_move)
     if str(unit["type"]) == "기병":
         _update_charge(unit, actual_move, dt)
@@ -2556,7 +2562,10 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
         unit["flank_goal"]=_field_point(ep+lateral*sign_value*155.0-ef*45.0)
         unit["flank_until"]=battle_time+18.0
         unit["flank_phase"]=0
-    if p.distance_to(unit["flank_goal"])<30.0: unit["flank_phase"]=1
+    if p.distance_to(unit["flank_goal"])<30.0 and int(unit["flank_phase"])==0:
+        unit["flank_phase"]=1
+        unit["flank_completed"]+=1
+        _log(str(unit["name"])+": 협동 우회 지점 도달")
     if int(unit["flank_phase"])==1:
         return {"action":"돌파","reason":str(ally["name"])+"군 정면 압박에 맞춰 측후방 공격","goal":ep}
     return {"action":"협동 우회","reason":str(ally["name"])+"군과 협동 측면 기동","goal":unit["flank_goal"]}
