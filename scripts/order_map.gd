@@ -6,7 +6,7 @@ const INK=Color("#554735")
 const GOLD=Color("#d5b473")
 const BLUE=Color("#315b79")
 const RED=Color("#934e3e")
-const MAP=Rect2(226,90,804,510)
+const MAP=Rect2(228,90,800,582)
 const ART=preload("res://assets/art/fieldcraft.svg")
 const PARCHMENT=preload("res://assets/art/war_parchment.svg")
 const PORTRAITS=preload("res://assets/art/painted_atlas.webp")
@@ -14,6 +14,9 @@ var game: Control
 var sim
 var font: Font
 var action_choice: OptionButton
+var action_buttons: Array[Button]=[]
+var progress_label: Label
+var action_description: Label
 var partner_choice: OptionButton
 var roster: ItemList
 var info: Label
@@ -40,15 +43,17 @@ func configure(owner_game: Control,used_font: Font) -> void:
     font=used_font
     size=Vector2(1280,800)
     mouse_filter=Control.MOUSE_FILTER_STOP
-    title=_label("",Vector2(28,16),Vector2(700,48),26,GOLD)
+    title=_label("",Vector2(128,11),Vector2(740,40),23,GOLD)
+    _label("軍略",Vector2(25,7),Vector2(100,48),33,GOLD)
+    progress_label=_label("",Vector2(128,48),Vector2(850,20),12,Color("#b2a78d"))
     _label("軍略   /   作戰圖",Vector2(1040,18),Vector2(220,40),20,GOLD)
     _label("아군 군단",Vector2(23,87),Vector2(180,32),19,GOLD)
     roster=ItemList.new()
     roster.position=Vector2(16,128)
-    roster.size=Vector2(199,334)
+    roster.size=Vector2(199,344)
     roster.add_theme_font_size_override("font_size",15)
-    roster.add_theme_constant_override("v_separation",8)
-    roster.fixed_icon_size=Vector2i(38,38)
+    roster.add_theme_constant_override("v_separation",9)
+    roster.fixed_icon_size=Vector2i(40,40)
     roster.add_theme_stylebox_override("panel",_panel_style("#1e201d","#77603d"))
     roster.add_theme_stylebox_override("selected",_panel_style("#50402c","#e4bd6b"))
     roster.add_theme_stylebox_override("selected_focus",_panel_style("#50402c","#e4bd6b"))
@@ -59,36 +64,42 @@ func configure(owner_game: Control,used_font: Font) -> void:
     placement.text="초기 배치"
     placement.position=Vector2(20,512)
     add_child(placement)
-    var guide=_label("말을 끌어 목적지 지정\n초기 배치 선택 시\n아군 영역 내 이동",Vector2(24,551),Vector2(190,80),13,Color("#c4b69e"))
+    var guide=_label("① 군단 선택\n② 말을 끌어 목표 지정\n③ 행동·연계 확정\n\n초기 배치는 아군 영역 내",Vector2(24,550),Vector2(190,108),13,Color("#c4b69e"))
     guide.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     _label("작전 지시",Vector2(1048,88),Vector2(220,30),19,GOLD)
     info=_label("",Vector2(1111,125),Vector2(155,103),13,Color("#eadbc1"))
     info.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    _label("① 행동",Vector2(1048,235),Vector2(216,24),14,GOLD)
-    action_choice=_choice(Vector2(1046,265),Vector2(218,39),ACTIONS)
-    action_choice.item_selected.connect(func(_i: int):
-        draft_dirty=true
-        queue_redraw())
-    _label("② 목적지 · 지도에서 지정",Vector2(1048,320),Vector2(220,25),14,GOLD)
-    destination_label=_label("",Vector2(1048,350),Vector2(220,52),15,Color("#eadbc1"))
+    _label("① 목적지 · 지도에서 지정",Vector2(1048,219),Vector2(220,24),14,GOLD)
+    destination_label=_label("",Vector2(1048,245),Vector2(220,35),14,Color("#eadbc1"))
+    _label("② 행동 지시",Vector2(1048,285),Vector2(220,23),14,GOLD)
+    action_choice=_choice(Vector2(1046,310),Vector2(218,39),ACTIONS)
+    action_choice.hide()
+    var labels:Array[String]=["이동","공격","사수","엄호","우회","구원","예비","철수"]
+    for i in range(ACTIONS.size()):
+        var b:Button=_button(labels[i],Vector2(1047+(i%2)*109,312+floori(float(i)/2.0)*38),Vector2(104,34),_choose_action.bind(i))
+        b.toggle_mode=true
+        b.tooltip_text=ACTIONS[i]
+        action_buttons.append(b)
+    action_description=_label("",Vector2(1048,466),Vector2(218,42),12,Color("#c4b69e"))
+    action_description.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     destination_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    _label("③ 협동 대상",Vector2(1048,415),Vector2(216,25),14,GOLD)
-    partner_choice=_choice(Vector2(1046,447),Vector2(218,39),[])
+    _label("③ 협동 대상",Vector2(1048,510),Vector2(216,25),14,GOLD)
+    partner_choice=_choice(Vector2(1046,537),Vector2(218,39),[])
     partner_choice.item_selected.connect(func(_i: int):
         draft_dirty=true
         queue_redraw())
-    apply=_button("지시 확정",Vector2(1046,510),Vector2(218,45),_apply)
-    _button("미확정 취소",Vector2(1046,558),Vector2(218,31),func():
+    apply=_button("지시 확정",Vector2(1046,585),Vector2(218,42),_apply)
+    _button("미확정 취소",Vector2(1046,633),Vector2(218,31),func():
         draft_dirty=false
         _select(selected_id))
-    _label("진형·교전은 장수의 현장 판단",Vector2(1048,593),Vector2(218,32),13,Color("#c4b69e")).autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    feedback=_label("",Vector2(25,637),Vector2(920,58),17,GOLD)
+    feedback=_label("",Vector2(25,690),Vector2(920,31),15,GOLD)
     feedback.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    _button("상세 편성",Vector2(22,721),Vector2(170,54),func(): game.call("_open_planning"))
-    _button("메뉴",Vector2(205,721),Vector2(116,54),func():
+    _button("상세 편성",Vector2(22,733),Vector2(170,44),func(): game.call("_open_planning"))
+    _button("메뉴",Vector2(205,733),Vector2(116,44),func():
         hide()
         game.call("_show_title"))
-    launch=_button("전투 개시",Vector2(1008,718),Vector2(252,58),_launch)
+    _label("진형과 교전 방식은 장수에게 위임",Vector2(340,737),Vector2(650,33),13,Color("#b8aa8c"))
+    launch=_button("전투 개시",Vector2(1008,721),Vector2(252,58),_launch)
     var style:=StyleBoxFlat.new()
     style.bg_color=Color("#704133")
     style.border_color=GOLD
@@ -131,7 +142,8 @@ func _button(t:String,p:Vector2,s:Vector2,callback:Callable)->Button:
 
 func open(mid_battle:bool=false)->void:
     in_battle=mid_battle
-    title.text="군략  ·  "+sim.scenario_title+"  /  "+("전령 지시" if mid_battle else "작전 회의")
+    title.text=sim.scenario_title+"  /  "+("전령 지시" if mid_battle else "작전 회의")
+    progress_label.text="군단 선택   ›   목적지 지정   ›   행동과 연계   ›   지시 확정"
     launch.text="전장 복귀" if mid_battle else "전투 개시"
     placement.disabled=mid_battle
     placement.set_pressed_no_signal(false)
@@ -139,7 +151,7 @@ func open(mid_battle:bool=false)->void:
     for id in sim.command_ids(0):
         var u:Dictionary=sim.find_unit(id)
         var portrait: AtlasTexture=_portrait(str(u["name"]))
-        roster.add_item("%s  %d명\n%s"%[u["name"],int(u["troops"]),u["type"]],portrait)
+        roster.add_item("%s · %s\n%s명"%[u["name"],u["type"],_troop_text(int(u["troops"]))],portrait)
         roster.set_item_metadata(roster.item_count-1,id)
     feedback.text="부대 말을 끌거나 지도에 목적지를 찍고 행동 및 연계 대상을 지정하십시오."
     if mid_battle: feedback.text="전투 중 명령은 6턴부터 전령으로 전달됩니다. 확정 전까지 기존 작전 유지."
@@ -165,6 +177,7 @@ func _select(id:int)->void:
     info.text="%s 군단\n%s  ·  %d명\n사기 %d  /  응집 %d\n현재: %s"%[u["name"],u["type"],int(u["troops"]),int(u["morale"]),int(u["cohesion"]),u["mission"]]
     var idx:int=ACTIONS.find(str(u["mission"]))
     action_choice.select(maxi(0,idx))
+    _sync_actions()
     partner_choice.clear()
     partner_choice.add_item("자동 / 없음")
     partner_choice.set_item_metadata(0,-1)
@@ -184,7 +197,8 @@ func _select(id:int)->void:
     queue_redraw()
 
 func _update_destination()->void:
-    destination_label.text="지도 선택 대기" if not has_destination else "%s  ·  %d / %d"%[sim.terrain_at(destination),roundi(destination.x),roundi(destination.y)]
+    destination_label.text="지도에서 목표를 선택" if not has_destination else _destination_text(destination)
+    if has_destination: progress_label.text="목표 지정 완료   ›   행동·연계 선택   ›   지시 확정"
 
 func _apply()->void:
     if not has_destination:
@@ -261,7 +275,7 @@ func _draw()->void:
     for i in range(6):
         draw_line(Vector2(0,65+i),Vector2(1280,65+i),Color(0.8,0.62,0.32,0.16-float(i)*0.018),1.0)
     draw_line(Vector2(12,69),Vector2(1268,69),GOLD,1.0)
-    for panel in [Rect2(12,77,207,552),Rect2(1038,77,234,552),Rect2(12,630,1260,160)]:
+    for panel in [Rect2(12,77,207,601),Rect2(1038,77,234,601),Rect2(12,683,1260,107)]:
         _frame(panel)
     if sim==null: return
     draw_rect(MAP.grow(6),Color("#49341e"))
@@ -362,7 +376,7 @@ func _draw()->void:
             draw_texture_rect(portrait,Rect2(1047,125,59,79),false)
         else:
             _art(3,Rect2(1042,125,69,79))
-    _plate("이동 경로  ·  협동 대상",Vector2(337,582),12,Color("#dbc58d"))
+    _plate("━ 작전 경로   ·   ┄ 협동 대상",Vector2(373,650),12,Color("#dbc58d"))
 
 func _ink(t:String,p:Vector2,fs:int,c:Color)->void:
     if font!=null: draw_string(font,p,t,HORIZONTAL_ALIGNMENT_LEFT,-1,fs,c)
@@ -392,7 +406,11 @@ func _art(tile:int,rect:Rect2,tint:Color=Color.WHITE)->void:
 func _portrait(name:String)->AtlasTexture:
     var names:Array[String]=["왕평","마속","위연","장합"]
     var idx:int=names.find(name)
-    if idx<0: return null
+    if idx<0:
+        var token:=AtlasTexture.new()
+        token.atlas=ART
+        token.region=Rect2(768,0,256,256)
+        return token
     var tex:=AtlasTexture.new()
     tex.atlas=PORTRAITS
     var tile:int=8+idx
@@ -433,3 +451,33 @@ func _plate(t:String,p:Vector2,fs:int,c:Color)->void:
     draw_rect(rect,Color("#342b20"))
     draw_rect(rect,Color("#b09561"),false,1.0)
     _ink(t,p+Vector2(-width/2.0+7,5),fs,c)
+
+func _choose_action(index:int)->void:
+    action_choice.select(index)
+    _sync_actions()
+    draft_dirty=true
+    queue_redraw()
+
+func _sync_actions()->void:
+    var descriptions:Array[String]=["지정 위치까지 이동하고 현장 판단","목표 지역의 적을 공격","지정 구역을 확보하고 방어","연계 군단의 전열을 엄호","적의 측후방으로 기동","위기에 처한 연계 군단을 지원","지정 지점에서 투입을 대기","목표 지점으로 철수"]
+    for i in range(action_buttons.size()):
+        action_buttons[i].set_pressed_no_signal(i==action_choice.selected)
+    if action_choice.selected>=0 and action_choice.selected<descriptions.size():
+        action_description.text=descriptions[action_choice.selected]
+
+func _destination_text(p:Vector2)->String:
+    var terrain:String=sim.terrain_at(p)
+    var nearest:String=""
+    var distance:float=220.0
+    for site in sim.outposts:
+        var d:float=p.distance_to(site["pos"])
+        if d<distance:
+            distance=d
+            nearest=str(site["name"])
+    if nearest!="": return nearest+" 인근 · "+terrain
+    return ("서부" if p.x<sim.field_size.x*0.5 else "동부")+" "+("북로" if p.y<sim.field_size.y/3.0 else ("남로" if p.y>sim.field_size.y*2.0/3.0 else "중앙"))+" · "+terrain
+
+func _troop_text(n:int)->String:
+    var digits:String=str(n)
+    if digits.length()>3: return digits.substr(0,digits.length()-3)+","+digits.right(3)
+    return digits
