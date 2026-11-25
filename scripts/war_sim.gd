@@ -709,7 +709,7 @@ func _decide(unit: Dictionary) -> void:
             goal = screen_pos+behind*100.0
             action = "전열 지원"
             reason = "보병 엄호 하에 후방 사격 위치 확보"
-    if six_armies:
+    if six_armies and (scenario_id!=3 or str(unit["mission"]) in ["전열 엄호","측후방 기동","구원 지원"]):
         var cooperation: Dictionary = _coordinated_order(unit,nearest,action,reason,goal)
         action=cooperation["action"]
         reason=cooperation["reason"]
@@ -744,7 +744,7 @@ func _decide(unit: Dictionary) -> void:
         elif action in ["돌파","반격","교전"]: wanted = "어린진"
         else: wanted = "학익진"
     if six_armies and action=="협동 엄호" and str(unit["type"])=="보병": wanted="방진"
-    if six_armies and action=="협동 우회" and str(unit["type"])=="기병": wanted="봉시진"
+    if six_armies and action in ["협동 우회","협동 대기"] and str(unit["type"])=="기병": wanted="봉시진"
     if str(unit["policy"]).ends_with(" 유지") and str(unit["policy"]).replace(" 유지","") in LARGE_FORMATIONS and action != "패주":
         wanted = str(unit["policy"]).replace(" 유지", "")
     # Cancel an obsolete re-formation order before it completes; otherwise
@@ -794,7 +794,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var pos: Vector2 = unit["pos"]
     var goal: Vector2 = unit["goal"]
     var enemy: Dictionary = _nearest_visible_enemy(unit)
-    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원"]:
+    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
@@ -2559,9 +2559,17 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
         return {"action":"협동 엄호","reason":str(ally["name"])+"군 후방·측면 엄호","goal":support_point}
     if mission=="구원 지원":
         return {"action":"구원 지원","reason":str(ally["name"])+"군 압박 완화","goal":ap+forward.orthogonal()*90.0}
+    # Prefer the front army's observed opponent if this army can see it too.
+    var pinned: Dictionary=find_unit(int(ally.get("memory_id",-1)))
+    if not pinned.is_empty() and _locally_observed(unit,pinned):
+        enemy=pinned
+    var previous: Dictionary=find_unit(int(unit["flank_target"]))
+    if not previous.is_empty() and _locally_observed(unit,previous) and battle_time<float(unit["flank_until"]):
+        enemy=previous
     if enemy.is_empty():
         unit["flank_target"]=-1
-        return {"action":"협동 우회","reason":str(ally["name"])+"군과 측면 전개","goal":ap+forward.orthogonal()*165.0}
+        var wing: float=1.0 if int(unit["id"])%2==0 else -1.0
+        return {"action":"협동 우회","reason":str(ally["name"])+"군과 측면 전개","goal":ap+forward.orthogonal()*165.0*wing}
     var ep: Vector2=enemy["pos"]
     var ef: Vector2=enemy["facing"]
     if ef.length_squared()<0.01: ef=-forward
@@ -2570,13 +2578,22 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
         var sign_value: float=1.0 if lateral.dot(p-ep)>=0.0 else -1.0
         unit["flank_target"]=enemy["id"]
         unit["flank_goal"]=_field_point(ep+lateral*sign_value*155.0-ef*45.0)
-        unit["flank_until"]=battle_time+18.0
+        unit["flank_until"]=battle_time+24.0
         unit["flank_phase"]=0
     if p.distance_to(unit["flank_goal"])<30.0 and int(unit["flank_phase"])==0:
         unit["flank_phase"]=1
         unit["flank_completed"]+=1
         _log(str(unit["name"])+": 협동 우회 지점 도달")
     if int(unit["flank_phase"])==1:
+        var approach: Vector2=(p-ep).normalized()
+        var angle_ok: bool=approach.dot(ef)<0.30
+        var pinned_now: bool=formation_contacts(ally,enemy,30.0)>0 and not bool(ally["routed"])
+        if not angle_ok:
+            unit["flank_phase"]=0
+            unit["flank_until"]=0.0
+            return {"action":"협동 우회","reason":"적 방향 변화: 측면 위치 재확보","goal":p}
+        if not pinned_now:
+            return {"action":"협동 대기","reason":str(ally["name"])+"군 정면 접촉을 기다림","goal":p}
         return {"action":"돌파","reason":str(ally["name"])+"군 정면 압박에 맞춰 측후방 공격","goal":ep}
     return {"action":"협동 우회","reason":str(ally["name"])+"군과 협동 측면 기동","goal":unit["flank_goal"]}
 
@@ -2616,3 +2633,14 @@ func _reset_cooperation(unit: Dictionary,partner: int) -> void:
     unit["flank_target"]=-1
     unit["flank_phase"]=0
     unit["flank_until"]=0.0
+
+func _locally_observed(unit: Dictionary,enemy: Dictionary) -> bool:
+    if int(unit["side"])==int(enemy["side"]) or float(enemy["troops"])<=0.0: return false
+    var p: Vector2=unit["pos"]
+    var ep: Vector2=enemy["pos"]
+    var vision: float=AI_VISION_RANGE*(0.85+_effective_stat(unit,"intelligence")*0.002)
+    if _in_forest(ep):
+        vision*=0.68
+        if float(enemy["ambush_ready"])>=3.0: vision*=0.48
+    if terrain_at(p)=="고지": vision*=1.15
+    return p.distance_to(ep)<=vision
