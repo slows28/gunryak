@@ -95,6 +95,71 @@ func _process(_dt: float) -> bool:
             push_error("GUNRYAK_SCENE_FAIL: tactical execution result invalid")
             quit(1)
             return false
+        # The representative rendering uses actual tactical slots, without
+        # changing troop count or the underlying formation.
+        var view_model=preload("res://scripts/front_view.gd")
+        var leaders: Array[Dictionary]=[]
+        for side in range(2):
+            for id in model.command_ids(side): leaders.append(model.find_unit(id))
+        var sectors: Array[Dictionary]=view_model.summarize(model,false)
+        var blue: int=0
+        var red: int=0
+        for sector in sectors:
+            blue+=int(sector["own"])
+            red+=int(sector["enemy"])
+        if sectors.size()!=3 or blue!=model.total_troops(0) or red!=model.total_troops(1):
+            push_error("GUNRYAK_SCENE_FAIL: sector manpower does not reconcile")
+            quit(1)
+            return false
+        var actual: Array[Vector2]=model.formation_slots(leader)
+        var visible: Array[Vector2]=model.representative_slots(leader,72)
+        if visible.size()!=72 or actual.is_empty():
+            push_error("GUNRYAK_SCENE_FAIL: formation presentation missing")
+            quit(1)
+            return false
+        for i in range(visible.size()):
+            if visible[i].distance_to(actual[i%actual.size()])>12.0 or model.terrain_at(visible[i])=="하천":
+                push_error("GUNRYAK_SCENE_FAIL: representative soldier escaped actual anchor")
+                quit(1)
+                return false
+        var local: Array[Vector2]=[Vector2(18,0),Vector2(50,0)]
+        if view_model.local_target(Vector2.ZERO,local,30.0)!=Vector2(18,0) or view_model.local_target(Vector2.ZERO,local,10.0)!=Vector2.INF:
+            push_error("GUNRYAK_SCENE_FAIL: visual contact range incorrect")
+            quit(1)
+            return false
+        if view_model.advance_toward_contact(Vector2.ZERO,Vector2(18,0),1.0,"보병")!=Vector2(9,0):
+            push_error("GUNRYAK_SCENE_FAIL: visual contact displacement incorrect")
+            quit(1)
+            return false
+        var old_speed: float=instance.game_speed
+        var old_time: float=model.battle_time
+        instance.call("_advance_highlight")
+        if not instance.highlight_active or instance.game_speed!=16.0 or model.battle_time!=old_time:
+            push_error("GUNRYAK_SCENE_FAIL: highlight start skipped simulation")
+            quit(1)
+            return false
+        # Run fixed steps in the real scene. Cancel restores the old speed.
+        instance.call("_process",0.1)
+        if model.battle_time<=old_time or model.step_count<1:
+            push_error("GUNRYAK_SCENE_FAIL: highlight did not advance real fixed steps")
+            quit(1)
+            return false
+        instance.call("_stop_highlight","검사 종료",true)
+        if instance.highlight_active or instance.game_speed!=old_speed or not model.paused:
+            push_error("GUNRYAK_SCENE_FAIL: highlight did not restore speed and pause")
+            quit(1)
+            return false
+        model.paused=false
+        var geography=preload("res://scripts/war_sim.gd").new()
+        geography.set_long_operation(true)
+        var signature: String=str(geography.forests)
+        for scenario in range(1,5):
+            if not geography.set_scenario(scenario) or str(geography.forests)==signature:
+                push_error("GUNRYAK_SCENE_FAIL: repeated battlefield geography")
+                quit(1)
+                return false
+            signature=str(geography.forests)
+        print("FRONT_OVERHAUL_PASS: real anchors, reconciled sectors, distinct maps and fixed-step highlights")
         print("COMMAND_OUTCOME_PASS")
         print("GENERAL_MIND_FIXTURE_PASS")
         # Accelerated playback preserves the 25-minute operation clock.
