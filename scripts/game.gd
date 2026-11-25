@@ -1,6 +1,7 @@
 extends Control
 ## 2D tactical screen. Simulation is entirely separate in war_sim.gd.
 const WarSim = preload("res://scripts/war_sim.gd")
+const BattleAudio = preload("res://scripts/battle_audio.gd")
 const TerrainArt = preload("res://scripts/terrain_art.gd")
 const Campaign = preload("res://scripts/campaign.gd")
 const CampaignView = preload("res://scripts/campaign_view.gd")
@@ -92,6 +93,9 @@ var analysis_dialog: AcceptDialog
 var analysis_chart: Control
 var portrait: Control
 var sound_player: AudioStreamPlayer
+var combat_players: Array[AudioStreamPlayer] = []
+var combat_sounds: Dictionary = {}
+var combat_audio_cursor: int=0
 var sound_enabled: bool = true
 var music_player: AudioStreamPlayer
 var tutorial_dialog: AcceptDialog
@@ -1728,6 +1732,12 @@ func _setup_sound() -> void:
     sound_player = AudioStreamPlayer.new()
     sound_player.volume_db = -18.0
     add_child(sound_player)
+    combat_sounds=BattleAudio.build()
+    for i in range(4):
+        var channel:=AudioStreamPlayer.new()
+        channel.volume_db=-13.0
+        add_child(channel)
+        combat_players.append(channel)
     _setup_ambient_music()
 
 func _toggle_sound() -> void:
@@ -1735,6 +1745,7 @@ func _toggle_sound() -> void:
     runtime_notice = "전장 음향 켜짐" if sound_enabled else "전장 음향 꺼짐"
     if not sound_enabled:
         sound_player.stop()
+        for channel in combat_players: channel.stop()
         if is_instance_valid(music_player): music_player.stop()
     elif is_instance_valid(music_player):
         music_player.play()
@@ -1759,6 +1770,19 @@ func _play_cue(frequency: float, duration: float) -> void:
     sound_player.stream = wav
     sound_player.play()
 
+func _play_combat_audio(fx: Dictionary) -> void:
+    if not sound_enabled or combat_players.is_empty(): return
+    var kind: String=str(fx["kind"])
+    if not combat_sounds.has(kind): return
+    var channel: AudioStreamPlayer=combat_players[combat_audio_cursor%combat_players.size()]
+    combat_audio_cursor+=1
+    var midpoint: Vector2=(fx["from"] as Vector2).lerp(fx["to"],0.5)
+    var distance: float=camera_center.distance_to(midpoint)
+    channel.volume_db=-10.0-clampf(distance/55.0,0.0,18.0)
+    channel.pitch_scale=0.96+float(combat_audio_cursor%7)*0.014
+    channel.stream=combat_sounds[kind]
+    channel.play()
+
 func _update_audio_and_warning() -> void:
     var warning: String = ""
     for unit in sim.units:
@@ -1777,8 +1801,8 @@ func _update_audio_and_warning() -> void:
     var fx: Dictionary = sim.visual_effects.back()
     if float(fx["time"]) > last_audio_event:
         last_audio_event = float(fx["time"])
-        if sim.battle_time-last_audio_clock > 0.8 and (not fog_enabled or sim.player_can_see(fx["from"])):
-            _play_cue(130.0 if str(fx["kind"]) == "돌격" else (660.0 if str(fx["kind"]) == "화살" else 320.0),0.10)
+        if sim.battle_time-last_audio_clock > 0.23 and (not fog_enabled or sim.player_can_see(fx["from"])):
+            _play_combat_audio(fx)
             last_audio_clock = sim.battle_time
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -2186,7 +2210,7 @@ func _build_demo_help() -> void:
     tutorial_dialog = AcceptDialog.new()
     tutorial_dialog.title = "군략 · 첫 출전 안내"
     tutorial_dialog.ok_button_text = "확인"
-    tutorial_dialog.dialog_text = "1. 전략 지도에서 인접 지역을 선택합니다. 군량 55가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 종이 작전 지도에서 부대 말·목적지·행동·연계 대상을 지정합니다.\n4. 기본 배속 전투는 약 25분. 장수는 자율적으로 판단하며 5분 경과 후 전령 파견 가능. 긴급 보고를 열어 지원·사수·재집결·철수 지시를 내릴 수 있습니다.\n5. 숫자 1~6 장수 선택, Space 일시정지, 휠 확대, 방향키/가운데 마우스 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
+    tutorial_dialog.dialog_text = "0. 기본 전체 시야: 아군/적군 탭에서 양 진영 활동과 병력을 확인합니다. C: 최근 교전 위치, V: 정찰 시야 전환.\n1. 전략 지도에서 인접 지역을 선택합니다. 군량 55가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 종이 작전 지도에서 부대 말·목적지·행동·연계 대상을 지정합니다.\n4. 기본 배속 전투는 약 25분. 장수는 자율적으로 판단하며 5분 경과 후 전령 파견 가능. 긴급 보고를 열어 지원·사수·재집결·철수 지시를 내릴 수 있습니다.\n5. 숫자 1~6 장수 선택, Space 일시정지, 휠 확대, 방향키/가운데 마우스 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
     add_child(tutorial_dialog)
     retreat_dialog = ConfirmationDialog.new()
     retreat_dialog.title = "전투 철수"
