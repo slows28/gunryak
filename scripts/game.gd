@@ -376,7 +376,7 @@ func _show_enemy_roster() -> void:
     map_layer.queue_redraw()
 
 func _inspect_enemy_row(index: int) -> void:
-    if index<0 or index>=enemy_list.item_count: return
+    if index<0 or index>=enemy_list.item_count or enemy_list.is_item_disabled(index): return
     var id: int=int(enemy_list.get_item_metadata(index))
     var u: Dictionary=sim.find_unit(id)
     if u.is_empty() or not _visible_unit(u): return
@@ -389,24 +389,37 @@ func _inspect_enemy_row(index: int) -> void:
 
 func _refresh_enemy_roster() -> void:
     if not is_instance_valid(enemy_list): return
-    enemy_list.clear()
-    var visible_count: int=0
+    var visible_ids: Array[int]=[]
     for id in sim.command_ids(1):
         var u: Dictionary=sim.find_unit(id)
-        if u.is_empty(): continue
-        if not _visible_unit(u): continue
-        visible_count+=1
-        enemy_list.add_item("%s   %s   %s명" % [str(u["name"]),_field_action(u),_number_text(roundi(float(u["troops"])))])
-        var row: int=enemy_list.item_count-1
-        enemy_list.set_item_metadata(row,id)
-        enemy_list.set_item_custom_fg_color(row,COL_RED)
-        enemy_list.set_item_tooltip(row,"%s · 사기 %d · 응집 %d" % [str(u["type"]),roundi(float(u["morale"])),roundi(float(u["cohesion"]))])
-        if id==observed_enemy_id: enemy_list.select(row)
-    if fog_enabled and visible_count==0:
-        enemy_list.add_item("관측된 적군 없음")
-        enemy_list.set_item_disabled(0,true)
+        if not u.is_empty() and _visible_unit(u): visible_ids.append(id)
+    var rebuild: bool=enemy_list.item_count!=maxi(1,visible_ids.size())
+    if not rebuild and visible_ids.is_empty(): rebuild=enemy_list.get_item_metadata(0)!=-1
+    if not rebuild and not visible_ids.is_empty():
+        for i in range(visible_ids.size()):
+            if enemy_list.get_item_metadata(i)!=visible_ids[i]:
+                rebuild=true
+                break
+    if rebuild:
+        enemy_list.clear()
+        if visible_ids.is_empty():
+            enemy_list.add_item("관측된 적군 없음")
+            enemy_list.set_item_disabled(0,true)
+            enemy_list.set_item_metadata(0,-1)
+        else:
+            for id in visible_ids:
+                enemy_list.add_item("")
+                enemy_list.set_item_metadata(enemy_list.item_count-1,id)
+    for i in range(visible_ids.size()):
+        var u: Dictionary=sim.find_unit(visible_ids[i])
+        enemy_list.set_item_text(i,"%s   %s   %s명" % [str(u["name"]),_field_action(u),_number_text(roundi(float(u["troops"])))])
+        enemy_list.set_item_custom_fg_color(i,COL_RED)
+        enemy_list.set_item_tooltip(i,"%s · 사기 %d · 응집 %d" % [str(u["type"]),roundi(float(u["morale"])),roundi(float(u["cohesion"]))])
+        if visible_ids[i]==observed_enemy_id: enemy_list.select(i)
+    if not visible_ids.has(observed_enemy_id):
         observed_enemy_id=-1
-    enemy_tab.text="적군 %d" % visible_count
+        enemy_list.deselect_all()
+    enemy_tab.text="적군 %d" % visible_ids.size()
     friendly_tab.modulate=Color.WHITE if observing_enemy else COL_BLUE
     enemy_tab.modulate=COL_RED if observing_enemy else Color.WHITE
     fog_button.text="정찰 시야" if fog_enabled else "전체 시야"
@@ -665,7 +678,19 @@ func _refresh_hud() -> void:
         var enemy: Dictionary=sim.find_unit(observed_enemy_id)
         if not enemy.is_empty() and _visible_unit(enemy):
             live_order_label.text="적군 관측 · %s\n%s / %s / %s명\n사기 %d · 응집 %d" % [str(enemy["name"]),str(enemy["type"]),_field_action(enemy),_number_text(roundi(float(enemy["troops"]))),roundi(float(enemy["morale"])),roundi(float(enemy["cohesion"]))]
-        else: live_order_label.text="적군 관측\n군단을 선택하여 위치와 활동 확인"
+            selected_label.text="적장 · "+str(enemy["name"])
+            details_label.text="%s · %s\n가한 피해 %s / 손실 %s" % [_field_action(enemy),str(enemy["formation"]),_number_text(roundi(float(enemy["damage_dealt"]))),_number_text(roundi(float(enemy["casualties_taken"])))] if not fog_enabled else "%s · %s" % [_field_action(enemy),str(enemy["formation"])]
+            decision_label.text="적군 관측 · 명령 불가"
+            details_label.tooltip_text=details_label.text
+            decision_label.tooltip_text=decision_label.text
+        else:
+            live_order_label.text="적군 관측\n군단을 선택하여 위치와 활동 확인"
+            selected_label.text="관측할 적군 선택"
+            details_label.text=""
+            details_label.tooltip_text=""
+            decision_label.text=""
+            decision_label.tooltip_text=""
+        live_order_button.text="아군 작전 지도"
     if is_instance_valid(combat_brief): combat_brief.text=_battle_brief()
     var start_line: int = maxi(0, sim.events.size() - 3)
     var lines: String = ""
@@ -1065,7 +1090,7 @@ func _draw_unit(unit: Dictionary) -> void:
         map_layer.draw_line(p + forward*22.0, p + forward*35.0, Color(accent,0.8), 1.8)
     if detailed_map and str(unit["formation"]) == "방진" and side==0 and int(unit["id"])==selected_id:
         map_layer.draw_rect(Rect2(p-Vector2(25,25),Vector2(50,50)),Color(accent,0.20),false,1.0)
-    if side == 0 and int(unit["id"]) == selected_id:
+    if int(unit["id"]) == (observed_enemy_id if observing_enemy else selected_id):
         # Four unobtrusive selection brackets around the actual formation extent.
         var bounds := Rect2(p,Vector2.ZERO)
         for spot in slots: bounds = bounds.expand(spot)
@@ -1091,7 +1116,7 @@ func _draw_active_routes() -> void:
         if float(u["troops"])<=0.0 or not _visible_unit(u): continue
         var own: bool=int(u["side"])==0
         var chosen: bool=int(u["id"])==(observed_enemy_id if observing_enemy else selected_id)
-        if not own and not chosen: continue
+        if not own and (not chosen or fog_enabled): continue
         if not chosen and not detailed_map and camera_zoom>=0.85: continue
         if float(u.get("bridge_y",-1.0))>=0.0 and own and chosen: continue
         if not chosen and float(u.get("motion_speed",0.0))<2.0: continue
@@ -1099,7 +1124,8 @@ func _draw_active_routes() -> void:
         var goal: Vector2=u["goal"]
         if p.distance_to(goal)<20.0: continue
         var color: Color=Color(COL_BLUE if own else COL_RED,0.82 if chosen else 0.39)
-        var route: Array[Vector2]=sim.committed_route_preview(u) if float(u.get("bridge_y",-1.0))>=0.0 else [goal]
+        var route: Array[Vector2]=[goal]
+        if float(u.get("bridge_y",-1.0))>=0.0: route=sim.committed_route_preview(u)
         for q in route:
             var d: Vector2=q-p
             var length: float=d.length()
@@ -1545,14 +1571,14 @@ func _draw_minimap() -> void:
     draw_rect(mini_rect,Color("#9caa9b"),false,1.0)
 
 func _draw_portrait(canvas: Control) -> void:
-    var unit: Dictionary = sim.find_unit(selected_id)
+    var unit: Dictionary = sim.find_unit(observed_enemy_id if observing_enemy else selected_id)
     if unit.is_empty(): return
     canvas.draw_rect(Rect2(0,0,76,108),Color("#142427"))
     canvas.draw_texture_rect(_commander_icon(str(unit["name"]),int(unit["side"])),Rect2(1,1,74,74),false)
     canvas.draw_rect(Rect2(0,0,76,108),Color("#8d896e"),false,1.2)
     canvas.draw_string(korean_font,Vector2(6,86),"사기",HORIZONTAL_ALIGNMENT_LEFT,-1,10,COL_MUTED)
     canvas.draw_rect(Rect2(6,92,64,6),Color("#0f1c23"))
-    canvas.draw_rect(Rect2(6,92,64*float(unit["morale"])/100.0,6),COL_BLUE)
+    canvas.draw_rect(Rect2(6,92,64*float(unit["morale"])/100.0,6),COL_BLUE if int(unit["side"])==0 else COL_RED)
 
 func _draw_terrain_texture() -> void:
     # Small compass and a clean frame give orientation without repeated labels.
@@ -2476,6 +2502,7 @@ func _change_link(partner: int) -> void:
 func _open_order_map() -> void:
     if not is_instance_valid(order_view) or sim.finished: return
     if order_view.visible: return
+    if observing_enemy: _show_friendly_roster()
     order_pause_before=sim.paused
     if sim.started: sim.paused=true
     order_view.open(sim.started)
