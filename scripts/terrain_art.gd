@@ -1,8 +1,10 @@
 extends RefCounted
 ## Deterministic, continuous terrain art. Gameplay coordinates remain unchanged.
-static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, scenario: int) -> ImageTexture:
-    var w: int = int(extent.x)
-    var h: int = int(extent.y)
+static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, scenario: int, scale: float = 1.0) -> ImageTexture:
+    # Bake half-resolution wide terrain for fast loading; retain true world coordinates.
+    var bake: float = 0.5 if scale > 1.0 else 1.0
+    var w: int = int(extent.x*bake)
+    var h: int = int(extent.y*bake)
     var image := Image.create_empty(w,h,false,Image.FORMAT_RGBA8)
     var noise := FastNoiseLite.new()
     noise.seed = 1700+scenario*19
@@ -20,14 +22,18 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
     var crest := Color("#aaa583")
     for y in range(h):
         for x in range(w):
-            var p := Vector2(x,y)
-            var v: float = noise.get_noise_2d(x,y)*0.5+0.5
-            var g: float = grain.get_noise_2d(x,y)
+            var p := Vector2(x,y)/bake
+            var v: float = noise.get_noise_2d(p.x,p.y)*0.5+0.5
+            var g: float = grain.get_noise_2d(p.x,p.y)
             var ground: Color = dark.lerp(middle,smoothstep(0.1,0.48,v)).lerp(light,smoothstep(0.50,0.90,v))
             ground = ground.lightened(maxf(0.0,g)*0.14).darkened(maxf(0.0,-g)*0.12)
             # Road centers match the simulation; edges are worn, not tiled.
-            var d: float = minf(absf(float(y)-131.0),minf(absf(float(y)-282.0),absf(float(y)-435.0)))
-            var wear: float = 1.0-smoothstep(6.0,15.0,d+g*5.0)
+            var d: float = INF
+            for lane in range(3):
+                var cy: float = [131.0,282.0,435.0][lane]*scale
+                if scale > 1.0: cy += sin(p.x/220.0+float(lane)*1.6)*48.0+sin(p.x/94.0+float(lane))*19.0
+                d = minf(d,absf(p.y-cy))
+            var wear: float = 1.0-smoothstep(6.0,22.0 if scale > 1.0 else 15.0,d+g*5.0)
             ground = ground.lerp(path.lightened(g*0.10),wear*0.80)
             if d < 5.0:
                 ground = ground.darkened((1.0-smoothstep(0.8,2.8,absf(d-3.3)))*0.12)
@@ -52,7 +58,9 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
     rng.seed = 2148+scenario*37
     var tree_images: Array[Image] = []
     for i in range(5):
-        tree_images.append(_tree(i))
+        var tree: Image = _tree(i)
+        if bake < 1.0: tree.resize(22,22,Image.INTERPOLATE_LANCZOS)
+        tree_images.append(tree)
     # Draw forest clusters as overlapping individual crowns, not rectangular tiles.
     var trees: Array[Dictionary] = []
     for forest in forests:
@@ -64,7 +72,7 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
     for t in trees:
         var tree: Image = tree_images[int(t["tile"])]
         var center: Vector2 = t["pos"]
-        image.blend_rect(tree,Rect2i(0,0,tree.get_width(),tree.get_height()),Vector2i(center)-Vector2i(18,23))
+        image.blend_rect(tree,Rect2i(0,0,tree.get_width(),tree.get_height()),Vector2i(center*bake)-Vector2i(Vector2(18,23)*bake))
     return ImageTexture.create_from_image(image)
 
 static func _tree(index: int) -> Image:
