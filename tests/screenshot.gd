@@ -61,6 +61,13 @@ func _capture() -> void:
     if not _save_frame("battle_28s.png"):
         quit(1)
         return
+    game.call("_focus_selected")
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("battle_focus.png"):
+        quit(1)
+        return
+    game.call("_reset_camera")
     for i in range(320):
         game.call("_process", 0.1)
     game.call("_refresh_hud")
