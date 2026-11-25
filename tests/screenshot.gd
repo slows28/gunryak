@@ -155,6 +155,11 @@ func _capture() -> void:
             push_error("VISUAL_CAPTURE_FAIL: scenery atlas cell empty")
             quit(1)
             return
+    var shadow_alpha: float=scenery_pixels.get_pixel(135,230).a
+    if shadow_alpha<0.15 or shadow_alpha>0.60:
+        push_error("VISUAL_CAPTURE_FAIL: bridge shadow must remain translucent")
+        quit(1)
+        return
     var prior_center: Vector2=game.camera_center
     var prior_zoom: float=game.camera_zoom
     game.camera_center=Vector2(game.sim.river_x(850.0),850.0)
