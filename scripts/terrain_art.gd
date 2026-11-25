@@ -24,6 +24,27 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
     var path := Color("#b99a66")
     var shade := Color("#324437")
     var crest := Color("#aaa583")
+    # Distinct terrain moods for actual scenario geometry, not five identical green fields.
+    match scenario:
+        1:
+            dark=Color("#394536")
+            middle=Color("#737957")
+            light=Color("#b8ad83")
+            crest=Color("#c0b299")
+        2:
+            dark=Color("#493e2a")
+            middle=Color("#8b8050")
+            light=Color("#c2b37d")
+            path=Color("#b9a17c")
+        3:
+            dark=Color("#29423c")
+            middle=Color("#647d62")
+            light=Color("#b4b88a")
+        4:
+            dark=Color("#524939")
+            middle=Color("#8c825e")
+            light=Color("#c1b48e")
+            crest=Color("#b3a18b")
     # Use the existing hand-painted resource as material detail, rather than
     # tiling a screenshot or inventing roads that do not exist in the sim.
     var source: Image=PAINTED_GROUND.get_image()
@@ -55,7 +76,10 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             var ground: Color = dark.lerp(middle,smoothstep(0.1,0.48,v)).lerp(light,smoothstep(0.50,0.90,v))
             var uv:=Vector2i(_mirror_sample(roundi(p.x*0.68+v*20.0),112),_mirror_sample(roundi(p.y*0.68+v*14.0),112))
             var painted:Color=grass_art.get_pixelv(uv)
-            ground=ground.lerp(painted,0.61)
+            ground=ground.lerp(painted,0.43)
+            # Broad, irregular dry meadows break up the repeated ground texture.
+            var dry_patch: float=smoothstep(0.56,0.82,v+g*0.09)
+            ground=ground.lerp(path.darkened(0.16),dry_patch*0.26)
             ground=ground.darkened(maxf(0.0,0.47-v)*0.38).lightened(maxf(0.0,v-0.53)*0.17)
             var micro: float = grain.get_noise_2d(p.x*2.1+49.0,p.y*2.1-33.0)
             ground = ground.lightened(maxf(0.0,g)*0.20+maxf(0.0,micro)*0.19).darkened(maxf(0.0,-g)*0.18+maxf(0.0,-micro)*0.15)
@@ -79,7 +103,7 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                 ground = ground.lightened(maxf(0.0,micro)*0.08)
             for forest in forests:
                 var n: Vector2 = (p-forest.get_center())/(forest.size*0.5+Vector2(9,9))
-                var edge: float = maxf(absf(n.x),absf(n.y))+g*0.09
+                var edge: float = pow(pow(absf(n.x),3.0)+pow(absf(n.y),3.0),1.0/3.0)+g*0.12
                 var cover: float = 1.0-smoothstep(0.72,1.08,edge)
                 if cover>0.0:
                     var forest_color:Color=shade.lerp(forest_art.get_pixelv(uv),0.72)
@@ -91,8 +115,9 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                 var hill_shade: float = clampf(0.48-hp.x*0.24-hp.y*0.31+g*0.10,0.0,1.0)
                 var rock: Color = shade.lerp(crest,hill_shade).lerp(hill_art.get_pixelv(uv),0.72)
                 ground = ground.lerp(rock,smoothstep(0.0,0.30,elevation)*0.90*(1.0-wear))
-                var band: float = absf(fmod(elevation*8.0,1.0)-0.5)
-                if band < 0.045: ground = ground.darkened(0.12)
+                # Broken slope faces rather than artificial concentric contour bands.
+                var ridge: float=absf(sin(hp.x*11.0+hp.y*4.0+g*0.55))
+                ground=ground.darkened((1.0-smoothstep(0.02,0.24,ridge))*elevation*0.16)
             if scale > 1.0:
                 var rx: float = rivers[y]
                 var bank: float = absf(p.x-rx)
@@ -186,9 +211,9 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             if road_distance<43.0 or bank<54.0: continue
             var kind: int=2
             var density: float=noise.get_noise_2d(p.x*1.4+100,p.y*1.4-80)
-            if density < -0.18 and i%4!=0: continue
+            if density < -0.04 and i%6!=0: continue
             if bank<105.0 or hill.has_point(p): kind=0 if i%3==0 else 1
-            elif i%7==0 and density>0.0: kind=1
+            elif i%9==0 and density>0.22: kind=1
             decor.append({"pos":p,"tile":kind*3+rng.randi_range(0,2)})
         decor.sort_custom(func(a: Dictionary,b: Dictionary) -> bool: return (a["pos"] as Vector2).y<(b["pos"] as Vector2).y)
         for item in decor:
