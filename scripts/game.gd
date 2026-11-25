@@ -730,7 +730,7 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     var attachment: Vector2 = chosen.get_center()
     map_layer.draw_line(p,attachment,Color(accent,0.55),1.0*inv,true)
     map_layer.draw_rect(Rect2(chosen.position+Vector2(2,2)*inv,chosen.size),Color(0,0,0,0.38))
-    map_layer.draw_rect(chosen,Color("#142427",0.92))
+    map_layer.draw_rect(chosen,Color(Color("#142427"),0.92))
     if selected: map_layer.draw_rect(chosen,COL_GOLD,false,1.1*inv)
     map_layer.draw_rect(Rect2(chosen.position,Vector2(3.0*inv,height)),accent)
     _draw_string(label,chosen.position+Vector2(7.0*inv,14.0*inv),fs,COL_TEXT)
@@ -1280,7 +1280,7 @@ func _build_title_screen() -> void:
     title_screen.size = Vector2(1280,800)
     add_child(title_screen)
     var bg := ColorRect.new()
-    bg.color = Color("#201c17")
+    bg.color = Color("#101b1e")
     bg.size = title_screen.size
     title_screen.add_child(bg)
     var art := TextureRect.new()
@@ -1302,6 +1302,11 @@ func _build_title_screen() -> void:
     sub.position = Vector2(694,245)
     sub.add_theme_font_size_override("font_size",22)
     title_screen.add_child(sub)
+    var divider := ColorRect.new()
+    divider.color = Color("#9c875d")
+    divider.position = Vector2(694,285)
+    divider.size = Vector2(413,1)
+    title_screen.add_child(divider)
     _title_button("새 북벌 캠페인",Vector2(690,310),_begin_campaign)
     _title_button("캠페인 이어하기",Vector2(690,366),_continue_campaign)
     _title_button("단독 전투",Vector2(690,422),_leave_title)
@@ -1321,6 +1326,7 @@ func _title_button(caption: String, pos: Vector2, callback: Callable) -> void:
     btn.position = pos
     btn.size = Vector2(420,50)
     btn.add_theme_font_size_override("font_size",20)
+    if caption == "새 북벌 캠페인": _primary_button(btn)
     title_screen.add_child(btn)
     btn.pressed.connect(callback)
 
@@ -1359,7 +1365,7 @@ func _build_outcome_dialog() -> void:
     panel.position = Vector2(250,103)
     panel.size = Vector2(780,594)
     var style := StyleBoxFlat.new()
-    style.bg_color = Color("#252720")
+    style.bg_color = Color("#1b2b2d")
     style.border_color = Color("#c4a66b")
     style.set_border_width_all(2)
     style.set_corner_radius_all(6)
@@ -1407,13 +1413,16 @@ func _build_outcome_dialog() -> void:
     buttons.add_child(analysis)
     campaign_next = Button.new()
     campaign_next.text = "다음 전투 준비"
-    campaign_next.custom_minimum_size = Vector2(168,38)
+    campaign_next.custom_minimum_size = Vector2(230,38)
+    _primary_button(campaign_next)
     campaign_next.pressed.connect(_advance_campaign)
     buttons.add_child(campaign_next)
     outcome_dialog.hide()
 
 func _show_outcome() -> void:
-    outcome_heading.text = sim.result
+    outcome_heading.text = ("승전  /  " if sim.winning_side == 0 else "패전  /  ") + sim.result
+    outcome_heading.add_theme_font_size_override("font_size",25)
+    outcome_heading.add_theme_color_override("font_color",COL_GOLD if sim.winning_side == 0 else COL_RED)
     outcome_text.text = "%s  /  %.1f초  /  전령 도착 %d · 차단 %d\n긴급 지시 수락 %d · 거부 %d" % [sim.scenario_title,sim.battle_time,sim.delivered_orders,sim.intercepted_orders,sim.tactical_delivered,sim.tactical_refused]
     if campaign_active:
         if not battle_recorded:
@@ -1426,9 +1435,21 @@ func _show_outcome() -> void:
     for unit in sim.units:
         if int(unit["side"]) != 0 or int(unit["id"]) >= 3:
             continue
+        var card := PanelContainer.new()
+        var card_style := StyleBoxFlat.new()
+        card_style.bg_color = Color("#142427")
+        card_style.border_color = Color("#465b58")
+        card_style.set_border_width_all(1)
+        card_style.set_corner_radius_all(4)
+        card_style.content_margin_left = 8
+        card_style.content_margin_right = 8
+        card_style.content_margin_top = 3
+        card_style.content_margin_bottom = 3
+        card.add_theme_stylebox_override("panel",card_style)
+        outcome_cards.add_child(card)
         var row := HBoxContainer.new()
         row.add_theme_constant_override("separation",12)
-        outcome_cards.add_child(row)
+        card.add_child(row)
         var portrait_image := TextureRect.new()
         var icon := AtlasTexture.new()
         icon.atlas = PAINTED_ART
