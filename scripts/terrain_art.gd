@@ -14,10 +14,10 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
     grain.seed = 48+scenario
     grain.frequency = 0.17
     grain.fractal_octaves = 2
-    var dark := Color("#364c40")
-    var middle := Color("#63734e")
-    var light := Color("#87916a")
-    var path := Color("#a99a72")
+    var dark := Color("#344635")
+    var middle := Color("#65784b")
+    var light := Color("#939b5e")
+    var path := Color("#ad9268")
     var shade := Color("#324437")
     var crest := Color("#aaa583")
     for y in range(h):
@@ -26,7 +26,8 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             var v: float = noise.get_noise_2d(p.x,p.y)*0.5+0.5
             var g: float = grain.get_noise_2d(p.x,p.y)
             var ground: Color = dark.lerp(middle,smoothstep(0.1,0.48,v)).lerp(light,smoothstep(0.50,0.90,v))
-            ground = ground.lightened(maxf(0.0,g)*0.14).darkened(maxf(0.0,-g)*0.12)
+            var micro: float = grain.get_noise_2d(p.x*2.1+49.0,p.y*2.1-33.0)
+            ground = ground.lightened(maxf(0.0,g)*0.19+maxf(0.0,micro)*0.11).darkened(maxf(0.0,-g)*0.16+maxf(0.0,-micro)*0.08)
             # Road centers match the simulation; edges are worn, not tiled.
             var d: float = INF
             for lane in range(3):
@@ -34,7 +35,9 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                 if scale > 1.0: cy += sin(p.x/220.0+float(lane)*1.6)*48.0+sin(p.x/94.0+float(lane))*19.0
                 d = minf(d,absf(p.y-cy))
             var wear: float = 1.0-smoothstep(6.0,22.0 if scale > 1.0 else 15.0,d+g*5.0)
-            ground = ground.lerp(path.lightened(g*0.10),wear*0.80)
+            ground = ground.lerp(path.lightened(g*0.14).darkened(maxf(0.0,-micro)*0.16),wear*0.94)
+            if d > 25.0 and micro > 0.44:
+                ground = ground.lerp(Color("#9aa96a"),(micro-0.44)*0.24)
             if d < 5.0:
                 ground = ground.darkened((1.0-smoothstep(0.8,2.8,absf(d-3.3)))*0.12)
             for forest in forests:
@@ -56,10 +59,11 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                 var bank: float = absf(p.x-rx)
                 var bridge: bool = absf(p.y-390.0)<=38.0 or absf(p.y-850.0)<=38.0 or absf(p.y-1300.0)<=38.0
                 if bank < 41.0:
-                    ground = ground.lerp(Color("#a49871"),(1.0-smoothstep(28.0,41.0,bank))*0.88)
+                    ground = ground.lerp(Color("#908b70").lightened(maxf(0.0,micro)*0.16),(1.0-smoothstep(28.0,41.0,bank))*0.88)
                 if bank < 27.0:
                     var water: Color = Color("#335d65").lerp(Color("#729b96"),smoothstep(0.3,0.8,v))
-                    water = water.lightened(maxf(0.0,sin(p.y*0.22+p.x*0.09))*0.08)
+                    water = water.lightened(maxf(0.0,sin(p.y*0.22+p.x*0.09))*0.12)
+                    water = water.lerp(Color("#d3d6ae"),(1.0-smoothstep(0.0,3.0,absf(bank-25.0)))*maxf(0.0,g+0.25)*0.34)
                     ground = ground.lerp(water,1.0-smoothstep(24.0,27.0,bank))
                     if bridge:
                         var board: Color = Color("#95795a").lightened(g*0.1)
@@ -70,6 +74,23 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             image.set_pixel(x,y,ground)
     var rng := RandomNumberGenerator.new()
     rng.seed = 2148+scenario*37
+    # Cached grass tufts and pebbles, kept off roads, waterways and forest interiors.
+    if scale > 1.0:
+        for i in range(5600):
+            var point:=Vector2(rng.randf_range(8,extent.x-8),rng.randf_range(8,extent.y-8))
+            var road_distance: float=INF
+            for lane in range(3):
+                var cy: float=[131.0,282.0,435.0][lane]*scale+sin(point.x/220.0+float(lane)*1.6)*48.0+sin(point.x/94.0+float(lane))*19.0
+                road_distance=minf(road_distance,absf(point.y-cy))
+            var river: float=absf(point.x-(1120.0+sin(point.y/225.0)*100.0+sin(point.y/89.0)*34.0))
+            if road_distance < 24.0 or river < 45.0: continue
+            var pixel:=Vector2i(point*bake)
+            var base: Color=image.get_pixel(pixel.x,pixel.y)
+            for j in range(3):
+                var xx: int=pixel.x+j-1
+                var yy: int=pixel.y-1-((i+j)%2)
+                image.set_pixel(xx,yy,base.lightened(0.12+float(j)*0.025))
+            image.set_pixel(pixel.x,pixel.y,base.darkened(0.22))
     var tree_images: Array[Image] = []
     for i in range(5):
         var tree: Image = _tree(i)
@@ -160,3 +181,22 @@ static func campaign_map(nodes: Array, owned: Array) -> ImageTexture:
             c = c.darkened((1.0-smoothstep(0.0,38.0,edge))*0.24)
             image.set_pixel(x,y,c)
     return ImageTexture.create_from_image(image)
+
+# Soft, irregular translucent texture generated once. It is used only for actual
+# soil-contact particles, not baked into terrain or screenshot artwork.
+static func dust_cloud() -> ImageTexture:
+    var img:=Image.create_empty(64,64,false,Image.FORMAT_RGBA8)
+    var noise:=FastNoiseLite.new()
+    noise.seed=381
+    noise.frequency=0.095
+    noise.fractal_octaves=3
+    for y in range(64):
+        for x in range(64):
+            var p:=Vector2(x,y)
+            var d: float=(p-Vector2(31.5,31.5)).length()/31.5
+            var n: float=noise.get_noise_2d(x,y)*0.5+0.5
+            var a: float=pow(maxf(0.0,1.0-d),1.3)*(0.45+0.55*n)
+            var c: Color=Color("#baa17d").lerp(Color("#e2c89b"),n)
+            c.a=a
+            img.set_pixel(x,y,c)
+    return ImageTexture.create_from_image(img)
