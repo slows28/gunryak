@@ -30,6 +30,9 @@ var scenario_limit: float = MAX_SECONDS
 var forests: Array[Rect2] = []
 var hill: Rect2 = Rect2(400, 213, 108, 89)
 var timeline: Array[Dictionary] = []
+var visual_effects: Array[Dictionary] = []
+var troop_history: Array[Dictionary] = []
+var sample_at: float = 0.0
 var pending_reports: Array[Dictionary] = []
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var battle_time: float = 0.0
@@ -49,6 +52,9 @@ func _init() -> void:
 
 func reset() -> void:
     timeline.clear()
+    visual_effects.clear()
+    troop_history.clear()
+    sample_at = 0.0
     pending_reports.clear()
     units.clear()
     bases.clear()
@@ -114,7 +120,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
         "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
         "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
-        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기"
+        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0
     }
     _set_general_profile(unit)
     if unit_type == "기병":
@@ -218,6 +224,7 @@ func step(dt: float) -> void:
     _combat(dt)
     _update_outposts(dt)
     _check_victory()
+    _record_presentation()
 
 func _on_new_turn() -> void:
     _log("작전 %d턴 진입" % turn)
@@ -956,6 +963,11 @@ func _combat(dt: float) -> void:
         unit["fatigue"] = minf(100.0, float(unit["fatigue"]) + dt * 0.60)
         var damage: float = attack * (float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"]))) * (float(unit["morale"]) / 100.0) * exposure * supply_factor * dt
         damage_entries.append({"target":int(enemy["id"]), "source":int(unit["id"]), "damage":maxf(0.0, damage + shock), "flank":flank or rear, "shock":shock, "ambush":ambush})
+        if shock > 0.0 or battle_time - float(unit["last_visual"]) >= (0.9 if unit_type == "궁병" else 0.55):
+            unit["last_visual"] = battle_time
+            visual_effects.append({"from":pos,"to":ep,"side":int(unit["side"]),"kind":"돌격" if shock > 0.0 else ("화살" if unit_type == "궁병" else "근접"),"time":battle_time})
+            if visual_effects.size() > 100:
+                visual_effects.pop_front()
     for entry in damage_entries:
         var defender: Dictionary = find_unit(int(entry["target"]))
         if defender.is_empty() or float(defender["troops"]) <= 0.0:
@@ -1733,3 +1745,11 @@ func request_deputy_takeover(unit_id: int) -> bool:
     couriers.append({"pos":commanders[0]["pos"],"unit_id":unit_id,"side":0,"mission":unit["mission"],"policy":unit["policy"],"appoint_deputy":true})
     _log("%s 부대에 부장 지휘 승계 전령 파견" % str(unit["name"]))
     return true
+
+func _record_presentation() -> void:
+    for i in range(visual_effects.size()-1,-1,-1):
+        if battle_time - float(visual_effects[i]["time"]) > 1.2:
+            visual_effects.remove_at(i)
+    if battle_time >= sample_at or finished:
+        troop_history.append({"time":battle_time,"blue":total_troops(0),"red":total_troops(1)})
+        sample_at = battle_time + 2.0
