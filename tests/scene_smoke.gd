@@ -152,6 +152,16 @@ func _process(_dt: float) -> bool:
         model.paused=false
         var geography=preload("res://scripts/war_sim.gd").new()
         geography.set_long_operation(true)
+        # Open-field objectives must not imply any fortification.
+        if not geography.structures.is_empty():
+            push_error("GUNRYAK_SCENE_FAIL: open field contains fortifications")
+            quit(1)
+            return false
+        for site in geography.outposts:
+            if "관문" in str(site["name"]) or "성문" in str(site["name"]):
+                push_error("GUNRYAK_SCENE_FAIL: open-field objective mislabeled as gate")
+                quit(1)
+                return false
         var signature: String=str(geography.forests)
         for scenario in range(1,5):
             if not geography.set_scenario(scenario) or str(geography.forests)==signature:
@@ -159,6 +169,17 @@ func _process(_dt: float) -> bool:
                 quit(1)
                 return false
             signature=str(geography.forests)
+        # Siege gate physically joins the north/south wall segments.
+        var gates: Array[Rect2]=[]
+        var walls: Array[Rect2]=[]
+        for structure in geography.structures:
+            if str(structure["kind"])=="성문": gates.append(structure["rect"])
+            else: walls.append(structure["rect"])
+        if gates.size()!=1 or walls.size()!=2 or absf(walls[0].end.y-gates[0].position.y)>0.1 or absf(gates[0].end.y-walls[1].position.y)>0.1:
+            push_error("GUNRYAK_SCENE_FAIL: siege gate not integrated with adjacent walls")
+            quit(1)
+            return false
+        print("OBJECTIVE_GEOGRAPHY_PASS")
         print("FRONT_OVERHAUL_PASS: real anchors, reconciled sectors, distinct maps and fixed-step highlights")
         print("COMMAND_OUTCOME_PASS")
         print("GENERAL_MIND_FIXTURE_PASS")
