@@ -6,11 +6,15 @@ const INK=Color("#554735")
 const GOLD=Color("#d5b473")
 const BLUE=Color("#315b79")
 const RED=Color("#934e3e")
-const MAP=Rect2(228,90,800,582)
+const MAP=Rect2(344,76,713,628)
+const DESK=Color("#131a22")
+const SHEET=Color("#ede4d0")
+const RAIL=Color("#1c2732")
+const SHEET_TEXT=Color("#282720")
+const SHEET_MUTED=Color("#66543d")
 const ART=preload("res://assets/art/fieldcraft.svg")
 const PARCHMENT=preload("res://assets/art/war_parchment.svg")
 const COMMAND_SKIN=preload("res://assets/art/command_skin.svg")
-const PORTRAITS=preload("res://assets/art/painted_atlas.webp")
 var game: Control
 var sim
 var font: Font
@@ -45,70 +49,67 @@ func configure(owner_game: Control,used_font: Font) -> void:
     font=used_font
     size=Vector2(1280,800)
     mouse_filter=Control.MOUSE_FILTER_STOP
-    title=_label("",Vector2(128,11),Vector2(740,40),23,GOLD)
-    _label("軍略",Vector2(25,7),Vector2(100,48),33,GOLD)
-    progress_label=_label("",Vector2(128,48),Vector2(850,20),12,Color("#b2a78d"))
-    _label("軍略   /   作戰圖",Vector2(1040,18),Vector2(220,40),20,GOLD)
-    _label("아군 군단",Vector2(23,87),Vector2(180,32),19,GOLD)
+    _label("軍略",Vector2(20,8),Vector2(82,39),24,GOLD)
+    title=_label("",Vector2(111,7),Vector2(555,38),24,Color("#f3ecdc"))
+    progress_label=_label("",Vector2(682,13),Vector2(578,30),14,Color("#cdd8d9"))
+    progress_label.horizontal_alignment=HORIZONTAL_ALIGNMENT_RIGHT
+    progress_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    _label("아군 군단",Vector2(1082,86),Vector2(160,29),20,Color("#f3ecdc"))
     roster=ItemList.new()
-    roster.position=Vector2(16,128)
-    roster.size=Vector2(199,344)
-    roster.add_theme_font_size_override("font_size",15)
-    roster.add_theme_constant_override("v_separation",9)
-    roster.fixed_icon_size=Vector2i(40,40)
-    roster.add_theme_stylebox_override("panel",_panel_style("#1e201d","#77603d"))
-    roster.add_theme_stylebox_override("selected",_panel_style("#50402c","#e4bd6b"))
-    roster.add_theme_stylebox_override("selected_focus",_panel_style("#50402c","#e4bd6b"))
+    roster.position=Vector2(1077,126)
+    roster.size=Vector2(178,335)
+    roster.add_theme_font_size_override("font_size",14)
+    roster.add_theme_constant_override("v_separation",8)
+    roster.fixed_icon_size=Vector2i(34,34)
     add_child(roster)
     roster.item_selected.connect(func(index: int): _select(int(roster.get_item_metadata(index))))
-    _label("지도 조작",Vector2(24,478),Vector2(185,25),16,GOLD)
     placement=CheckButton.new()
     placement.text="초기 배치"
-    placement.position=Vector2(20,512)
+    placement.position=Vector2(1079,476)
+    placement.tooltip_text="아군 배치 구역 안에서 군단의 출발점 이동"
     add_child(placement)
-    var guide=_label("① 군단 선택\n② 말을 끌어 목표 지정\n③ 행동·연계 확정\n\n초기 배치는 아군 영역 내",Vector2(24,550),Vector2(190,108),13,Color("#c4b69e"))
-    guide.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    _label("작전 지시",Vector2(1048,88),Vector2(220,30),19,GOLD)
-    info=_label("",Vector2(1111,125),Vector2(155,103),13,Color("#eadbc1"))
+    _label("지도에서 목적지 지정\n군단 말을 끌어도 됩니다.",Vector2(1082,522),Vector2(167,56),13,Color("#cdd8d9"))
+    _label("명령 편집",Vector2(35,88),Vector2(276,30),21,SHEET_TEXT)
+    info=_label("",Vector2(111,126),Vector2(202,85),14,SHEET_TEXT)
     info.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    _label("① 목적지 · 지도에서 지정",Vector2(1048,219),Vector2(220,24),14,GOLD)
-    destination_label=_label("",Vector2(1048,245),Vector2(220,35),14,Color("#eadbc1"))
-    _label("② 행동 지시",Vector2(1048,285),Vector2(220,23),14,GOLD)
-    action_choice=_choice(Vector2(1046,310),Vector2(218,39),ACTIONS)
+    _label("목적지",Vector2(35,221),Vector2(276,23),15,SHEET_MUTED)
+    destination_label=_label("",Vector2(35,245),Vector2(276,40),15,SHEET_TEXT)
+    destination_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    _label("행동",Vector2(35,296),Vector2(276,24),15,SHEET_MUTED)
+    action_choice=_choice(Vector2(35,326),Vector2(276,39),ACTIONS)
     action_choice.hide()
     var labels:Array[String]=["이동","공격","사수","엄호","우회","구원","예비","철수"]
     for i in range(ACTIONS.size()):
-        var b:Button=_button(labels[i],Vector2(1047+(i%2)*109,312+floori(float(i)/2.0)*38),Vector2(104,34),_choose_action.bind(i))
+        var b:Button=_button(labels[i],Vector2(35+(i%2)*141,326+floori(float(i)/2.0)*40),Vector2(135,34),_choose_action.bind(i))
+        _paper_button(b)
         b.toggle_mode=true
         b.tooltip_text=ACTIONS[i]
         action_buttons.append(b)
-    action_description=_label("",Vector2(1048,466),Vector2(218,42),12,Color("#c4b69e"))
+    action_description=_label("",Vector2(35,486),Vector2(276,38),13,SHEET_MUTED)
     action_description.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    destination_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    _label("③ 협동 대상",Vector2(1048,510),Vector2(216,25),14,GOLD)
-    partner_choice=_choice(Vector2(1046,537),Vector2(218,39),[])
+    _label("협동 대상",Vector2(35,532),Vector2(276,23),15,SHEET_MUTED)
+    partner_choice=_choice(Vector2(35,560),Vector2(276,38),[])
     partner_choice.item_selected.connect(func(_i: int): _mark_draft())
-    apply=_button("지시 확정",Vector2(1046,585),Vector2(218,42),_apply)
-    _button("미확정 취소",Vector2(1046,633),Vector2(218,31),func():
+    _paper_button(partner_choice)
+    partner_choice.add_theme_constant_override("modulate_arrow",1)
+    apply=_button("지시 확정",Vector2(35,625),Vector2(135,43),_apply)
+    game._primary_button(apply)
+    var cancel := _button("초안 취소",Vector2(176,625),Vector2(135,43),func():
         drafts.erase(selected_id)
         draft_dirty=false
         _select(selected_id)
         feedback.text="이 군단의 미확정 변경을 취소했습니다.")
-    feedback=_label("",Vector2(25,690),Vector2(920,31),15,GOLD)
+    _paper_button(cancel)
+    feedback=_label("",Vector2(274,727),Vector2(776,52),15,Color("#f3ecdc"))
     feedback.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    _button("상세 편성",Vector2(22,733),Vector2(170,44),func(): game.call("_open_planning"))
-    _button("메뉴",Vector2(205,733),Vector2(116,44),func():
+    _button("상세 편성",Vector2(18,733),Vector2(126,41),func(): game.call("_open_planning"))
+    _button("메뉴",Vector2(153,733),Vector2(100,41),func():
         if _review_pending_draft(): return
         hide()
         game.call("_show_title"))
-    _label("진형과 교전 방식은 장수에게 위임",Vector2(340,737),Vector2(650,33),13,Color("#b8aa8c"))
-    launch=_button("전투 개시",Vector2(1008,721),Vector2(252,58),_launch)
-    var style:=StyleBoxFlat.new()
-    style.bg_color=Color("#704133")
-    style.border_color=GOLD
-    style.set_border_width_all(2)
-    launch.add_theme_stylebox_override("normal",style)
-    launch.add_theme_font_size_override("font_size",22)
+    launch=_button("전투 개시",Vector2(1067,725),Vector2(198,57),_launch)
+    game._primary_button(launch)
+    launch.add_theme_font_size_override("font_size",21)
     hide()
 
 func _label(t:String,p:Vector2,s:Vector2,fs:int,c:Color)->Label:
@@ -137,17 +138,25 @@ func _button(t:String,p:Vector2,s:Vector2,callback:Callable)->Button:
     b.position=p
     b.size=s
     b.pressed.connect(callback)
-    b.add_theme_stylebox_override("normal",_panel_style("#2b2a24","#957b4b"))
-    b.add_theme_stylebox_override("hover",_panel_style("#51432c","#e7c77d"))
-    b.add_theme_stylebox_override("pressed",_panel_style("#655135","#f1d79b"))
-    b.add_theme_stylebox_override("hover_pressed",_panel_style("#655135","#f1d79b"))
     add_child(b)
     return b
 
+func _paper_button(button: Button) -> void:
+    button.add_theme_stylebox_override("normal",game._ui_box(Color("#f6efdf"),Color("#c9b99d")))
+    button.add_theme_stylebox_override("hover",game._ui_box(Color("#fff7e7"),Color("#9c694c")))
+    button.add_theme_stylebox_override("pressed",game._ui_box(Color("#5b3e31")))
+    button.add_theme_stylebox_override("hover_pressed",game._ui_box(Color("#704a39")))
+    button.add_theme_stylebox_override("focus",game._ui_box(Color.TRANSPARENT,Color("#a43d2e")))
+    button.add_theme_color_override("font_color",SHEET_TEXT)
+    button.add_theme_color_override("font_hover_color",SHEET_TEXT)
+    button.add_theme_color_override("font_focus_color",SHEET_TEXT)
+    button.add_theme_color_override("font_pressed_color",Color.WHITE)
+    button.add_theme_color_override("font_hover_pressed_color",Color.WHITE)
+
 func open(mid_battle:bool=false)->void:
     in_battle=mid_battle
-    title.text=sim.scenario_title+"  /  "+("전령 지시" if mid_battle else "작전 회의")
-    progress_label.text="군단 선택   ›   목적지 지정   ›   행동과 연계   ›   지시 확정"
+    title.text=("전령 지시" if mid_battle else "작전 지도")+"   /   "+sim.scenario_title
+    progress_label.text="군단 선택 → 목적지 지정 → 지시 확정"
     launch.text="전장 복귀" if mid_battle else "전투 개시"
     placement.disabled=mid_battle
     placement.set_pressed_no_signal(false)
@@ -241,7 +250,7 @@ func _update_destination()->void:
     elif has_destination:
         progress_label.text="행동과 연계를 검토하고 지시를 확정하십시오."
     else:
-        progress_label.text="군단 선택   ›   목적지 지정   ›   행동과 연계   ›   지시 확정"
+        progress_label.text="군단 선택 → 목적지 지정 → 지시 확정"
     if in_battle or draft_dirty:
         feedback.text=problem if not problem.is_empty() else ("도착 전까지 현재 지시를 유지합니다." if in_battle else "지시를 확정하거나 다른 군단의 계획을 작성할 수 있습니다.")
 
@@ -325,24 +334,24 @@ func _gui_input(event:InputEvent)->void:
         accept_event()
 
 func _draw()->void:
-    draw_rect(Rect2(0,0,1280,800),Color("#171915"))
-    draw_texture_rect_region(COMMAND_SKIN,Rect2(0,0,1280,68),Rect2(0,0,256,256))
-    for i in range(6):
-        draw_line(Vector2(0,65+i),Vector2(1280,65+i),Color(0.8,0.62,0.32,0.16-float(i)*0.018),1.0)
-    draw_line(Vector2(12,69),Vector2(1268,69),GOLD,1.0)
-    for panel in [Rect2(12,77,207,601),Rect2(1038,77,234,601),Rect2(12,683,1260,107)]:
-        _frame(panel)
+    draw_rect(Rect2(0,0,1280,800),DESK)
+    draw_rect(Rect2(0,0,1280,56),Color("#202c38"))
+    draw_rect(Rect2(0,0,6,56),Color("#cf674e"))
+    draw_rect(Rect2(16,76,312,628),SHEET)
+    draw_rect(Rect2(16,76,312,4),Color("#a43d2e"))
+    draw_line(Vector2(35,220),Vector2(311,220),Color("#c9b99d"))
+    draw_line(Vector2(35,613),Vector2(311,613),Color("#c9b99d"))
+    draw_rect(Rect2(1068,76,196,628),RAIL)
+    draw_rect(Rect2(0,714,1280,86),RAIL)
     if sim==null: return
-    draw_rect(MAP.grow(6),Color("#49341e"))
     draw_texture_rect(PARCHMENT,MAP,false)
-    draw_rect(MAP.grow(2),Color("#d0af70"),false,1.5)
-    _scroll_rod(MAP.position.x-3.0)
-    _scroll_rod(MAP.end.x+3.0)
-    for band in range(10):
-        draw_rect(MAP.grow(-float(band)*2.4),Color(0.32,0.20,0.08,0.028),false,3.0)
-    for i in range(6):
-        var fold_x:float=MAP.position.x+MAP.size.x*(float(i)+0.5)/6.0
-        draw_line(Vector2(fold_x,MAP.position.y),Vector2(fold_x+1,MAP.end.y),Color(0.38,0.27,0.14,0.045),1.0)
+    draw_rect(MAP.grow(1),Color("#998568"),false,1.0)
+    for mark in range(1,8):
+        var x: float=MAP.position.x+MAP.size.x*mark/8.0
+        draw_line(Vector2(x,MAP.position.y),Vector2(x,MAP.end.y),Color(0.32,0.22,0.10,0.11))
+    for mark in range(1,6):
+        var y: float=MAP.position.y+MAP.size.y*mark/6.0
+        draw_line(Vector2(MAP.position.x,y),Vector2(MAP.end.x,y),Color(0.32,0.22,0.10,0.11))
     var rng:=RandomNumberGenerator.new()
     rng.seed=41+sim.scenario_id
     for i in range(260):
@@ -479,17 +488,16 @@ func _draw()->void:
     draw_line(scale_origin,scale_origin+Vector2(94,0),INK,1.4)
     for dx in [0,47,94]: draw_line(scale_origin+Vector2(dx,-4),scale_origin+Vector2(dx,4),INK,1.2)
     _ink("거리 눈금",scale_origin+Vector2(21,-8),10,INK)
-    _plate("한중 방면  /  군사지도",MAP.position+Vector2(99,20),14,Color("#eddbad"))
     _ink("북로",_point(Vector2(sim.field_size.x*0.65,sim.road_y(sim.field_size.x*0.65,0)) )+Vector2(0,-12),12,INK)
     _ink("남로",_point(Vector2(sim.field_size.x*0.65,sim.road_y(sim.field_size.x*0.65,2)) )+Vector2(0,-12),12,INK)
     var u:Dictionary=sim.find_unit(selected_id)
     if not u.is_empty():
         var portrait:AtlasTexture=_portrait(str(u["name"]))
         if portrait!=null:
-            draw_texture_rect(portrait,Rect2(1047,125,59,79),false)
+            draw_texture_rect(portrait,Rect2(35,124,64,75),false)
         else:
-            _art(3,Rect2(1042,125,69,79))
-    _plate("━ 작전 경로   ·   ┄ 협동 대상",Vector2(373,650),12,Color("#dbc58d"))
+            _art(3,Rect2(35,124,64,75))
+    _plate("━ 작전 경로   ·   ┄ 협동 대상",MAP.position+Vector2(130,MAP.size.y-21),12,Color("#dbc58d"))
 
 func _ink(t:String,p:Vector2,fs:int,c:Color)->void:
     if font!=null: draw_string(font,p,t,HORIZONTAL_ALIGNMENT_LEFT,-1,fs,c)
@@ -522,35 +530,6 @@ func _portrait(name:String)->AtlasTexture:
     var side: int=0 if name in ["왕평","마속","위연","강유","관흥","장익"] else 1
     return game.call("_commander_icon",name,side)
 
-func _panel_style(bg:String,border:String)->StyleBoxFlat:
-    var style:=StyleBoxFlat.new()
-    style.bg_color=Color(bg)
-    style.border_color=Color(border)
-    style.set_border_width_all(1)
-    style.corner_radius_top_left=3
-    style.corner_radius_top_right=3
-    style.corner_radius_bottom_left=3
-    style.corner_radius_bottom_right=3
-    style.content_margin_left=7
-    style.content_margin_right=7
-    return style
-
-func _frame(rect:Rect2)->void:
-    draw_texture_rect_region(COMMAND_SKIN,rect,Rect2(0,0,256,256))
-    draw_texture_rect_region(COMMAND_SKIN,Rect2(rect.position,Vector2(37,37)),Rect2(256,0,128,128),Color(1,1,1,0.68))
-    draw_rect(rect,Color("#a38a53"),false,1.4)
-    draw_rect(rect.grow(-4),Color("#594a30"),false,1.0)
-    for corner in [rect.position,Vector2(rect.end.x,rect.position.y),rect.end,Vector2(rect.position.x,rect.end.y)]:
-        var d:Vector2=Vector2(1 if corner.x==rect.position.x else -1,1 if corner.y==rect.position.y else -1)
-        draw_polyline(PackedVector2Array([corner+Vector2(d.x*19,0),corner+Vector2(d.x*5,d.y*5),corner+Vector2(0,d.y*19)]),Color("#d0b371"),1.8,true)
-
-func _scroll_rod(x:float)->void:
-    for i in range(7):
-        draw_line(Vector2(x-3+i,MAP.position.y-4),Vector2(x-3+i,MAP.end.y+4),Color("#4e3520").lerp(Color("#d7b179"),sin(float(i)/6.0*PI)),1.0)
-    for y in [MAP.position.y-5,MAP.end.y+5]:
-        draw_circle(Vector2(x,y),6,Color("#7b5b35"))
-        draw_arc(Vector2(x,y),5,0,TAU,24,Color("#d7b179"),1.4,true)
-
 func _plate(t:String,p:Vector2,fs:int,c:Color)->void:
     var width:float=font.get_string_size(t,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+14.0
     var rect:=Rect2(p-Vector2(width/2.0,9),Vector2(width,18))
@@ -572,7 +551,7 @@ func _sync_actions()->void:
 
 func _destination_text(p:Vector2)->String:
     var terrain:String=sim.terrain_at(p)
-    var detail: String="이동 %d%%" % int(sim.terrain_movement_percent(selected_id,p))
+    var detail: String="이동 속도 %d%%" % int(sim.terrain_movement_percent(selected_id,p))
     var crossing: float=sim.map_order_crossing(selected_id,p)
     if terrain=="하천" and sim.long_operation:
         detail="목표 지정 불가"

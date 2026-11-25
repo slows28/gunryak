@@ -229,6 +229,21 @@ func _capture() -> void:
             push_error("VISUAL_CAPTURE_FAIL: commander card missing live state")
             quit(1)
             return
+    var field := Rect2(game.MAP_TOP_LEFT,game.MAP_SIZE)
+    var screen := Rect2(0,0,1280,800)
+    var occupied: Array[Rect2]=[]
+    for card in game.general_cards:
+        var box: Rect2=card.get_rect()
+        if box.intersects(field) or not screen.encloses(box):
+            push_error("VISUAL_CAPTURE_FAIL: commander strip obstructs the battlefield or falls outside the screen")
+            quit(1)
+            return
+        for prior_box in occupied:
+            if box.intersects(prior_box):
+                push_error("VISUAL_CAPTURE_FAIL: commander cards overlap")
+                quit(1)
+                return
+        occupied.append(box)
     game.call("_select_general_card",2)
     if game.selected_id!=game.sim.command_ids(0)[2]:
         push_error("VISUAL_CAPTURE_FAIL: commander card did not select real leader")

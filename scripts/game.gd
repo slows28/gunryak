@@ -15,14 +15,16 @@ const BRIDGE_HQ = preload("res://assets/art/bridge_hq.svg")
 const GENERAL_PORTRAITS=preload("res://assets/art/general_portraits.svg")
 const FIELD_SITES=preload("res://assets/art/field_sites.svg")
 const PORTRAIT_NAMES=["왕평","마속","위연","강유","관흥","장익","장합","위군 궁대","위군 기병","곽회","비요","왕쌍"]
-const COMMAND_SKIN = preload("res://assets/art/command_skin.svg")
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const PAINTED_FX = preload("res://assets/art/painted_fx.webp")
 const TITLE_ART = preload("res://assets/art/title_art.webp")
-const MAP_TOP_LEFT: Vector2 = Vector2(24, 101)
-const MAP_SIZE: Vector2 = Vector2(900, 570)
-const COL_BG: Color = Color("#171918")
-const COL_PANEL: Color = Color("#282822")
+const MAP_TOP_LEFT: Vector2 = Vector2(16, 124)
+const MAP_SIZE: Vector2 = Vector2(934, 550)
+const MINIMAP_AREA = Rect2(1128,609,126,80)
+const COL_BG: Color = Color("#131a22")
+const COL_PANEL: Color = Color("#1c2732")
+const COL_LINE: Color = Color("#3d4d5a")
+const COL_ACTIVE: Color = Color("#a43d2e")
 const COL_TEXT: Color = Color("#eee7d2")
 const COL_MUTED: Color = Color("#a6b6b4")
 const COL_BLUE: Color = Color("#8ed5e7")
@@ -41,8 +43,9 @@ var game_speed: float = 1.0
 var ignore_options: bool = false
 var status_label: Label
 var battle_title_label: Label
+var clock_label: Label
+var turn_label: Label
 var objective_label: Label
-var commander_card: Control
 var selected_label: Label
 var details_label: Label
 var readiness_label: Label
@@ -104,6 +107,7 @@ var highlight_start: float=0.0
 var highlight_deadline: float=0.0
 var highlight_prior_speed: float=1.0
 var feed_toggle: Button
+var feed_heading: Label
 var show_general_feed: bool=true
 var battle_samples: Dictionary = {}
 var recent_losses: Dictionary = {}
@@ -218,58 +222,73 @@ func _install_korean_font() -> void:
     ui_theme.default_font_size = 14
     for type in ["Button","OptionButton"]:
         ui_theme.set_color("font_color",type,COL_TEXT)
-        ui_theme.set_color("font_hover_color",type,COL_GOLD)
-        ui_theme.set_color("font_disabled_color",type,Color("#7e8b8b"))
-        for state in ["normal","hover","pressed","disabled","focus"]:
-            var style := StyleBoxFlat.new()
-            style.bg_color = Color("#494035") if state == "hover" or state == "pressed" else Color("#2f3029")
-            if state == "disabled": style.bg_color = Color("#192628")
-            style.border_color = Color("#b79d68") if state in ["hover","pressed","focus"] else Color("#6b6250")
-            style.set_border_width_all(1)
-            style.set_corner_radius_all(2)
-            style.shadow_color=Color(0,0,0,0.28)
-            style.shadow_size=2
-            style.content_margin_left = 8
-            style.content_margin_right = 8
-            ui_theme.set_stylebox(state,type,style)
-    var list_bg := StyleBoxFlat.new()
-    list_bg.bg_color = Color("#17211d")
-    list_bg.border_color=Color("#756749")
-    list_bg.set_border_width_all(1)
-    list_bg.set_corner_radius_all(4)
-    ui_theme.set_stylebox("panel","ItemList",list_bg)
-    var selected := StyleBoxFlat.new()
-    selected.bg_color = Color("#4a3b26")
-    selected.border_color = COL_GOLD
-    selected.border_width_left = 3
-    selected.set_corner_radius_all(3)
+        ui_theme.set_color("font_hover_color",type,Color("#ffffff"))
+        ui_theme.set_color("font_pressed_color",type,Color("#ffffff"))
+        ui_theme.set_color("font_disabled_color",type,Color("#91a0a9"))
+        ui_theme.set_stylebox("normal",type,_ui_box(Color("#293644")))
+        ui_theme.set_stylebox("hover",type,_ui_box(Color("#394b5b")))
+        ui_theme.set_stylebox("pressed",type,_ui_box(Color("#415968"),COL_BLUE))
+        ui_theme.set_stylebox("hover_pressed",type,_ui_box(Color("#415968"),COL_BLUE))
+        ui_theme.set_stylebox("disabled",type,_ui_box(Color("#202a34")))
+        ui_theme.set_stylebox("focus",type,_ui_box(Color.TRANSPARENT,COL_GOLD))
+    ui_theme.set_stylebox("panel","ItemList",_ui_box(Color("#16212b")))
+    var selected := _ui_box(Color("#304b59"))
+    selected.border_color=COL_BLUE
+    selected.border_width_left=3
     ui_theme.set_stylebox("selected","ItemList",selected)
     ui_theme.set_stylebox("selected_focus","ItemList",selected)
     ui_theme.set_color("font_color","ItemList",COL_TEXT)
     ui_theme.set_constant("v_separation","ItemList",5)
+    var dialog := _ui_box(Color("#1c2732"),COL_LINE)
+    dialog.content_margin_left=16
+    dialog.content_margin_right=16
+    dialog.content_margin_top=14
+    dialog.content_margin_bottom=14
+    ui_theme.set_stylebox("panel","AcceptDialog",dialog)
+    var window_frame: StyleBoxFlat=dialog.duplicate()
+    window_frame.expand_margin_top=33
+    ui_theme.set_stylebox("embedded_border","Window",window_frame)
+    ui_theme.set_stylebox("embedded_unfocused_border","Window",window_frame)
     theme = ui_theme
 
+func _ui_box(background: Color, border: Color=Color.TRANSPARENT) -> StyleBoxFlat:
+    var style := StyleBoxFlat.new()
+    style.bg_color=background
+    style.border_color=border
+    if border!=Color.TRANSPARENT: style.set_border_width_all(1)
+    style.set_corner_radius_all(5)
+    style.content_margin_left=9
+    style.content_margin_right=9
+    style.content_margin_top=3
+    style.content_margin_bottom=3
+    return style
+
 func _build_interface() -> void:
-    _button("軍略",Vector2(24,11),Vector2(100,48),_show_title).add_theme_font_size_override("font_size",26)
-    battle_title_label = _label("",Vector2(141,9),Vector2(290,35),23,COL_GOLD)
-    phase_label = _label("",Vector2(143,45),Vector2(297,25),12,COL_MUTED)
-    start_btn = _button("출전",Vector2(448,16),Vector2(102,39),_start)
+    _button("軍略",Vector2(16,10),Vector2(78,37),_show_title).add_theme_font_size_override("font_size",24)
+    battle_title_label = _label("",Vector2(111,5),Vector2(260,29),24,COL_TEXT)
+    phase_label = _label("",Vector2(112,34),Vector2(258,17),12,COL_MUTED)
+    phase_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    clock_label = _label("",Vector2(383,2),Vector2(102,32),26,COL_GOLD)
+    turn_label = _label("",Vector2(384,35),Vector2(102,16),11,COL_MUTED)
+    start_btn = _button("출전",Vector2(488,11),Vector2(92,35),_start)
     _primary_button(start_btn)
-    pause_btn = _button("일시정지",Vector2(448,16),Vector2(102,39),_pause)
-    speed_btn = _button("속도 ×1",Vector2(556,16),Vector2(100,39),_speed)
-    _button("초기화",Vector2(662,16),Vector2(78,39),_reset)
-    _primary_button(_button("작전 지도",Vector2(746,16),Vector2(182,39),_open_order_map))
-    status_label = _label("",Vector2(955,5),Vector2(307,48),12,COL_TEXT)
+    pause_btn = _button("일시정지",Vector2(488,11),Vector2(92,35),_pause)
+    speed_btn = _button("속도 ×1",Vector2(588,11),Vector2(78,35),_speed)
+    status_label = _label("",Vector2(968,7),Vector2(290,40),13,COL_TEXT)
     status_label.clip_text=true
-    objective_label = _label("",Vector2(26,77),Vector2(412,22),13,COL_GOLD)
-    _label("軍  /  전황 관측",Vector2(956,101),Vector2(270,29),22,COL_GOLD)
-    friendly_tab=_button("아군 6",Vector2(950,130),Vector2(94,23),_show_friendly_roster)
-    enemy_tab=_button("적군 6",Vector2(1049,130),Vector2(94,23),_show_enemy_roster)
-    fog_button=_button("전체 시야",Vector2(1148,130),Vector2(108,23),func(): _toggle_fog(not fog_enabled))
-    fog_button.tooltip_text="전체 관전과 정찰 제한 전환 · 장수 AI의 관측 규칙은 변경하지 않음"
+    objective_label = _label("",Vector2(16,104),Vector2(934,18),13,COL_TEXT)
+    objective_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    _label("지휘 본부",Vector2(970,69),Vector2(156,32),23,COL_TEXT)
+    friendly_tab=_button("아군 6",Vector2(970,108),Vector2(91,28),_show_friendly_roster)
+    enemy_tab=_button("적군 6",Vector2(1067,108),Vector2(91,28),_show_enemy_roster)
+    fog_button=_button("전체 시야",Vector2(1164,108),Vector2(92,28),func(): _toggle_fog(not fog_enabled))
+    friendly_tab.toggle_mode=true
+    enemy_tab.toggle_mode=true
+    fog_button.toggle_mode=true
+    fog_button.tooltip_text="전체 관전과 정찰 제한 전환 · V"
     unit_list = ItemList.new()
-    unit_list.position = Vector2(950,154)
-    unit_list.size = Vector2(306,204)
+    unit_list.position = Vector2(970,143)
+    unit_list.size = Vector2(286,181)
     unit_list.add_theme_font_size_override("font_size",14)
     unit_list.add_theme_constant_override("v_separation",3)
     add_child(unit_list)
@@ -284,54 +303,53 @@ func _build_interface() -> void:
     enemy_list.position=unit_list.position
     enemy_list.size=unit_list.size
     enemy_list.add_theme_font_size_override("font_size",13)
-    enemy_list.fixed_icon_size=Vector2i(28,28)
+    enemy_list.fixed_icon_size=Vector2i(23,23)
     enemy_list.add_theme_constant_override("v_separation",5)
     add_child(enemy_list)
     enemy_list.item_selected.connect(_inspect_enemy_row)
     enemy_list.hide()
-    _label("02  명령과 현장 행동",Vector2(956,365),Vector2(290,20),15,COL_GOLD)
-    mission_choice = _options(Vector2(950,363),["중앙 진격","북측 확보","남측 우회","본진 방어","전열 엄호","측후방 기동","구원 지원"])
-    mission_choice.size.x = 306
+    _label("작전 명령",Vector2(973,467),Vector2(280,21),15,COL_MUTED)
+    mission_choice = _options(Vector2(970,482),["중앙 진격","북측 확보","남측 우회","본진 방어","전열 엄호","측후방 기동","구원 지원"])
     mission_choice.item_selected.connect(_on_choices_changed)
     mission_choice.hide()
-    live_order_label = _label("",Vector2(956,386),Vector2(292,44),13,COL_TEXT)
+    live_order_label = _label("",Vector2(973,487),Vector2(280,43),13,COL_TEXT)
     live_order_label.clip_text=true
-    live_order_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    order_status_label = _label("",Vector2(956,432),Vector2(292,24),13,COL_GOLD)
-    order_status_label.clip_text=true
-    policy_choice = _options(Vector2(950,420),["현장 판단","명령 엄수","재량 위임","횡대 유지","종대 유지","방진 유지","어린진 유지","학익진 유지","봉시진 유지","안행진 유지"])
-    policy_choice.size.x = 306
+    live_order_label.add_theme_constant_override("line_spacing",0)
+    live_order_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    order_status_label = _label("",Vector2(973,530),Vector2(280,20),13,COL_GOLD)
+    order_status_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    policy_choice = _options(Vector2(970,520),["현장 판단","명령 엄수","재량 위임","횡대 유지","종대 유지","방진 유지","어린진 유지","학익진 유지","봉시진 유지","안행진 유지"])
     policy_choice.item_selected.connect(_on_choices_changed)
     policy_choice.hide()
-    apply_btn = _button("작전 적용 / 전령 보내기",Vector2(950,460),Vector2(306,42),_apply_order)
+    apply_btn = _button("작전 적용 / 전령 보내기",Vector2(970,554),Vector2(286,40),_apply_order)
     apply_btn.hide()
-    live_order_button=_button("작전 지도 열기",Vector2(950,460),Vector2(306,42),_open_order_map)
+    live_order_button=_button("작전 지도 열기",Vector2(970,554),Vector2(286,40),_open_order_map)
     _primary_button(live_order_button)
-    _label("03  장수의 심리·판단",Vector2(956,520),Vector2(194,25),15,COL_GOLD)
-    mind_button=_button("장수 보고",Vector2(1151,520),Vector2(105,28),_open_mind_report)
-    mind_button.tooltip_text="전체 장수의 실시간 판단, 심리, 명령 반응 · G"
-    selected_label = _label("",Vector2(1034,565),Vector2(220,27),14,COL_GOLD)
-    details_label = _label("",Vector2(1034,589),Vector2(221,19),12,COL_TEXT)
-    readiness_label = _label("",Vector2(1034,607),Vector2(221,19),12,COL_TEXT)
-    decision_label=_label("",Vector2(950,625),Vector2(306,48),13,COL_TEXT)
+    live_order_button.add_theme_font_size_override("font_size",16)
+    mind_button=_button("장수 보고",Vector2(1144,70),Vector2(112,28),_open_mind_report)
+    mind_button.tooltip_text="전체 장수의 심리와 최근 명령 · G"
+    selected_label = _label("",Vector2(1048,340),Vector2(198,26),19,COL_TEXT)
+    selected_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    details_label = _label("",Vector2(1048,370),Vector2(198,19),13,COL_TEXT)
+    readiness_label = _label("",Vector2(1048,391),Vector2(198,19),13,COL_TEXT)
+    readiness_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    decision_label=_label("",Vector2(974,416),Vector2(272,43),13,COL_TEXT)
     decision_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     decision_label.clip_text=true
-    feed_toggle=_button("장수 판단",Vector2(27,692),Vector2(112,28),_toggle_feed)
-    feed_toggle.tooltip_text="장수의 판단·심리 변화와 일반 전황 기록을 전환"
-    event_label = _label("",Vector2(153,692),Vector2(578,102),13,COL_TEXT)
+    decision_label.max_lines_visible=2
+    feed_toggle=_button("전황 기록 보기",Vector2(1128,697),Vector2(136,24),_toggle_feed)
+    feed_toggle.add_theme_font_size_override("font_size",12)
+    event_label = _label("",Vector2(26,744),Vector2(1228,53),13,COL_TEXT)
     event_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    notice_label = _label("",Vector2(950,692),Vector2(306,37),11,COL_MUTED)
-    notice_label.clip_text=true
-    notice_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    highlight_button=_button("다음 주요 상황 ▶",Vector2(950,731),Vector2(203,27),_advance_highlight)
-    _primary_button(highlight_button)
-    highlight_button.tooltip_text="실제 시뮬레이션을 최대 16배로 진행하여 새 교전·위기·거점 변화·긴급 보고에서 자동 정지합니다."
-    journal_button=_button("상황 기록",Vector2(1158,731),Vector2(98,27),_open_journal)
-    journal_button.tooltip_text="관측한 교전·위기의 당시 위치를 확인 · J / 시야 모드를 바꾸면 기록 초기화"
+    notice_label = _label("",Vector2(16,675),Vector2(930,21),13,COL_MUTED)
+    notice_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    highlight_button=_button("다음 주요 상황 ▶",Vector2(674,11),Vector2(128,35),_advance_highlight)
+    highlight_button.tooltip_text="새 교전·위기·거점 변화·긴급 보고까지 진행"
+    journal_button=_button("상황 기록",Vector2(810,11),Vector2(128,35),_open_journal)
+    journal_button.tooltip_text="관측한 교전·위기의 당시 위치를 확인 · J"
     journal_dialog=AcceptDialog.new()
     journal_dialog.title="작전 상황 기록 · 항목 더블클릭으로 위치 확인"
     journal_dialog.ok_button_text="닫기"
-    journal_dialog.theme=_command_dialog_theme()
     add_child(journal_dialog)
     journal_list=ItemList.new()
     journal_list.custom_minimum_size=Vector2(575,305)
@@ -339,38 +357,38 @@ func _build_interface() -> void:
     journal_list.add_theme_constant_override("v_separation",9)
     journal_list.item_activated.connect(_visit_journal_event)
     journal_dialog.add_child(journal_list)
-    map_detail_button = _button("전술 표시 · 간결",Vector2(950,761),Vector2(306,28),_toggle_map_detail)
+    map_detail_button = _button("전술 표시 · 간결",Vector2(178,632),Vector2(130,32),_toggle_map_detail)
     map_detail_button.tooltip_text = "군단 진형과 전술 이동 경로 표시 전환"
     _build_planning_dialog()
     _build_mind_report()
-    _button("브리핑",Vector2(27,730),Vector2(112,26),_open_briefing)
-    contact_button=_button("교전 위치",Vector2(27,761),Vector2(112,26),_focus_combat)
-    contact_button.tooltip_text="최근 관측된 교전의 접촉 지점과 아군 장수 확인 · C 단축키"
-    combat_brief=_label("",Vector2(153,691),Vector2(578,24),14,COL_GOLD)
-    thought_feed=_label("",Vector2(153,718),Vector2(578,74),12,COL_TEXT)
-    thought_feed.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    thought_feed.clip_text=true
-    event_label.position.y=718
-    event_label.size.y=74
-    event_label.hide()
+    _button("브리핑",Vector2(970,609),Vector2(70,34),_open_briefing)
+    _button("도움말",Vector2(1048,609),Vector2(70,34),_open_demo_help)
+    _button("초기화",Vector2(970,651),Vector2(70,34),_reset)
+    _button("철수",Vector2(1048,651),Vector2(70,34),_ask_retreat)
+    contact_button=_button("최근 교전",Vector2(316,632),Vector2(94,32),_focus_combat)
+    contact_button.tooltip_text="최근 관측된 교전으로 이동 · C"
+    feed_heading=_label("아군 장수",Vector2(16,698),Vector2(180,22),15,COL_TEXT)
+    combat_brief=_label("",Vector2(26,722),Vector2(1228,24),15,COL_GOLD)
+    thought_feed=_label("",Vector2(26,747),Vector2(1228,46),12,COL_TEXT)
     thought_feed.hide()
+    event_label.hide()
     for i in range(6):
-        var card: Button=_button("",Vector2(151+(i%3)*196,690+floori(float(i)/3.0)*50),Vector2(190,47),_select_general_card.bind(i))
-        card.add_theme_font_size_override("font_size",12)
+        var card: Button=_button("",Vector2(16+i*209,730),Vector2(201,61),_select_general_card.bind(i))
+        card.add_theme_font_size_override("font_size",13)
         card.expand_icon=true
-        card.add_theme_constant_override("icon_max_width",34)
-        card.add_theme_constant_override("h_separation",5)
+        card.toggle_mode=true
+        card.add_theme_constant_override("icon_max_width",39)
+        card.add_theme_constant_override("h_separation",6)
         card.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
         card.alignment=HORIZONTAL_ALIGNMENT_LEFT
         general_cards.append(card)
     combat_brief.hide()
     _build_sector_board()
-    _button("도움말",Vector2(443,74),Vector2(73,26),_open_demo_help)
-    _button("철수",Vector2(521,74),Vector2(60,26),_ask_retreat)
-    situation_btn = _button("긴급 보고",Vector2(585,74),Vector2(75,26),func():
+    situation_btn = _button("긴급 보고",Vector2(830,61),Vector2(120,40),func():
         _open_order_map()
         _open_situations())
-    warning_label = _label("",Vector2(26,669),Vector2(892,17),12,COL_GOLD)
+    _primary_button(situation_btn)
+    warning_label = _label("",Vector2(420,640),Vector2(513,24),12,COL_GOLD)
     warning_label.hide()
     warning_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
@@ -411,7 +429,7 @@ func _refresh_unit_list() -> void:
         var icon:AtlasTexture=_commander_icon(str(unit["name"]),int(unit["side"]))
         unit_list.add_item("%s  ·  %s / %s" % [str(unit["name"]),str(unit["type"]),str(unit["personality"])],icon)
         unit_list.set_item_metadata(unit_list.item_count-1,i)
-    unit_list.fixed_icon_size = Vector2i(29,29)
+    unit_list.fixed_icon_size = Vector2i(25,25)
     if unit_list.item_count > 0:
         var row: int = maxi(0,sim.command_ids(0).find(selected_id))
         unit_list.select(row)
@@ -506,8 +524,9 @@ func _refresh_enemy_roster() -> void:
         observed_enemy_id=-1
         enemy_list.deselect_all()
     enemy_tab.text="적군 %d" % visible_ids.size()
-    friendly_tab.modulate=Color.WHITE if observing_enemy else COL_BLUE
-    enemy_tab.modulate=COL_RED if observing_enemy else Color.WHITE
+    friendly_tab.set_pressed_no_signal(not observing_enemy)
+    enemy_tab.set_pressed_no_signal(observing_enemy)
+    fog_button.set_pressed_no_signal(fog_enabled)
     fog_button.text="정찰 시야" if fog_enabled else "전체 시야"
 
 # Actual activity takes priority over the strategic mission or inferred intent.
@@ -787,19 +806,21 @@ func _process(delta: float) -> void:
         _show_outcome()
 
 func _refresh_hud() -> void:
-    var phase: String = "전투 준비"
+    var phase: String = "준비 중"
+    clock_label.text=_operation_clock(sim.operation_elapsed())
     battle_title_label.text = sim.scenario_title
     objective_label.text = "목표  ·  "+sim.scenario_goal
-    phase_label.text = ("북벌 전략 %d턴 · " % int(campaign.state["turn"]) if campaign_active else "") + "대형 전장 2,700 × 1,710"
+    phase_label.text="북벌 전략 %d턴" % int(campaign.state["turn"]) if campaign_active else "작전 준비"
     if sim.finished:
-        phase = "종료  " + sim.result
-        phase_label.text = "03 전투 결산  |  전투 분석 및 타임라인"
+        phase = "전투 종료"
+        phase_label.text=sim.result
     elif sim.paused:
-        phase = "일시정지  /  "+_operation_clock(sim.operation_elapsed())
+        phase = "일시정지"
         phase_label.text=sim.operation_phase()+"  |  제한 "+_operation_clock(sim.operation_limit())
     elif sim.started:
-        phase = "작전 %d턴  /  %s" % [sim.turn, _operation_clock(sim.operation_elapsed())]
+        phase = "작전 %d턴" % sim.turn
         phase_label.text = sim.operation_phase() + "  |  " + ("긴급 지휘력 %d / 4" % sim.command_points if sim.turn >= 6 else "초기 작전 수행 · 보고 수신")
+    turn_label.text=phase
     for index in range(unit_list.item_count):
         var uid: int = int(unit_list.get_item_metadata(index))
         var leader: Dictionary = sim.find_unit(uid)
@@ -812,7 +833,7 @@ func _refresh_hud() -> void:
     if is_instance_valid(roster_overlay): roster_overlay.queue_redraw()
     _refresh_enemy_roster()
     var enemy_text: String = "정찰 제한" if fog_enabled and not sim.finished else _number_text(sim.total_troops(1))
-    status_label.text = "%s\n아군 %s  /  적군 %s\n전령 %d 이동 · %d 도착 · %d 차단" % [phase,_number_text(sim.total_troops(0)),enemy_text,sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
+    status_label.text = "아군 %s   /   적군 %s\n전령 %d 이동 · %d 도착 · %d 차단" % [_number_text(sim.total_troops(0)),enemy_text,sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
     var own_guards: int = sim.commander_guard_count(0)
     status_label.tooltip_text = "책사 보호 반경 내 전투부대 %d개" % own_guards
     if own_guards == 0 and sim.started and not sim.finished:
@@ -824,7 +845,7 @@ func _refresh_hud() -> void:
         var count: int = sim.open_situations().size()
         situation_btn.text = "보고 %d" % count if count > 0 else "긴급 보고"
         situation_btn.disabled = not sim.started or sim.finished
-        situation_btn.modulate = COL_GOLD if count > 0 else Color.WHITE
+        situation_btn.add_theme_color_override("font_color",COL_GOLD if count>0 else COL_TEXT)
     start_btn.disabled = sim.started or sim.finished
     pause_btn.disabled = not sim.started or sim.finished
     pause_btn.text = "재개" if sim.paused else "일시정지"
@@ -919,6 +940,7 @@ func _refresh_hud() -> void:
         notice_label.text = "최초 5분은 사전 명령 수행.\n이후부터 전령 전달이 가능합니다."
     else:
         notice_label.text = "장수 선택 후 전령 파견\n실제 전장 이동 중 차단될 수 있습니다."
+    notice_label.text=notice_label.text.replace("\n","  ·  ")
     if runtime_notice != "":
         notice_label.text = runtime_notice
     elif not battle_warning.is_empty():
@@ -930,7 +952,8 @@ func _toggle_feed() -> void:
     combat_brief.visible=not show_general_feed
     for card in general_cards: card.visible=show_general_feed
     event_label.visible=not show_general_feed
-    feed_toggle.text="장수 판단" if show_general_feed else "전황 기록"
+    feed_toggle.text="전황 기록 보기" if show_general_feed else "장수 카드 보기"
+    feed_heading.text="아군 장수" if show_general_feed else "전황 기록"
 
 func dispatch_line(id: int) -> String:
     var dispatch: Dictionary=sim.map_dispatches.get(id,{})
@@ -995,9 +1018,9 @@ func _select_general_card(index: int) -> void:
     _focus_selected()
 
 func _fit_card_line(value:String,width:float) -> String:
-    if korean_font.get_string_size(value,HORIZONTAL_ALIGNMENT_LEFT,-1,12).x<=width: return value
+    if korean_font.get_string_size(value,HORIZONTAL_ALIGNMENT_LEFT,-1,13).x<=width: return value
     var shortened:String=value
-    while shortened.length()>1 and korean_font.get_string_size(shortened+"…",HORIZONTAL_ALIGNMENT_LEFT,-1,12).x>width:
+    while shortened.length()>1 and korean_font.get_string_size(shortened+"…",HORIZONTAL_ALIGNMENT_LEFT,-1,13).x>width:
         shortened=shortened.substr(0,shortened.length()-1)
     return shortened+"…"
 
@@ -1013,21 +1036,21 @@ func _refresh_general_cards() -> void:
         var mind: Dictionary=u.get("mind",{})
         var mood: String=str(mind.get("mood","준비"))
         var reason: String=str(mind.get("reason","초기 배치"))
-        var brief:String=reason
-        var suggestion:String=str(mind.get("proposal",""))
-        var urgency: String=""
-        if not suggestion.is_empty(): urgency="! "
-        elif sim.map_dispatches.get(ids[i],{}).get("status","")=="이동 중" and not sim.finished: urgency="전령 "
-        var first:String="%s%s · %s" % [urgency,str(u["name"]),_field_action(u)]
-        var second:String=mood+" · "+("건의 "+suggestion if not suggestion.is_empty() else brief)
-        card.text=_fit_card_line(first,138.0)+"\n"+_fit_card_line(second,138.0)
+        var suggestion: String=str(mind.get("proposal",""))
+        var pending: bool=sim.map_dispatches.get(ids[i],{}).get("status","")=="이동 중" and not sim.finished
+        var headline: String="%s · %s" % [str(u["name"]),_field_action(u)]
+        var state: String=mood
+        if pending: state+=" · 전령 이동"
+        if not suggestion.is_empty(): state+=" · 건의"
+        var detail: String=suggestion if not suggestion.is_empty() else reason
+        card.text="\n".join([_fit_card_line(headline,137.0),_fit_card_line(state,137.0),_fit_card_line(detail,137.0)])
         if card.icon==null or str(card.get_meta("general_name",""))!=str(u["name"]):
             card.icon=_commander_icon(str(u["name"]),0)
             card.set_meta("general_name",str(u["name"]))
         card.tooltip_text="기분: "+mood+"\n판단: "+reason+"\n관측: "+str(mind.get("observed",""))+"\n우려: "+str(mind.get("concern",""))+"\n최근 명령: "+str(mind.get("last_order",""))
         card.add_theme_color_override("font_color",_mood_color(mood) if mood not in ["침착","준비","전투 준비"] else COL_TEXT)
         card.add_theme_color_override("font_hover_color",COL_GOLD)
-        card.modulate=Color.WHITE if ids[i]==selected_id and not observing_enemy else Color(0.88,0.91,0.89)
+        card.set_pressed_no_signal(ids[i]==selected_id and not observing_enemy)
         if ids[i]==selected_id and not observing_enemy:
             card.add_theme_color_override("font_color",COL_GOLD)
 
@@ -1035,13 +1058,13 @@ func _refresh_general_cards() -> void:
 # manpower in each geographical sector, never invented territorial control.
 func _build_sector_board() -> void:
     for i in range(3):
-        var card: Button=_button("",MAP_TOP_LEFT+Vector2(10+i*218,9),Vector2(208,48),_focus_sector.bind(i))
+        var card: Button=_button("",Vector2(16+i*271,61),Vector2(263,40),_focus_sector.bind(i))
         card.add_theme_font_size_override("font_size",12)
         card.alignment=HORIZONTAL_ALIGNMENT_LEFT
         card.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
         var panel:=StyleBoxFlat.new()
-        panel.bg_color=Color(0.055,0.085,0.09,0.92)
-        panel.border_color=Color("#637b78")
+        panel.bg_color=COL_PANEL
+        panel.border_color=COL_LINE
         panel.set_border_width_all(1)
         panel.set_corner_radius_all(4)
         panel.content_margin_left=10
@@ -1099,25 +1122,9 @@ func _latest_general_reports() -> String:
     if lines.is_empty(): return "장수의 판단과 명령 반응이 이곳에 실시간 기록됩니다."
     return "\n".join(lines)
 
-func _command_dialog_theme() -> Theme:
-    var report_theme: Theme=theme.duplicate()
-    var window_style:=StyleBoxFlat.new()
-    window_style.bg_color=Color("#14211f")
-    window_style.border_color=Color("#8c7951")
-    window_style.set_border_width_all(2)
-    window_style.content_margin_left=16
-    window_style.content_margin_right=16
-    window_style.content_margin_top=14
-    window_style.content_margin_bottom=14
-    report_theme.set_stylebox("panel","AcceptDialog",window_style)
-    report_theme.set_stylebox("embedded_border","Window",window_style)
-    report_theme.set_stylebox("embedded_unfocused_border","Window",window_style)
-    return report_theme
-
 func _build_mind_report() -> void:
     mind_dialog=AcceptDialog.new()
     mind_dialog.title="장수 보고실 · 실시간 심리 및 판단 (전투 계속 진행)"
-    mind_dialog.theme=_command_dialog_theme()
     mind_dialog.ok_button_text="전장으로"
     add_child(mind_dialog)
     mind_report=RichTextLabel.new()
@@ -1198,9 +1205,9 @@ func _battle_brief() -> String:
     return "교전·사격 %d개 부대  |  가한 피해 %s  ·  아군 손실 %s" % [fighting,_number_text(roundi(own_damage)),_number_text(roundi(own_loss))]
 
 func _gui_input(event: InputEvent) -> void:
-    if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and Rect2(760,700,144,91.2).has_point(event.position):
+    if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and _minimap_rect().has_point(event.position):
         camera_zoom = maxf(1.0,camera_zoom)
-        camera_center = (event.position-Vector2(760,700))*sim.field_size.x/144.0
+        camera_center = (event.position-_minimap_rect().position)*sim.field_size.x/MINIMAP_AREA.size.x
         _clamp_camera()
         map_layer.queue_redraw()
         queue_redraw()
@@ -1280,27 +1287,25 @@ func _map_select(mouse_pos: Vector2) -> void:
 
 func _draw() -> void:
     draw_rect(Rect2(0,0,1280,800),COL_BG)
-    _command_panel(Rect2(0,0,1280,68),false)
-    draw_line(Vector2(24,68),Vector2(1256,68),Color("#817b5f"),1.0)
-    var elapsed:float=clampf(sim.operation_elapsed()/maxf(1.0,sim.operation_limit()),0,1)
-    draw_rect(Rect2(448,60,480,4),Color("#453d2d"))
-    draw_rect(Rect2(448,60,480*elapsed,4),Color("#cfa85d"))
-    for mark in [0.16,0.36,0.64,0.88]:
-        draw_line(Vector2(448+480*mark,59),Vector2(448+480*mark,65),Color("#e2c58b"),1.0)
-    for panel in [Rect2(940,94,324,581),Rect2(21,685,907,110),Rect2(940,685,324,110)]:
-        _command_panel(panel,true)
-    draw_rect(Rect2(948,357,308,29),Color(0.57,0.43,0.23,0.12))
-    draw_rect(Rect2(948,516,308,32),Color(0.57,0.43,0.23,0.12))
-    for frame in [Rect2(21,98,906,576),Rect2(940,94,324,581),Rect2(21,685,907,110),Rect2(940,685,324,110)]:
-        _bronze_frame(frame)
-    draw_line(Vector2(950,550),Vector2(1254,550),Color("#526862"),1.0)
-    draw_line(Vector2(950,362),Vector2(1254,362),Color("#706049"),1.0)
+    draw_rect(Rect2(0,0,1280,56),Color("#202c38"))
+    draw_rect(Rect2(0,0,6,56),Color("#cf674e"))
+    draw_line(Vector2(0,55),Vector2(1280,55),COL_LINE,1.0)
+    var elapsed: float=clampf(sim.operation_elapsed()/maxf(1.0,sim.operation_limit()),0,1)
+    draw_rect(Rect2(383,51,555,2),Color("#354653"))
+    if elapsed>0.0: draw_rect(Rect2(383,51,555*elapsed,2),COL_GOLD)
+    draw_rect(Rect2(MAP_TOP_LEFT,MAP_SIZE),Color("#19232d"))
+    draw_rect(Rect2(MAP_TOP_LEFT,MAP_SIZE).grow(1),COL_LINE,false)
+    draw_rect(Rect2(961,61,303,632),COL_PANEL)
+    draw_rect(Rect2(970,333,286,132),Color("#263747"))
+    draw_rect(Rect2(970,333,3,132),COL_BLUE if not observing_enemy else COL_RED)
+    draw_line(Vector2(970,601),Vector2(1256,601),COL_LINE,1.0)
+    draw_line(Vector2(16,697),Vector2(1264,697),COL_LINE,1.0)
     _draw_force_balance()
     _draw_minimap()
 
 func _draw_force_balance() -> void:
     # Current manpower share, not win probability; no data in recon mode.
-    var area:=Rect2(960,62,290,3)
+    var area:=Rect2(968,51,288,2)
     draw_rect(area,Color("#353f40"))
     if fog_enabled and not sim.finished: return
     var own: float=float(sim.total_troops(0))
@@ -1308,12 +1313,6 @@ func _draw_force_balance() -> void:
     var ratio: float=own/maxf(1.0,own+enemy)
     draw_rect(Rect2(area.position,Vector2(area.size.x*ratio,area.size.y)),COL_BLUE)
     draw_rect(Rect2(area.position+Vector2(area.size.x*ratio,0),Vector2(area.size.x*(1.0-ratio),area.size.y)),COL_RED)
-
-func _command_panel(area: Rect2,ornament: bool) -> void:
-    draw_texture_rect_region(COMMAND_SKIN,area,Rect2(0,0,256,256))
-    if ornament:
-        draw_texture_rect_region(COMMAND_SKIN,Rect2(area.position,Vector2(40,40)),Rect2(256,0,128,128),Color(1,1,1,0.62))
-        draw_texture_rect_region(COMMAND_SKIN,Rect2(area.end-Vector2(40,40),Vector2(40,40)),Rect2(256,0,128,128),Color(1,1,1,0.38))
 
 func _toggle_map_detail() -> void:
     detailed_map = not detailed_map
@@ -1339,8 +1338,9 @@ func _draw_map(_canvas: Control) -> void:
     map_layer.draw_set_transform(MAP_SIZE * 0.5 - camera_center * camera_zoom, 0.0, Vector2.ONE * camera_zoom)
     map_label_areas.clear()
     var screen_corner: Vector2=camera_center-MAP_SIZE*0.5/camera_zoom
-    map_label_areas.append(Rect2(screen_corner+Vector2(5,5)/camera_zoom,Vector2(666,58)/camera_zoom))
-    map_label_areas.append(Rect2(screen_corner+Vector2(839,5)/camera_zoom,Vector2(55,55)/camera_zoom))
+    map_label_areas.append(Rect2(screen_corner+Vector2(MAP_SIZE.x-60,4)/camera_zoom,Vector2(56,56)/camera_zoom))
+    map_label_areas.append(Rect2(screen_corner+Vector2(8,MAP_SIZE.y-46)/camera_zoom,Vector2(397,37)/camera_zoom))
+    map_label_areas.append(Rect2(screen_corner+Vector2(MAP_SIZE.x-126,MAP_SIZE.y-46)/camera_zoom,Vector2(122,37)/camera_zoom))
     var map_rect: Rect2 = Rect2(Vector2.ZERO,sim.field_size)
     if terrain_cache != null:
         map_layer.draw_texture_rect(terrain_cache,map_rect,false)
@@ -2095,14 +2095,17 @@ func _clamp_camera() -> void:
     camera_center.y = clampf(camera_center.y,minf(half.y,sim.field_size.y*0.5),maxf(sim.field_size.y-half.y,sim.field_size.y*0.5))
 
 func _change_zoom(delta: float) -> void:
-    camera_zoom = clampf(camera_zoom+delta,MAP_SIZE.x/sim.field_size.x,2.5)
+    camera_zoom = clampf(camera_zoom+delta,_overview_zoom(),2.5)
     _clamp_camera()
     if is_instance_valid(map_layer): map_layer.queue_redraw()
     queue_redraw()
 
+func _overview_zoom() -> float:
+    return minf(MAP_SIZE.x/sim.field_size.x,MAP_SIZE.y/sim.field_size.y)
+
 func _reset_camera() -> void:
     render_clock = sim.battle_time
-    camera_zoom = MAP_SIZE.x/sim.field_size.x
+    camera_zoom = _overview_zoom()
     camera_center = sim.field_size*0.5
     if not sim.started:
         visibility_stamp = -100.0
@@ -2120,13 +2123,13 @@ func _focus_selected() -> void:
         queue_redraw()
 
 func _build_presentation() -> void:
-    _button("＋",Vector2(733,74),Vector2(42,28),func(): _change_zoom(0.25))
-    _button("－",Vector2(779,74),Vector2(42,28),func(): _change_zoom(-0.25))
-    _button("장수",Vector2(825,74),Vector2(47,28),_focus_selected)
-    _button("전체",Vector2(876,74),Vector2(47,28),_reset_camera)
-    _button("음향",Vector2(663,74),Vector2(65,28),_toggle_sound)
+    _button("＋",Vector2(26,632),Vector2(33,32),func(): _change_zoom(0.25)).tooltip_text="전장 확대"
+    _button("－",Vector2(65,632),Vector2(33,32),func(): _change_zoom(-0.25)).tooltip_text="전장 축소"
+    _button("장수",Vector2(104,632),Vector2(68,32),_focus_selected).tooltip_text="선택한 장수로 이동 · F"
+    _button("전체",Vector2(888,632),Vector2(52,32),_reset_camera).tooltip_text="전장 전체 보기 · Home"
+    _button("음향",Vector2(828,632),Vector2(54,32),_toggle_sound)
     var card := RenderLayer.new()
-    card.position = Vector2(950,555)
+    card.position = Vector2(974,343)
     card.size = Vector2(68,68)
     card.mouse_filter = Control.MOUSE_FILTER_IGNORE
     card.painter = _draw_portrait
@@ -2202,10 +2205,13 @@ func _draw_history(canvas: Control) -> void:
         first = false
     canvas.draw_string(korean_font,Vector2(20,273),"아군 %d명 · 적군 %s" % [sim.total_troops(0),str(sim.total_troops(1)) if show_enemy else "미확인"],HORIZONTAL_ALIGNMENT_LEFT,-1,14,COL_GOLD)
 
+func _minimap_rect() -> Rect2:
+    return Rect2(MINIMAP_AREA.position,Vector2(MINIMAP_AREA.size.x,MINIMAP_AREA.size.x*sim.field_size.y/sim.field_size.x))
+
 func _draw_minimap() -> void:
-    var origin := Vector2(760,700)
-    var factor: float = 144.0/sim.field_size.x
-    var mini_rect := Rect2(origin,sim.field_size*factor)
+    var mini_rect := _minimap_rect()
+    var origin: Vector2=mini_rect.position
+    var factor: float=mini_rect.size.x/sim.field_size.x
     if terrain_cache != null:
         draw_texture_rect(terrain_cache,mini_rect,false)
     else:
@@ -2216,7 +2222,8 @@ func _draw_minimap() -> void:
     for site in sim.outposts:
         draw_circle(origin+(site["pos"] as Vector2)*factor,3.0,COL_GOLD,false,1.2)
     var visible_size: Vector2 = MAP_SIZE/camera_zoom
-    draw_rect(Rect2(origin+(camera_center-visible_size*0.5)*factor,visible_size*factor),COL_GOLD,false,1.4)
+    var viewport := Rect2(origin+(camera_center-visible_size*0.5)*factor,visible_size*factor)
+    draw_rect(viewport.intersection(mini_rect),COL_GOLD,false,1.4)
     draw_rect(mini_rect,Color("#9caa9b"),false,1.0)
 
 func _draw_portrait(canvas: Control) -> void:
@@ -2231,7 +2238,7 @@ func _draw_terrain_texture() -> void:
     # Small compass and a clean frame give orientation without repeated labels.
     # Compass stays at a constant screen size instead of growing with zoom.
     var offset: Vector2=MAP_SIZE*0.5-camera_center*camera_zoom
-    map_layer.draw_set_transform(Vector2(866,35),0.0,Vector2.ONE)
+    map_layer.draw_set_transform(Vector2(MAP_SIZE.x-33,30),0.0,Vector2.ONE)
     map_layer.draw_circle(Vector2.ZERO,23,Color(0.08,0.12,0.13,0.72))
     map_layer.draw_arc(Vector2.ZERO,22,0.0,TAU,40,Color(COL_GOLD,0.65),1.0,true)
     for i in range(8):
@@ -2551,59 +2558,55 @@ func _portrait_index(name: String) -> int:
         _: return 0
 
 func _build_title_screen() -> void:
-    title_screen = Control.new()
-    title_screen.size = Vector2(1280,800)
+    title_screen=Control.new()
+    title_screen.size=Vector2(1280,800)
     add_child(title_screen)
-    var bg := ColorRect.new()
-    bg.color = Color("#101b1e")
-    bg.size = title_screen.size
-    title_screen.add_child(bg)
+    var background := ColorRect.new()
+    background.color=COL_BG
+    background.size=title_screen.size
+    title_screen.add_child(background)
     var art := TextureRect.new()
-    art.texture = TITLE_ART
-    art.position = Vector2.ZERO
-    art.size = Vector2(620,800)
-    art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-    art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-    art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    art.texture=TITLE_ART
+    art.position=Vector2(598,0)
+    art.size=Vector2(682,800)
+    art.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
+    art.stretch_mode=TextureRect.STRETCH_KEEP_ASPECT_COVERED
+    art.mouse_filter=Control.MOUSE_FILTER_IGNORE
     title_screen.add_child(art)
-    var heading := Label.new()
-    heading.text = "軍略  군략"
-    heading.position = Vector2(690,150)
-    heading.add_theme_font_size_override("font_size",64)
-    heading.add_theme_color_override("font_color",COL_GOLD)
-    title_screen.add_child(heading)
-    var sub := Label.new()
-    sub.text = "천하를 읽고, 군을 움직이다"
-    sub.position = Vector2(694,245)
-    sub.add_theme_font_size_override("font_size",22)
-    title_screen.add_child(sub)
-    var divider := ColorRect.new()
-    divider.color = Color("#9c875d")
-    divider.position = Vector2(694,285)
-    divider.size = Vector2(413,1)
-    title_screen.add_child(divider)
-    _title_button("새 북벌 캠페인",Vector2(690,310),_begin_campaign)
-    _title_button("캠페인 이어하기",Vector2(690,366),_continue_campaign)
-    _title_button("단독 전투",Vector2(690,422),_leave_title)
-    _title_button("전장 브리핑",Vector2(690,478),_title_brief)
-    _title_button("음향 전환",Vector2(690,534),_toggle_sound)
-    _title_button("도움말 / 조작",Vector2(690,590),_open_demo_help)
-    _title_button("종료",Vector2(690,646),_quit_game)
-    var version := Label.new()
-    version.text = "軍略  ·  개발 빌드"
-    version.position = Vector2(694,716)
-    title_screen.add_child(version)
+    var blend := Gradient.new()
+    blend.colors=PackedColorArray([COL_BG,Color(COL_BG,0)])
+    var texture := GradientTexture2D.new()
+    texture.gradient=blend
+    texture.width=196
+    texture.height=2
+    var seam := TextureRect.new()
+    seam.texture=texture
+    seam.position=art.position
+    seam.size=Vector2(196,800)
+    seam.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
+    seam.mouse_filter=Control.MOUSE_FILTER_IGNORE
+    title_screen.add_child(seam)
+    var heading := _label("군략",Vector2(82,107),Vector2(440,104),77,COL_TEXT)
+    heading.reparent(title_screen,false)
+    var sub := _label("삼국지 군단 지휘",Vector2(88,218),Vector2(420,28),21,COL_GOLD)
+    sub.reparent(title_screen,false)
+    _title_button("새 북벌 캠페인",Vector2(88,288),Vector2(428,56),_begin_campaign,true)
+    _title_button("캠페인 이어하기",Vector2(88,355),Vector2(428,50),_continue_campaign)
+    _title_button("단독 전투",Vector2(88,416),Vector2(428,50),_leave_title)
+    _title_button("전장 브리핑",Vector2(88,517),Vector2(208,43),_title_brief)
+    _title_button("도움말 / 조작",Vector2(308,517),Vector2(208,43),_open_demo_help)
+    _title_button("음향 전환",Vector2(88,571),Vector2(208,43),_toggle_sound)
+    _title_button("종료",Vector2(308,571),Vector2(208,43),_quit_game)
+    var version := _label(str(ProjectSettings.get_setting("application/config/version")),Vector2(88,730),Vector2(210,21),12,COL_MUTED)
+    version.reparent(title_screen,false)
     title_screen.show()
 
-func _title_button(caption: String, pos: Vector2, callback: Callable) -> void:
-    var btn := Button.new()
-    btn.text = caption
-    btn.position = pos
-    btn.size = Vector2(420,50)
-    btn.add_theme_font_size_override("font_size",20)
-    if caption == "새 북벌 캠페인": _primary_button(btn)
-    title_screen.add_child(btn)
-    btn.pressed.connect(callback)
+func _title_button(caption: String, position: Vector2, extent: Vector2, callback: Callable, primary: bool=false) -> void:
+    var button := _button(caption,position,extent,callback)
+    button.reparent(title_screen,false)
+    button.alignment=HORIZONTAL_ALIGNMENT_LEFT
+    button.add_theme_font_size_override("font_size",18)
+    if primary: _primary_button(button)
 
 func _show_title() -> void:
     if is_instance_valid(order_view): order_view.hide()
@@ -2641,12 +2644,7 @@ func _build_outcome_dialog() -> void:
     var panel := Panel.new()
     panel.position = Vector2(250,103)
     panel.size = Vector2(780,594)
-    var style := StyleBoxFlat.new()
-    style.bg_color = Color("#1b2b2d")
-    style.border_color = Color("#c4a66b")
-    style.set_border_width_all(2)
-    style.set_corner_radius_all(6)
-    panel.add_theme_stylebox_override("panel",style)
+    panel.add_theme_stylebox_override("panel",_ui_box(COL_PANEL,COL_LINE))
     outcome_dialog.add_child(panel)
     var layout := VBoxContainer.new()
     layout.position = Vector2(28,20)
@@ -2720,16 +2718,7 @@ func _show_outcome() -> void:
         if int(unit["side"]) != 0 or not int(unit["id"]) in sim.command_ids(0):
             continue
         var card := PanelContainer.new()
-        var card_style := StyleBoxFlat.new()
-        card_style.bg_color = Color("#142427")
-        card_style.border_color = Color("#465b58")
-        card_style.set_border_width_all(1)
-        card_style.set_corner_radius_all(4)
-        card_style.content_margin_left = 8
-        card_style.content_margin_right = 8
-        card_style.content_margin_top = 3
-        card_style.content_margin_bottom = 3
-        card.add_theme_stylebox_override("panel",card_style)
+        card.add_theme_stylebox_override("panel",_ui_box(Color("#243442"),COL_LINE))
         outcome_cards.add_child(card)
         var row := HBoxContainer.new()
         row.add_theme_constant_override("separation",12)
@@ -3062,15 +3051,9 @@ func _respond_situation(order: String) -> void:
     _refresh_hud()
 
 func _primary_button(btn: Button) -> void:
-    var style := StyleBoxFlat.new()
-    style.bg_color = Color("#796038")
-    style.border_color = COL_GOLD
-    style.set_border_width_all(1)
-    style.set_corner_radius_all(4)
-    btn.add_theme_stylebox_override("normal",style)
-    var hover: StyleBoxFlat = style.duplicate()
-    hover.bg_color = Color("#937849")
-    btn.add_theme_stylebox_override("hover",hover)
+    btn.add_theme_stylebox_override("normal",_ui_box(COL_ACTIVE))
+    btn.add_theme_stylebox_override("hover",_ui_box(Color("#be503c")))
+    btn.add_theme_stylebox_override("pressed",_ui_box(Color("#853022")))
 
 func _map_plate(value: String,p: Vector2,accent: Color,fs: int) -> void:
     var pixel_font: int = clampi(roundi(float(fs)*camera_zoom),12,14)
@@ -3256,13 +3239,6 @@ func _operation_clock(seconds: float) -> String:
 func _field_art(tile:int,rect:Rect2,tint:Color=Color.WHITE)->void:
     var region:=Rect2(float(tile%4)*256.0,float(floori(float(tile)/4.0))*256.0,256,256)
     map_layer.draw_texture_rect_region(FIELDCRAFT,rect,region,tint)
-
-func _bronze_frame(rect:Rect2)->void:
-    draw_rect(rect,Color("#b09560"),false,1.4)
-    draw_rect(rect.grow(-3),Color("#51452f"),false,1.0)
-    for corner in [rect.position,Vector2(rect.end.x,rect.position.y),rect.end,Vector2(rect.position.x,rect.end.y)]:
-        var d:=Vector2(1 if corner.x==rect.position.x else -1,1 if corner.y==rect.position.y else -1)
-        draw_polyline(PackedVector2Array([corner+Vector2(d.x*16,0),corner+Vector2(d.x*4,d.y*4),corner+Vector2(0,d.y*16)]),Color("#dfbd78"),1.5,true)
 
 func _commander_icon(name:String,side:int)->AtlasTexture:
     var icon:=AtlasTexture.new()
