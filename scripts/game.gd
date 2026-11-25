@@ -74,8 +74,8 @@ func _build_interface() -> void:
     _label("작전 목표", Vector2(958, 292), Vector2(267, 21), 13, COL_MUTED)
     mission_choice = _options(Vector2(956, 314), ["중앙 진격", "북측 확보", "남측 우회", "본진 방어"])
     mission_choice.item_selected.connect(_on_choices_changed)
-    _label("진형 운영 방침", Vector2(958, 362), Vector2(267, 21), 13, COL_MUTED)
-    policy_choice = _options(Vector2(956, 384), ["현장 판단", "횡대 유지", "종대 유지", "방진 유지"])
+    _label("진형 / 명령 운영 방침", Vector2(958, 362), Vector2(267, 21), 13, COL_MUTED)
+    policy_choice = _options(Vector2(956, 384), ["현장 판단", "명령 엄수", "재량 위임", "횡대 유지", "종대 유지", "방진 유지"])
     policy_choice.item_selected.connect(_on_choices_changed)
     apply_btn = _button("작전 적용 / 전령 보내기", Vector2(956, 434), Vector2(295, 39), _apply_order)
     _label("책사 지휘 위치", Vector2(958, 490), Vector2(267, 25), 16, COL_TEXT)
@@ -236,9 +236,9 @@ func _refresh_hud() -> void:
     apply_btn.text = "초기 작전 설정" if not sim.started else "전령 보내기 (6턴~)"
     var unit: Dictionary = sim.find_unit(selected_id)
     if not unit.is_empty():
-        selected_label.text = "%s   %d명 / 사기 %d" % [str(unit["name"]), int(float(unit["troops"])), int(float(unit["morale"]))]
+        selected_label.text = "%s [%s] %d명 / 사기 %d" % [str(unit["name"]), str(unit["general_state"]), int(float(unit["troops"])), int(float(unit["morale"]))]
         var ammo_text: String = " · 화살 %d" % int(unit.get("ammo", 100.0)) if str(unit["type"]) == "궁병" else ""
-        details_label.text = "%s · %s\n%s / %s · 접촉 %d\n응집 %d · 피로 %d · 식량 %d%s\n%s" % [str(unit["action"]), str(unit["mission"]), str(unit["formation"]), sim.terrain_at(unit["pos"]), int(unit.get("contact_troops", 0)), int(unit.get("cohesion", 100.0)), int(unit.get("fatigue", 0.0)), int(unit.get("rations", 100.0)), ammo_text, str(unit["reason"])]
+        details_label.text = "통솔 %d · 무력 %d · 지력 %d · 판단 %d\n%s / %s · 응집 %d · 피로 %d\n식량 %d%s · %s\n%s" % [int(unit["leadership"]), int(unit["martial"]), int(unit["intelligence"]), int(unit["judgment"]), str(unit["action"]), str(unit["formation"]), int(unit["cohesion"]), int(unit["fatigue"]), int(unit["rations"]), ammo_text, "포위" if bool(unit["surrounded"]) else str(unit["obedience"]), str(unit["reason"])]
     var start_line: int = maxi(0, sim.events.size() - 4)
     var lines: String = ""
     for i in range(start_line, sim.events.size()):
@@ -333,13 +333,29 @@ func _draw() -> void:
         _draw_string("책사", p + Vector2(-14, -21), 13, COL_TEXT)
         if commander["pos"] != commander["goal"]:
             draw_line(p, _screen(commander["goal"]), Color(accent.r, accent.g, accent.b, 0.6), 1.5)
+    for scout in sim.scouts:
+        if not bool(scout["alive"]):
+            continue
+        var scout_p: Vector2 = _screen(scout["pos"])
+        var scout_color: Color = COL_BLUE if int(scout["side"]) == 0 else COL_RED
+        draw_circle(scout_p, 6.0, scout_color, false, 2.0)
+        draw_circle(scout_p, 2.5, scout_color)
+        draw_line(scout_p, _screen(scout["goal"]), Color(scout_color, 0.20), 1.0)
+        _draw_string("정찰", scout_p + Vector2(-12, -12), 10, scout_color)
+    # Allied scout snapshots are displayed as aged reports rather than live positions.
+    for id in sim.intelligence[0]:
+        var report: Dictionary = sim.intelligence[0][id]
+        var report_p: Vector2 = _screen(report["pos"])
+        var age: float = maxf(0.0, sim.battle_time - float(report["time"]))
+        draw_arc(report_p, 12.0, 0.0, TAU, 24, Color(COL_GOLD, maxf(0.15, 0.65 - age * 0.025)), 1.5)
+        _draw_string("정찰 %.0f초 전" % age, report_p + Vector2(-30, 19), 10, COL_GOLD)
     for letter in sim.couriers:
         var p: Vector2 = _screen(letter["pos"])
         draw_circle(p, 5.0, COL_GOLD)
         _draw_string("전령", p + Vector2(-14, -11), 12, COL_GOLD)
     # Draw real maneuver waypoints so an aggressive flanking decision is visible.
     for unit in sim.units:
-        if float(unit["troops"]) > 0.0 and str(unit["action"]) in ["측면 우회", "거점 점령", "거점 방어", "재집결", "전열 지원", "탄약 보충", "보급 복귀"]:
+        if float(unit["troops"]) > 0.0 and str(unit["action"]) in ["측면 우회", "거점 점령", "거점 방어", "재집결", "전열 지원", "탄약 보충", "보급 복귀", "패주", "정보 확인", "명령 수행"]:
             var start_point: Vector2 = _screen(unit["pos"])
             var flank_waypoint: Vector2 = _screen(unit["goal"])
             draw_line(start_point, flank_waypoint, Color(COL_GOLD, 0.58), 1.4)
@@ -356,6 +372,10 @@ func _draw_unit(unit: Dictionary, label_areas: Array[Rect2]) -> void:
     var accent: Color = COL_BLUE if side == 0 else COL_RED
     var p: Vector2 = _screen(unit["pos"])
     var unit_type: String = str(unit["type"])
+    if bool(unit["routed"]):
+        accent = Color(accent, 0.48)
+    elif float(unit["ambush_ready"]) >= 3.0:
+        accent = Color(accent, 0.64)
     for spot in sim.formation_slots(unit):
         var point: Vector2 = _screen(spot)
         match unit_type:
@@ -382,8 +402,21 @@ func _draw_unit(unit: Dictionary, label_areas: Array[Rect2]) -> void:
     var cohesion: float = clampf(float(unit.get("cohesion", 100.0)) / 100.0, 0.0, 1.0)
     draw_rect(Rect2(p + Vector2(-24, 31), Vector2(48, 3)), Color("#142630"))
     draw_rect(Rect2(p + Vector2(-24, 31), Vector2(48.0 * cohesion, 3)), Color("#e3c37b"))
-    if bool(unit.get("rallying", false)):
-        _draw_string("재집결", p + Vector2(-15, 47), 10, COL_GOLD)
+    var markers: Array[String] = []
+    if bool(unit["routed"]):
+        markers.append("패주")
+    elif bool(unit["rallying"]):
+        markers.append("재집결")
+    if bool(unit["surrounded"]):
+        markers.append("포위")
+    if str(unit["general_state"]) != "건재":
+        markers.append(str(unit["general_state"]))
+    if str(unit["action"]) == "매복":
+        markers.append("매복")
+    if float(unit["charge"]) >= 32.0:
+        markers.append("돌격")
+    if not markers.is_empty():
+        _draw_string(" / ".join(markers), p + Vector2(-30, 47), 10, COL_GOLD)
 
     # Collision-aware name chips; overlapping armies do not stack unreadable labels.
     var label: String = "%s  %d" % [str(unit["name"]), int(float(unit["troops"]))]
