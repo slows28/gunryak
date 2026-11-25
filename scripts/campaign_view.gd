@@ -85,8 +85,7 @@ func _ready() -> void:
     type_choice = _choice(Vector2(991,151),Vector2(111,35),["보병","궁병","기병"])
     type_choice.item_selected.connect(_choose_type)
     formation_choice = _choice(Vector2(1110,151),Vector2(130,35),SHAPES)
-    formation_choice.item_selected.connect(func(index: int):
-        _tell(campaign.set_formation(selected_slot,SHAPES[index]),"진형 설정"))
+    formation_choice.hide()
     troops = _label("",Vector2(869,190),Vector2(370,128),14)
     _button("병력 500명 보충 · 15",Vector2(869,317),Vector2(371,38),_replenish)
     _label("장수 명부 · 등용 55",Vector2(869,360),Vector2(370,28),18)
