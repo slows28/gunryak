@@ -48,7 +48,7 @@ jobs:
           python3 - <<'PY'
           import pathlib, struct
           folder = pathlib.Path("test_results/screenshots")
-          for name in ("title.png", "before_battle.png", "battle_12s.png", "battle_28s.png", "battle_60s.png", "battle_result.png"):
+          for name in ("title.png", "campaign_map.png", "before_battle.png", "battle_12s.png", "battle_28s.png", "battle_60s.png", "battle_result.png"):
               file = folder/name
               if not file.exists():
                   raise SystemExit(f"Screenshot missing: {file}")
@@ -99,3 +99,40 @@ jobs:
           name: godot-windows-logs
           path: test_results/
           if-no-files-found: warn
+
+  demo-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned editor and matching export templates
+        run: |
+          set -euo pipefail
+          base="https://github.com/godotengine/godot/releases/download/4.7.2-stable"
+          curl --fail --location --retry 3 "$base/Godot_v4.7.2-stable_linux.x86_64.zip" -o /tmp/editor.zip
+          curl --fail --location --retry 3 "$base/Godot_v4.7.2-stable_export_templates.tpz" -o /tmp/templates.tpz
+          unzip -q /tmp/editor.zip -d /tmp/editor
+          chmod +x /tmp/editor/Godot_v4.7.2-stable_linux.x86_64
+          unzip -q /tmp/templates.tpz -d /tmp/templates
+          mkdir -p "$HOME/.local/share/godot/export_templates/4.7.2.stable"
+          cp /tmp/templates/templates/* "$HOME/.local/share/godot/export_templates/4.7.2.stable/"
+      - name: Import project and export Windows and Linux candidates
+        run: |
+          set -euo pipefail
+          engine=/tmp/editor/Godot_v4.7.2-stable_linux.x86_64
+          "$engine" --headless --editor --import --path . --quit
+          mkdir -p dist
+          "$engine" --headless --path . --export-release "Windows Desktop" dist/Gunryak.exe
+          "$engine" --headless --path . --export-release "Linux" dist/Gunryak.x86_64
+          test -s dist/Gunryak.exe
+          test -s dist/Gunryak.x86_64
+          chmod +x dist/Gunryak.x86_64
+          dist/Gunryak.x86_64 --headless --quit-after 10
+          printf '%s\n' 'Gunryak public demo candidate 0.9 — not a final release.' 'Windows: run Gunryak.exe. Linux: run Gunryak.x86_64.' 'Korean UI; local campaign saves. Windows GUI is not verified by headless tests.' > dist/README.txt
+          (cd dist && sha256sum Gunryak.exe Gunryak.x86_64 > SHA256SUMS.txt)
+      - name: Upload portable demo candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: gunryak-demo-candidate
+          path: dist/
+          if-no-files-found: error
