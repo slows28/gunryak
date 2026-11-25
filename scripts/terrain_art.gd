@@ -5,7 +5,8 @@ const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
 ## Deterministic, continuous terrain art. Gameplay coordinates remain unchanged.
 static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, scenario: int, scale: float = 1.0) -> ImageTexture:
     # Bake higher-resolution wide terrain; retain true world coordinates.
-    var bake: float = 0.5 if scale > 1.0 else 1.0
+    # 2025×1282 on the standard wide field, 2.25× previous pixel count.
+    var bake: float = 0.75 if scale > 1.0 else 1.0
     var w: int = int(extent.x*bake)
     var h: int = int(extent.y*bake)
     var image := Image.create_empty(w,h,false,Image.FORMAT_RGBA8)
@@ -19,7 +20,7 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
     grain.fractal_octaves = 2
     var dark := Color("#263e2b")
     var middle := Color("#5a7241")
-    var light := Color("#a0a366")
+    var light := Color("#a8aa74")
     var path := Color("#b99a66")
     var shade := Color("#324437")
     var crest := Color("#aaa583")
@@ -52,9 +53,9 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             var v: float = noise.get_noise_2d(p.x,p.y)*0.5+0.5
             var g: float = grain.get_noise_2d(p.x,p.y)
             var ground: Color = dark.lerp(middle,smoothstep(0.1,0.48,v)).lerp(light,smoothstep(0.50,0.90,v))
-            var uv:=Vector2i(_mirror_sample(x+roundi(v*20.0),112),_mirror_sample(y+roundi(v*14.0),112))
+            var uv:=Vector2i(_mirror_sample(roundi(p.x*0.68+v*20.0),112),_mirror_sample(roundi(p.y*0.68+v*14.0),112))
             var painted:Color=grass_art.get_pixelv(uv)
-            ground=ground.lerp(painted,0.73)
+            ground=ground.lerp(painted,0.61)
             ground=ground.darkened(maxf(0.0,0.47-v)*0.38).lightened(maxf(0.0,v-0.53)*0.17)
             var micro: float = grain.get_noise_2d(p.x*2.1+49.0,p.y*2.1-33.0)
             ground = ground.lightened(maxf(0.0,g)*0.19+maxf(0.0,micro)*0.11).darkened(maxf(0.0,-g)*0.16+maxf(0.0,-micro)*0.08)
@@ -66,8 +67,10 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             if wear>0.0:
                 var dirt:Color=path.lerp(dirt_art.get_pixelv(uv),0.80)
                 ground = ground.lerp(dirt.lightened(g*0.09),wear*0.98)
-            if d > 25.0 and micro > 0.44:
-                ground = ground.lerp(Color("#9aa96a"),(micro-0.44)*0.24)
+            if d > 25.0 and micro > 0.32:
+                ground = ground.lerp(Color("#9aa96a"),(micro-0.32)*0.34)
+            if d>25.0 and g < -0.25:
+                ground=ground.lerp(Color("#62543a"),(-g-0.25)*0.19)
             if d < 12.0:
                 var rut: float = 1.0-smoothstep(0.8,3.0,absf(d-7.0+g*1.5))
                 ground = ground.darkened(rut*0.32)
@@ -170,17 +173,19 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                 if variant==1: patch.flip_x()
                 details.append(patch)
         var decor: Array[Dictionary]=[]
-        for i in range(1850):
+        for i in range(2600):
             var p:=Vector2(rng.randf_range(40,extent.x-40),rng.randf_range(40,extent.y-40))
             var bank: float=absf(p.x-(1120.0+sin(p.y/225.0)*100.0+sin(p.y/89.0)*34.0))
             var road_distance: float=INF
             for lane in range(3):
                 var cy:float=[131.0,282.0,435.0][lane]*scale+sin(p.x/220.0+float(lane)*1.6)*48.0+sin(p.x/94.0+float(lane))*19.0
                 road_distance=minf(road_distance,absf(p.y-cy))
-            if road_distance<43.0 or bank<60.0: continue
+            if road_distance<43.0 or bank<54.0: continue
             var kind: int=2
-            if bank<120.0 or hill.has_point(p): kind=0 if i%3==0 else 1
-            elif i%5==0: kind=1
+            var density: float=noise.get_noise_2d(p.x*1.4+100,p.y*1.4-80)
+            if density < -0.18 and i%4!=0: continue
+            if bank<105.0 or hill.has_point(p): kind=0 if i%3==0 else 1
+            elif i%7==0 and density>0.0: kind=1
             decor.append({"pos":p,"tile":kind*3+rng.randi_range(0,2)})
         decor.sort_custom(func(a: Dictionary,b: Dictionary) -> bool: return (a["pos"] as Vector2).y<(b["pos"] as Vector2).y)
         for item in decor:
@@ -190,7 +195,7 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
     # Draw forest clusters as overlapping individual crowns, not rectangular tiles.
     var trees: Array[Dictionary] = []
     for forest in forests:
-        var count: int = int(forest.get_area()/610.0)
+        var count: int = int(forest.get_area()/510.0)
         for i in range(count):
             var pos := Vector2(rng.randf_range(forest.position.x+5,forest.end.x-5),rng.randf_range(forest.position.y+5,forest.end.y-5))
             if scale > 1.0 and absf(pos.x-(1120.0+sin(pos.y/225.0)*100.0+sin(pos.y/89.0)*34.0)) < 45.0: continue
