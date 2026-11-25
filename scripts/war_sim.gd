@@ -181,7 +181,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
         "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
         "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
-        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "order_destination":Vector2.ZERO, "has_destination":false, "destination_reached":false, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0, "screened_damage":0.0, "screen_events":0, "ai_role":"", "ai_partner":-1, "ai_role_until":0.0, "ai_replans":0
+        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "order_destination":Vector2.ZERO, "has_destination":false, "destination_reached":false, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0, "screened_damage":0.0, "screen_events":0, "ai_role":"", "ai_partner":-1, "ai_role_until":0.0, "ai_replans":0, "bridge_y":-1.0, "bridge_bank":0, "bridge_crossings":0, "blocked_water_steps":0, "flank_commits":0, "flank_aborts":0, "flank_recovery":0.0, "flank_contact_at":-100.0
     }
     _set_general_profile(unit)
     if unit_type == "기병":
@@ -850,12 +850,16 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         unit["charge_cooldown"] = maxf(0.0, float(unit["charge_cooldown"]) - dt)
     var actual_move: Vector2 = Vector2.ZERO
     if pos.distance_to(goal) > 2.0:
-        if wide_field and (enemy.is_empty() or pos.distance_to(enemy["pos"]) > 180.0):
+        if long_operation:
+            goal = _committed_bridge_route(unit,pos,goal)
+        elif wide_field and (enemy.is_empty() or pos.distance_to(enemy["pos"]) > 180.0):
             goal = _crossing_route(pos,goal)
         if not structures.is_empty() and (str(unit["type"]) == "기병" or bool(unit["routed"])):
             goal = _detour_goal(unit,pos,goal)
         var new_pos: Vector2 = pos.move_toward(goal, rate * dt)
-        unit["pos"] = _structure_move(unit, pos, _field_point(new_pos))
+        var legal:Vector2=_structure_move(unit,pos,_field_point(new_pos))
+        if long_operation: legal=_land_motion(unit,pos,legal)
+        unit["pos"]=legal
         var moved: Vector2 = (unit["pos"] as Vector2) - pos
         actual_move = moved
         if moved.length_squared() > 0.03:
@@ -935,8 +939,10 @@ func _resolve_frontline(dt: float) -> void:
             if distance < threshold:
                 # Geometric separation prevents passing through the other unit.
                 var overlap: float = threshold - distance
-                a["pos"] = _field_point(ap - direction * overlap * 0.5)
-                b["pos"] = _field_point(bp + direction * overlap * 0.5)
+                var next_a:Vector2=_field_point(ap-direction*overlap*0.5)
+                var next_b:Vector2=_field_point(bp+direction*overlap*0.5)
+                a["pos"]=_land_motion(a,ap,next_a) if long_operation else next_a
+                b["pos"]=_land_motion(b,bp,next_b) if long_operation else next_b
             if int(a["side"]) == int(b["side"]):
                 continue
             # Ranged detachments can be pursued but do not push a melee line.
@@ -948,8 +954,12 @@ func _resolve_frontline(dt: float) -> void:
             if absf(advantage) <= 0.035:
                 continue
             var shift: float = clampf(advantage * 24.0 * dt, -1.6, 1.6)
-            a["pos"] = _field_point((a["pos"] as Vector2) + direction * shift)
-            b["pos"] = _field_point((b["pos"] as Vector2) + direction * shift)
+            var current_a:Vector2=a["pos"]
+            var current_b:Vector2=b["pos"]
+            var pushed_a:Vector2=_field_point(current_a+direction*shift)
+            var pushed_b:Vector2=_field_point(current_b+direction*shift)
+            a["pos"]=_land_motion(a,current_a,pushed_a) if long_operation else pushed_a
+            b["pos"]=_land_motion(b,current_b,pushed_b) if long_operation else pushed_b
             var losing_unit: Dictionary = b if shift > 0.0 else a
             losing_unit["front_pressure"] = maxf(float(losing_unit["front_pressure"]), absf(advantage))
             losing_unit["pushed_distance"] = float(losing_unit["pushed_distance"]) + absf(shift)
@@ -1496,6 +1506,10 @@ func _update_battle_condition(dt: float) -> void:
 func _combat_target(unit: Dictionary) -> Dictionary:
     var nearest: Dictionary = _nearest_visible_enemy(unit)
     if six_armies and not nearest.is_empty():
+        if long_operation and int(unit["flank_phase"])==2 and str(unit["action"])=="돌파":
+            var assigned:Dictionary=find_unit(int(unit["flank_target"]))
+            if not assigned.is_empty() and _locally_observed(unit,assigned) and formation_contacts(unit,assigned,30.0)>0:
+                return assigned
         return _tactical_target(unit,nearest)
     if nearest.is_empty() or str(unit["type"]) != "궁병" or _effective_stat(unit, "intelligence") < 70.0:
         return nearest
@@ -2623,16 +2637,35 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
     if not pinned.is_empty() and _locally_observed(unit,pinned):
         enemy=pinned
     var previous: Dictionary=find_unit(int(unit["flank_target"]))
-    if not previous.is_empty() and _locally_observed(unit,previous) and battle_time<float(unit["flank_until"]):
+    if not previous.is_empty() and _locally_observed(unit,previous) and (battle_time<float(unit["flank_until"]) or (long_operation and int(unit["flank_phase"])>=1)):
         enemy=previous
+    if long_operation and battle_time<float(unit["flank_recovery"]):
+        return {"action":"협동 대기","reason":"우회 재정비 후 재기동","goal":_field_point(ap-forward*45.0+forward.orthogonal()*100.0)}
     if enemy.is_empty():
         unit["flank_target"]=-1
+        unit["flank_phase"]=0
         var wing: float=1.0 if int(unit["id"])%2==0 else -1.0
         return {"action":"협동 우회","reason":str(ally["name"])+"군과 측면 전개","goal":ap+forward.orthogonal()*165.0*wing}
     var ep: Vector2=enemy["pos"]
     var ef: Vector2=enemy["facing"]
     if ef.length_squared()<0.01: ef=-forward
     var lateral: Vector2=ef.orthogonal()
+    if long_operation and int(unit["flank_target"])==int(enemy["id"]) and int(unit["flank_phase"])==2:
+        if formation_contacts(unit,enemy,30.0)>0 or formation_contacts(ally,enemy,30.0)>0:
+            unit["flank_contact_at"]=battle_time
+        if battle_time-float(unit["flank_contact_at"])<=6.0:
+            return {"action":"돌파","reason":str(ally["name"])+"군과 협동 공격 지속","goal":ep}
+        unit["flank_aborts"]+=1
+        unit["flank_recovery"]=battle_time+15.0
+        unit["flank_phase"]=0
+        unit["flank_target"]=-1
+        return {"action":"협동 대기","reason":"정면 연계 상실, 재정비","goal":p}
+    if long_operation and int(unit["flank_target"])==int(enemy["id"]) and int(unit["flank_phase"])<2 and battle_time>=float(unit["flank_until"]):
+        unit["flank_aborts"]+=1
+        unit["flank_recovery"]=battle_time+15.0
+        unit["flank_target"]=-1
+        unit["flank_phase"]=0
+        return {"action":"협동 대기","reason":"우회 시간 초과, 재정비","goal":p}
     if int(unit["flank_target"])!=int(enemy["id"]) or battle_time>=float(unit["flank_until"]):
         var sign_value: float=1.0 if lateral.dot(p-ep)>=0.0 else -1.0
         unit["flank_target"]=enemy["id"]
@@ -2648,11 +2681,19 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
         var angle_ok: bool=approach.dot(ef)<0.30
         var pinned_now: bool=formation_contacts(ally,enemy,30.0)>0 and not bool(ally["routed"])
         if not angle_ok:
+            if long_operation:
+                unit["flank_aborts"]+=1
+                unit["flank_recovery"]=battle_time+15.0
+                unit["flank_target"]=-1
             unit["flank_phase"]=0
             unit["flank_until"]=0.0
             return {"action":"협동 우회","reason":"적 방향 변화: 측면 위치 재확보","goal":p}
         if not pinned_now:
             return {"action":"협동 대기","reason":str(ally["name"])+"군 정면 접촉을 기다림","goal":p}
+        if long_operation:
+            unit["flank_phase"]=2
+            unit["flank_commits"]+=1
+            unit["flank_contact_at"]=battle_time
         return {"action":"돌파","reason":str(ally["name"])+"군 정면 압박에 맞춰 측후방 공격","goal":ep}
     return {"action":"협동 우회","reason":str(ally["name"])+"군과 협동 측면 기동","goal":unit["flank_goal"]}
 
@@ -2693,6 +2734,8 @@ func _reset_cooperation(unit: Dictionary,partner: int) -> void:
     unit["flank_target"]=-1
     unit["flank_phase"]=0
     unit["flank_until"]=0.0
+    unit["flank_recovery"]=0.0
+    unit["flank_contact_at"]=-100.0
 
 func _locally_observed(unit: Dictionary,enemy: Dictionary) -> bool:
     if int(unit["side"])==int(enemy["side"]) or float(enemy["troops"])<=0.0: return false
@@ -2731,6 +2774,7 @@ func _physical_screen(protected: Dictionary,attacker: Dictionary) -> Dictionary:
 const MAP_MISSIONS = ["지정 위치 이동","공격","지역 사수","전열 엄호","측후방 기동","구원 지원","예비 대기","철수"]
 func issue_map_order(id: int,mission: String,destination: Vector2,partner: int=-1) -> bool:
     if mission not in MAP_MISSIONS or finished or not Rect2(Vector2.ZERO,field_size).has_point(destination): return false
+    if long_operation and terrain_at(destination)=="하천": return false
     var unit: Dictionary=find_unit(id)
     if unit.is_empty() or int(unit["side"])!=0 or float(unit["troops"])<=0.0 or not _valid_partner(unit,partner): return false
     if started: return request_order(id,mission,"현장 판단",partner,destination)
@@ -2861,3 +2905,54 @@ func _enemy_strategy()->void:
         unit["ai_role"]=role
         unit["ai_partner"]=partner
         unit["ai_role_until"]=battle_time+20.0
+
+# One bridge is selected and retained until the army reaches the far bank.
+# Route choice accounts for allied congestion without reading hidden enemies.
+func _committed_bridge_route(unit:Dictionary,p:Vector2,goal:Vector2)->Vector2:
+    var bank:int=1 if p.x>=river_x(p.y) else -1
+    var target_bank:int=1 if goal.x>=river_x(goal.y) else -1
+    var distance:float=absf(p.x-river_x(p.y))
+    var chosen:float=float(unit["bridge_y"])
+    if chosen>=0.0:
+        var exit_bank:int=int(unit["bridge_bank"])
+        if bank==exit_bank and distance>=55.0:
+            unit["bridge_y"]=-1.0
+            unit["bridge_bank"]=0
+            unit["bridge_crossings"]+=1
+            chosen=-1.0
+        elif distance<38.0 or target_bank==exit_bank:
+            var rx:float=river_x(chosen)
+            if absf(p.y-chosen)>10.0 and distance>=35.0:
+                return Vector2(rx-exit_bank*64.0,chosen)
+            return Vector2(rx+exit_bank*64.0,chosen)
+        else:
+            unit["bridge_y"]=-1.0
+            unit["bridge_bank"]=0
+            chosen=-1.0
+    if bank==target_bank:
+        if terrain_at(goal)=="하천": return Vector2(river_x(goal.y)+bank*34.0,goal.y)
+        return goal
+    var best:float=INF
+    for y in [390.0,850.0,1300.0]:
+        var crossing:=Vector2(river_x(y),y)
+        var cost:float=p.distance_to(crossing)+crossing.distance_to(goal)
+        for other in units:
+            if int(other["id"])==int(unit["id"]) or int(other["side"])!=int(unit["side"]) or float(other["troops"])<=0.0: continue
+            if absf(float(other.get("bridge_y",-1.0))-y)<1.0:
+                cost+=90.0
+        if cost<best:
+            best=cost
+            chosen=y
+    unit["bridge_y"]=chosen
+    unit["bridge_bank"]=target_bank
+    var rx:float=river_x(chosen)
+    return Vector2(rx+bank*64.0,chosen) if absf(p.y-chosen)>10.0 else Vector2(rx+target_bank*64.0,chosen)
+
+func _land_motion(unit:Dictionary,old:Vector2,proposed:Vector2)->Vector2:
+    if terrain_at(proposed)!="하천": return proposed
+    # A unit already displaced into water can escape, but cannot advance deeper.
+    if terrain_at(old)=="하천" and absf(proposed.x-river_x(proposed.y))>absf(old.x-river_x(old.y)):
+        return proposed
+    unit["blocked_water_steps"]+=1
+    var bank:float=1.0 if old.x>=river_x(old.y) else -1.0
+    return _field_point(Vector2(river_x(proposed.y)+bank*maxf(28.0,absf(old.x-river_x(old.y))),proposed.y))
