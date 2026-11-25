@@ -300,9 +300,9 @@ func _apply_order() -> void:
     var mission: String = mission_choice.get_item_text(mission_choice.selected)
     var policy: String = policy_choice.get_item_text(policy_choice.selected)
     if not sim.started:
-        runtime_notice = "사전 작전 반영 완료" if sim.select_unit_mission(selected_id, mission, policy) else "작전 설정 불가"
+        runtime_notice = "사전 작전 반영 완료" if sim.select_unit_mission(selected_id, mission, policy,int(sim.find_unit(selected_id).get("assigned_link",-1))) else "작전 설정 불가"
     elif sim.turn >= 6:
-        runtime_notice = "전령 출발 · 도착 전까지 기존 명령 유지" if sim.request_order(selected_id, mission, policy) else "파견 불가 · 기존 전령 또는 부대 상태 확인"
+        runtime_notice = "전령 출발 · 도착 전까지 기존 명령 유지" if sim.request_order(selected_id, mission, policy,int(sim.find_unit(selected_id).get("assigned_link",-1))) else "파견 불가 · 기존 전령 또는 부대 상태 확인"
     _select_unit()
     _refresh_hud()
     queue_redraw()
@@ -865,6 +865,16 @@ func _build_planning_dialog() -> void:
     _plan_button(troop_row,"병력 500명 받기",_transfer_in)
     _plan_button(troop_row,"병력 500명 보내기",_transfer_out)
     _plan_button(troop_row,"장수 교체",_swap_general)
+    var link_row := HBoxContainer.new()
+    root.add_child(link_row)
+    var assign_link := Button.new()
+    assign_link.text="선택 부대를 협동 대상으로 지정"
+    link_row.add_child(assign_link)
+    assign_link.pressed.connect(func(): _change_link(plan_donor.get_selected_id()))
+    var clear_link := Button.new()
+    clear_link.text="자동 선택"
+    link_row.add_child(clear_link)
+    clear_link.pressed.connect(func(): _change_link(-1))
     plan_deputy = _plan_option(root,"부장",["통솔형 부장","공격형 부장","책략형 부장"])
     plan_deputy.item_selected.connect(_change_deputy)
     plan_takeover = Button.new()
@@ -1987,3 +1997,14 @@ func _draw_cooperation_links() -> void:
     var goal: Vector2=unit["goal"]
     map_layer.draw_line(p,goal,Color(COL_GOLD,0.65),1.5*k,true)
     map_layer.draw_arc(goal,9.0*k,0,TAU,24,COL_GOLD,1.5*k,true)
+
+func _change_link(partner: int) -> void:
+    var unit: Dictionary=sim.find_unit(selected_id)
+    if unit.is_empty(): return
+    var ok: bool=false
+    if not sim.started:
+        ok=sim.select_unit_mission(selected_id,str(unit["mission"]),str(unit["policy"]),partner)
+    elif sim.turn>=6 and not sim.finished:
+        ok=sim.request_order(selected_id,str(unit["mission"]),str(unit["policy"]),partner)
+    plan_status.text="협동 대상 지정 완료" if ok and not sim.started else ("협동 대상 변경 전령 파견" if ok else "지정 불가: 자신·전멸 부대 또는 전령 제한")
+    _refresh_hud()
