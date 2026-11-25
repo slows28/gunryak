@@ -970,7 +970,8 @@ func _latest_general_reports() -> String:
 func _build_mind_report() -> void:
     mind_dialog=AcceptDialog.new()
     mind_dialog.title="장수 보고실 · 실시간 심리 및 판단 (전투 계속 진행)"
-    mind_dialog.theme=theme
+    var report_theme: Theme=theme.duplicate()
+    mind_dialog.theme=report_theme
     var window_style:=StyleBoxFlat.new()
     window_style.bg_color=Color("#14211f")
     window_style.border_color=Color("#8c7951")
@@ -979,9 +980,9 @@ func _build_mind_report() -> void:
     window_style.content_margin_right=16
     window_style.content_margin_top=14
     window_style.content_margin_bottom=14
-    mind_dialog.add_theme_stylebox_override("panel",window_style)
-    mind_dialog.add_theme_stylebox_override("embedded_border",window_style)
-    mind_dialog.add_theme_stylebox_override("embedded_unfocused_border",window_style)
+    report_theme.set_stylebox("panel","AcceptDialog",window_style)
+    report_theme.set_stylebox("embedded_border","Window",window_style)
+    report_theme.set_stylebox("embedded_unfocused_border","Window",window_style)
     mind_dialog.ok_button_text="전장으로"
     add_child(mind_dialog)
     mind_report=RichTextLabel.new()
