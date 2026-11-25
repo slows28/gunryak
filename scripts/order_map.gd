@@ -349,12 +349,32 @@ func _draw()->void:
     _art(0,Rect2(hc-Vector2(90,92),Vector2(180,142)),Color(1,1,1,0.96))
     _ink("고지",hc+Vector2(39,-32),11,INK)
     draw_rect(Rect2(MAP.position,Vector2(MAP.size.x*0.30,MAP.size.y)),Color(0.20,0.35,0.45,0.05))
+    # Cartographic objective symbols do not imply a castle on open ground.
     for site in sim.outposts:
         var p:Vector2=_point(site["pos"])
-        _art(2,Rect2(p-Vector2(32,56),Vector2(64,64)))
-        draw_circle(p,4,Color("#b79553"))
-        draw_circle(p,5,INK,false,1.2,true)
-        _plate(str(site["name"]),p+Vector2(0,15),12,Color("#dbc58d"))
+        var known:bool=not game.fog_enabled or not sim.started or sim.finished or sim.player_can_see(site["pos"])
+        var owner:int=int(site["owner"]) if known else -1
+        var color:Color=BLUE if owner==0 else (Color("#a04f3d") if owner==1 else INK)
+        draw_circle(p,9,Color("#d8c39a"),true)
+        draw_polyline(PackedVector2Array([p+Vector2(0,-7),p+Vector2(7,0),p+Vector2(0,7),p+Vector2(-7,0),p+Vector2(0,-7)]),color,1.6,true)
+        if owner>=0: draw_circle(p,3,color)
+        _plate(str(site["name"]),p+Vector2(0,18),12,Color("#dbc58d"))
+    # Actual fortification segments only: gate is part of the connected wall.
+    for structure in sim.structures:
+        var area:Rect2=structure["rect"]
+        var a:Vector2=_point(area.position)
+        var b:Vector2=_point(area.end)
+        var box:=Rect2(a,b-a)
+        if float(structure["hp"])<=0.0:
+            draw_rect(box.grow(1),Color(0.35,0.26,0.17,0.28),false,1)
+            continue
+        var gate:bool=str(structure["kind"])=="성문"
+        draw_rect(box.grow(1),Color("#95714b") if gate else Color("#68543b"))
+        draw_rect(box.grow(1),INK,false,1.2)
+        if gate:
+            var mid:Vector2=box.get_center()
+            draw_line(mid-Vector2(5,0),mid+Vector2(5,0),INK,2.0,true)
+            _plate(str(structure["name"]),mid+Vector2(0,-18),11,Color("#dbc58d"))
     for b in sim.bases:
         if int(b["side"])!=0 and game.fog_enabled and not sim.player_can_see(b["pos"]): continue
         var p:Vector2=_point(b["pos"])
