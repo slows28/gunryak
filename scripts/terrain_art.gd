@@ -51,7 +51,21 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                 ground = ground.lerp(rock,smoothstep(0.0,0.30,elevation)*0.90)
                 var band: float = absf(fmod(elevation*8.0,1.0)-0.5)
                 if band < 0.045: ground = ground.darkened(0.12)
-            var edge_v: float = minf(minf(float(x),float(w-x)),minf(float(y),float(h-y)))
+            if scale > 1.0:
+                var rx: float = 1120.0+sin(p.y/225.0)*100.0+sin(p.y/89.0)*34.0
+                var bank: float = absf(p.x-rx)
+                var bridge: bool = absf(p.y-390.0)<=38.0 or absf(p.y-850.0)<=38.0 or absf(p.y-1300.0)<=38.0
+                if bank < 41.0:
+                    ground = ground.lerp(Color("#a49871"),(1.0-smoothstep(28.0,41.0,bank))*0.88)
+                if bank < 27.0:
+                    var water: Color = Color("#335d65").lerp(Color("#729b96"),smoothstep(0.3,0.8,v))
+                    water = water.lightened(maxf(0.0,sin(p.y*0.22+p.x*0.09))*0.08)
+                    ground = ground.lerp(water,1.0-smoothstep(24.0,27.0,bank))
+                    if bridge:
+                        var board: Color = Color("#95795a").lightened(g*0.1)
+                        if fmod(p.x,7.0)<1.4: board = board.darkened(0.24)
+                        ground = board
+            var edge_v: float = minf(minf(float(x)/bake,extent.x-float(x)/bake),minf(float(y)/bake,extent.y-float(y)/bake))
             ground = ground.darkened((1.0-smoothstep(0.0,55.0,edge_v))*0.23)
             image.set_pixel(x,y,ground)
     var rng := RandomNumberGenerator.new()
@@ -67,12 +81,14 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
         var count: int = int(forest.get_area()/400.0)
         for i in range(count):
             var pos := Vector2(rng.randf_range(forest.position.x+5,forest.end.x-5),rng.randf_range(forest.position.y+5,forest.end.y-5))
+            if scale > 1.0 and absf(pos.x-(1120.0+sin(pos.y/225.0)*100.0+sin(pos.y/89.0)*34.0)) < 45.0: continue
             trees.append({"pos":pos,"tile":rng.randi_range(0,4)})
     trees.sort_custom(func(a: Dictionary,b: Dictionary) -> bool: return (a["pos"] as Vector2).y < (b["pos"] as Vector2).y)
     for t in trees:
         var tree: Image = tree_images[int(t["tile"])]
         var center: Vector2 = t["pos"]
         image.blend_rect(tree,Rect2i(0,0,tree.get_width(),tree.get_height()),Vector2i(center*bake)-Vector2i(Vector2(18,23)*bake))
+    image.generate_mipmaps()
     return ImageTexture.create_from_image(image)
 
 static func _tree(index: int) -> Image:
