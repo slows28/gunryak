@@ -129,6 +129,7 @@ func _capture() -> void:
         quit(1)
         return
     var saved_zoom: float=game.camera_zoom
+    var saved_center: Vector2=game.camera_center
     game.camera_zoom=2.5
     game.call("_clamp_camera")
     game.map_layer.queue_redraw()
@@ -138,6 +139,7 @@ func _capture() -> void:
         quit(1)
         return
     game.camera_zoom=saved_zoom
+    game.camera_center=saved_center
     game.call("_clamp_camera")
     game.map_layer.queue_redraw()
     print("SOLDIER_ATLAS_PASS: 18 populated cells, all facing regions checked")
