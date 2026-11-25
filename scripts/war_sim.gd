@@ -172,7 +172,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
         "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
         "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
-        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0
+        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0
     }
     _set_general_profile(unit)
     if unit_type == "기병":
@@ -201,13 +201,15 @@ func start() -> void:
     started = true
     _log("전투 개시. " + scenario_goal)
 
-func select_unit_mission(unit_id: int, mission: String, policy: String) -> bool:
+func select_unit_mission(unit_id: int, mission: String, policy: String, partner: int = -1) -> bool:
     if started:
         return false
     var unit: Dictionary = find_unit(unit_id)
     if unit.is_empty() or int(unit["side"]) != 0:
         return false
+    if not _valid_partner(unit,partner): return false
     unit["mission"] = mission
+    _reset_cooperation(unit,partner)
     _apply_policy(unit, policy)
     if policy.ends_with(" 유지") and policy.replace(" 유지","") in LARGE_FORMATIONS:
         unit["formation"] = policy.replace(" 유지", "")
@@ -219,19 +221,20 @@ func find_unit(unit_id: int) -> Dictionary:
             return unit
     return {}
 
-func request_order(unit_id: int, mission: String, policy: String) -> bool:
+func request_order(unit_id: int, mission: String, policy: String, partner: int = -1) -> bool:
     if not started or finished or turn < 6:
         return false
     var unit: Dictionary = find_unit(unit_id)
     if unit.is_empty() or int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0:
         return false
+    if not _valid_partner(unit,partner): return false
     # Limit unfinished courier orders; avoids accidental spam and runaway entities.
     for courier in couriers:
         if int(courier["unit_id"]) == unit_id:
             return false
     couriers.append({
         "pos":commanders[0]["pos"], "unit_id":unit_id,
-        "mission":mission, "policy":policy, "side":int(unit["side"])
+        "mission":mission, "policy":policy, "side":int(unit["side"]), "partner":partner
     })
     _log("전령 파견 → %s / %s" % [str(unit["name"]), mission])
     return true
@@ -326,6 +329,8 @@ func _update_couriers(dt: float) -> void:
                 couriers.remove_at(i)
                 continue
             target["mission"] = str(letter["mission"])
+            var partner: int=int(letter.get("partner",-1))
+            _reset_cooperation(target,partner if _valid_partner(target,partner) else -1)
             _apply_policy(target, str(letter["policy"]))
             target["waypoints"].clear()
             target["waypoint_index"] = 0
@@ -2538,7 +2543,12 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
         if score<best:
             best=score
             ally=friend
-    if ally.is_empty(): return original
+    var assigned: Dictionary=find_unit(int(unit.get("assigned_link",-1)))
+    if not assigned.is_empty() and _valid_partner(unit,int(assigned["id"])):
+        ally=assigned
+    if ally.is_empty():
+        unit["link_id"]=-1
+        return original
     unit["link_id"]=ally["id"]
     var ap: Vector2=ally["pos"]
     var forward: Vector2=ally["facing"]
@@ -2594,3 +2604,15 @@ func _tactical_target(unit: Dictionary,nearest: Dictionary) -> Dictionary:
         score_best=score
         best=enemy
     return best
+
+func _valid_partner(unit: Dictionary,partner: int) -> bool:
+    if partner==-1: return true
+    var friend: Dictionary=find_unit(partner)
+    return not friend.is_empty() and int(friend["id"])!=int(unit["id"]) and int(friend["side"])==int(unit["side"]) and float(friend["troops"])>0.0 and not bool(friend["routed"])
+
+func _reset_cooperation(unit: Dictionary,partner: int) -> void:
+    unit["assigned_link"]=partner
+    unit["link_id"]=partner
+    unit["flank_target"]=-1
+    unit["flank_phase"]=0
+    unit["flank_until"]=0.0
