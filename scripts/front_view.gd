@@ -64,3 +64,31 @@ static func advance_toward_contact(point: Vector2,target: Vector2,phase: float,k
     # Move just the representative foot position within the existing melee frontage.
     var travel: float=clampf(gap-9.0,0.0,9.0)*clampf(phase,0.0,1.0)
     return point.move_toward(target,travel)
+
+
+# Only observed milestones are eligible for a player's next-highlight command.
+# This samples state, never changes it or skips fixed simulation steps.
+static func milestones(sim,limited: bool) -> Dictionary:
+    var found: Dictionary={}
+    for u in sim.units:
+        if int(u["side"])!=0: continue
+        var id: int=int(u["id"])
+        var p: Vector2=u["pos"]
+        if bool(u["routed"]):
+            found["rout:"+str(id)]={"label":str(u["name"])+" 군단 패주","point":p}
+        if float(u["troops"])<=0.0:
+            found["loss:"+str(id)]={"label":str(u["name"])+" 군단 전멸","point":p}
+        if str(u["general_state"])!="건재":
+            found["officer:"+str(id)+":"+str(u["general_state"])]={"label":str(u["name"])+" 장수 "+str(u["general_state"]),"point":p}
+        var target: Dictionary=sim.find_unit(int(u.get("contact_target_id",-1)))
+        if float(u["troops"])>0.0 and not target.is_empty() and (not limited or sim.player_can_see(target["pos"])):
+            var contact_key: String="contact:%d:%d" % [id,int(target["id"])]
+            found[contact_key]={"label":"%s · %s 교전 개시" % [str(u["name"]),str(target["name"])],"point":p.lerp(target["pos"],0.5)}
+    for site in sim.outposts:
+        if limited and not sim.player_can_see(site["pos"]): continue
+        var owner: int=int(site["owner"])
+        if owner>=0:
+            found["site:"+str(site["name"])+":"+str(owner)]={"label":str(site["name"])+" · "+("아군 확보" if owner==0 else "적군 확보"),"point":site["pos"]}
+    for report in sim.open_situations():
+        found["report:"+str(report["id"])]={"label":str(report["title"]),"point":report["pos"]}
+    return found
