@@ -23,6 +23,9 @@ var outposts: Array[Dictionary] = []
 var scouts: Array[Dictionary] = []
 var intelligence: Array[Dictionary] = [{}, {}]
 var reserve_next: Array[float] = [18.0, 18.0]
+var reserve_limit: Array[int] = [2,2]
+var winning_side: int = -1
+var convoy: Dictionary = {}
 var scenario_id: int = 0
 var scenario_title: String = "북남 요충지"
 var scenario_goal: String = "두 요충지를 동시에 점령하고 유지"
@@ -67,6 +70,9 @@ func reset() -> void:
     scouts.clear()
     intelligence = [{}, {}]
     reserve_next = [18.0, 18.0]
+    reserve_limit = [2,2]
+    winning_side = -1
+    convoy.clear()
     rng.seed = 20261124
     next_id = 0
     battle_time = 0.0
@@ -224,6 +230,7 @@ func step(dt: float) -> void:
             _move_unit(unit, dt)
     _resolve_frontline(dt)
     _update_structures(dt)
+    _update_convoy(dt)
     _update_battle_condition(dt)
     _combat(dt)
     _update_outposts(dt)
@@ -615,6 +622,10 @@ func _decide(unit: Dictionary) -> void:
     action = str(compliant["action"])
     reason = str(compliant["reason"])
     goal = compliant["goal"]
+    if scenario_id == 3 and not convoy.is_empty() and action not in ["후퇴","패주","재집결","휴식","보급 복귀","탄약 보충","거리 유지","측면 방어"] and enemy_distance > 105.0:
+        action = "호위" if side == 0 else "차단"
+        reason = "군량 수레 접근"
+        goal = (convoy["pos"] as Vector2) + Vector2(34 if side == 0 else 70,0)
     var planned: Dictionary = _apply_planned_route(unit, action, reason, goal, enemy_distance)
     action = str(planned["action"])
     reason = str(planned["reason"])
@@ -960,6 +971,8 @@ func _combat(dt: float) -> void:
         if bool(enemy["routed"]):
             exposure *= 1.28
         attack *= 0.90 + _effective_stat(unit, "martial") * 0.002
+        if unit.get("specialty","") == "돌격" and unit_type == "기병":
+            attack *= 1.08
 
         var supply_factor: float = 0.76 if float(unit["out_supply"]) >= TURN_SECONDS * 3.0 else 1.0
         supply_factor *= 0.65 + 0.35 * float(unit["rations"]) / 100.0
@@ -1049,7 +1062,11 @@ func _objective_winner() -> int:
         if int(central["owner"]) >= 0 and float(central["hold"]) >= 18.0:
             return int(central["owner"])
         return -1
-    if scenario_id == 2:
+    if scenario_id in [2,3]:
+        return -1
+    if scenario_id == 4:
+        if not structures.is_empty() and float(structures[0]["hp"]) <= 0.0 and int(outposts[0]["owner"]) == 0 and float(outposts[0]["hold"]) >= 12.0:
+            return 0
         return -1
     var owner: int = int(outposts[0]["owner"])
     if owner < 0:
@@ -1072,7 +1089,19 @@ func battle_report() -> Array[String]:
     return rows
 
 func _check_victory() -> void:
+    if finished:
+        return
+    if scenario_id == 3 and not convoy.is_empty():
+        if float(convoy["hp"]) <= 0.0:
+            _finish("군량 수레 파괴 — 패배")
+            return
+        if (convoy["pos"] as Vector2).distance_to(convoy["goal"]) < 12.0:
+            _finish("군량 수레 호위 성공 — 아군 승리")
+            return
     var winner: int = _objective_winner()
+    if winner == 0 and scenario_id == 4:
+        _finish("천수 돌파 성공 — 아군 승리")
+        return
     if winner >= 0:
         _finish(("양측 요충지 확보 — 아군 승리" if winner == 0 else "적 요충지 장악 — 패배") if scenario_id == 0 else ("중앙 고지 확보 — 아군 승리" if winner == 0 else "적 중앙 고지 장악 — 패배"))
         return
@@ -1098,15 +1127,17 @@ func _check_victory() -> void:
         if float(unit["troops"]) > 0.0 and not bool(unit["routed"]):
             side_alive[int(unit["side"])] += 1
     if side_alive[0] == 0:
-        if reinforcements_used[0] >= 2:
+        if reinforcements_used[0] >= reserve_limit[0]:
             _finish("아군 전투부대 전멸 또는 패주 — 패배")
     elif side_alive[1] == 0:
-        if reinforcements_used[1] >= 2:
+        if reinforcements_used[1] >= reserve_limit[1]:
             _finish("적 전투부대 전멸 또는 패주 — 승리")
     if not finished and scenario_id == 2 and not bool(bases[0]["alive"]):
         _finish("아군 보급기지 상실 — 패배")
     if not finished and scenario_id == 2 and battle_time >= scenario_limit:
         _finish("보급기지 방어 성공 — 아군 승리")
+    if not finished and battle_time >= scenario_limit and scenario_id in [3,4]:
+        _finish("작전 제한 시간 초과 — 패배")
     if not finished and battle_time >= scenario_limit:
         var blue: float = 0.0
         var red: float = 0.0
@@ -1123,6 +1154,7 @@ func _finish(msg: String) -> void:
     if finished:
         return
     result = msg
+    winning_side = 1 if "패배" in msg or msg.ends_with("적군") else 0
     finished = true
     _log("전투 종료: %s" % msg)
 
@@ -1180,7 +1212,7 @@ func _assigned_outpost(unit: Dictionary) -> Dictionary:
     var mission: String = str(unit["mission"])
     if outposts.size() < 2:
         return {}
-    if scenario_id == 1 and mission == "중앙 진격":
+    if scenario_id in [1,4] and mission == "중앙 진격":
         return outposts[0]
     if mission == "북측 확보":
         return outposts[0]
@@ -1459,7 +1491,7 @@ func _encirclement(unit: Dictionary) -> bool:
 
 func _update_reserves() -> void:
     for side in range(2):
-        if reinforcements_used[side] >= 2 or battle_time < reserve_next[side]:
+        if reinforcements_used[side] >= reserve_limit[side] or battle_time < reserve_next[side]:
             continue
         var active: int = 0
         var ratio: float = 0.0
@@ -1556,7 +1588,7 @@ func _general_exposure(unit: Dictionary, damage: float, flank: bool, shock: floa
 func set_scenario(index: int) -> bool:
     if started and not finished:
         return false
-    scenario_id = clampi(index, 0, 2)
+    scenario_id = clampi(index, 0, 4)
     reset()
     return true
 
@@ -1594,6 +1626,26 @@ func _configure_scenario() -> void:
                 unit["troops"] = float(unit["troops"]) * 1.20
                 unit["initial_troops"] = unit["troops"]
         bases[0]["fixed"] = true
+    elif scenario_id == 3:
+        scenario_title = "군량 수레 호위"
+        scenario_goal = "군량 수레를 동쪽 도착점까지 호위"
+        scenario_limit = 180.0
+        forests = [Rect2(260,70,120,120),Rect2(530,365,130,115)]
+        hill = Rect2(430,85,135,90)
+        convoy = {"pos":Vector2(100,282),"goal":Vector2(820,282),"hp":100.0}
+        for unit in units:
+            if int(unit["side"]) == 0:
+                unit["mission"] = "중앙 진격"
+    elif scenario_id == 4:
+        scenario_title = "천수 돌파전"
+        scenario_goal = "적 성문을 파괴하고 중앙 거점을 12초 확보"
+        scenario_limit = 180.0
+        hill = Rect2(390,190,130,130)
+        forests = [Rect2(260,70,105,100),Rect2(510,390,105,100)]
+        outposts[0]["name"] = "천수 성문 앞"
+        outposts[0]["pos"] = Vector2(705,282)
+        for unit in units:
+            if str(unit["type"]) == "보병": unit["mission"] = "중앙 진격"
 
 func transfer_troops(receiver_id: int, donor_id: int, amount: int) -> bool:
     if started or amount <= 0 or receiver_id == donor_id:
@@ -1762,6 +1814,11 @@ func _record_presentation() -> void:
 
 # M8: destructible field fortifications in the supply-defense scenario.
 func _configure_structures() -> void:
+    if scenario_id == 4:
+        structures.append({"name":"천수 성문","side":1,"rect":Rect2(640,245,22,76),"hp":105.0,"max_hp":105.0,"kind":"성문"})
+        structures.append({"name":"북측 목책","side":1,"rect":Rect2(640,110,14,135),"hp":75.0,"max_hp":75.0,"kind":"목책"})
+        structures.append({"name":"남측 목책","side":1,"rect":Rect2(640,321,14,135),"hp":75.0,"max_hp":75.0,"kind":"목책"})
+        return
     if scenario_id != 2:
         return
     structures.append({"name":"북쪽 목책","side":0,"rect":Rect2(225,96,14,110),"hp":90.0,"max_hp":90.0,"kind":"목책"})
@@ -1801,3 +1858,22 @@ func _update_structures(dt: float) -> void:
 
 func merit(unit: Dictionary) -> int:
     return maxi(0,int(round(float(unit["damage_dealt"])*2.0 + float(unit["objective_time"])*0.8 + float(unit["supply_guard_time"])*0.4 + float(unit["structure_damage"]) - float(unit["deserted"]))))
+
+func _update_convoy(dt: float) -> void:
+    if convoy.is_empty() or float(convoy["hp"]) <= 0.0:
+        return
+    var p: Vector2 = convoy["pos"]
+    var guards: int = 0
+    var attackers: int = 0
+    for unit in units:
+        if float(unit["troops"]) <= 0.0 or bool(unit["routed"]):
+            continue
+        var distance: float = p.distance_to(unit["pos"])
+        if int(unit["side"]) == 0 and distance < 125.0:
+            guards += 1
+        elif int(unit["side"]) == 1 and distance < 65.0:
+            attackers += 1
+    if attackers > 0:
+        convoy["hp"] = maxf(0.0,float(convoy["hp"])-dt*float(attackers)* (0.8 if guards > 0 else 3.5))
+    if guards > 0 and attackers == 0:
+        convoy["pos"] = p.move_toward(convoy["goal"],dt*16.0)
