@@ -143,6 +143,35 @@ func _capture() -> void:
     game.call("_clamp_camera")
     game.map_layer.queue_redraw()
     print("SOLDIER_ATLAS_PASS: 18 populated cells, all facing regions checked")
+    var scenery_atlas: Texture2D=load("res://assets/art/battlefield_detail.svg")
+    if scenery_atlas==null or scenery_atlas.get_size()!=Vector2(768,512):
+        push_error("VISUAL_CAPTURE_FAIL: scenery atlas dimensions invalid")
+        quit(1)
+        return
+    var scenery_pixels: Image=scenery_atlas.get_image()
+    for tile in range(6):
+        var cell:=Rect2i((tile%3)*256,floori(float(tile)/3.0)*256,256,256)
+        if scenery_pixels.get_region(cell).get_used_rect().size.x<40:
+            push_error("VISUAL_CAPTURE_FAIL: scenery atlas cell empty")
+            quit(1)
+            return
+    var prior_center: Vector2=game.camera_center
+    var prior_zoom: float=game.camera_zoom
+    game.camera_center=Vector2(game.sim.river_x(850.0),850.0)
+    game.camera_zoom=2.0
+    game.call("_clamp_camera")
+    game.map_layer.queue_redraw()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("bridge_material_detail.png"):
+        quit(1)
+        return
+    game.camera_center=prior_center
+    game.camera_zoom=prior_zoom
+    game.call("_clamp_camera")
+    game.map_layer.queue_redraw()
+    print("SCENERY_ATLAS_PASS: six populated atlas regions and real bridge capture")
+
     # Same simulation tick, same camera: compare quiet and detailed presentation.
     var frozen_time: float = game.sim.battle_time
     game.call("_toggle_map_detail")
