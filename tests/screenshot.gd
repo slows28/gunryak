@@ -51,8 +51,23 @@ func _capture() -> void:
     # Simulate a deterministic 12 seconds of battle without waiting in real time.
     game.set_process(false)
     game.call("_start")
+    var dust_captured: bool = false
     for i in range(120):
         game.call("_process", 0.1)
+        if not dust_captured and game.sim.dust_effects.size() >= 4:
+            var puff: Dictionary = game.sim.dust_effects.back()
+            if int(puff["side"]) == 0:
+                game.camera_center = puff["pos"]
+                game.camera_zoom = 1.65
+                game.call("_clamp_camera")
+                game.map_layer.queue_redraw()
+                await process_frame
+                await RenderingServer.frame_post_draw
+                if not _save_frame("march_dust.png"):
+                    quit(1)
+                    return
+                dust_captured = true
+                game.call("_reset_camera")
     game.call("_refresh_hud")
     game.queue_redraw()
     await process_frame
