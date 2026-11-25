@@ -1,11 +1,13 @@
 extends Control
 ## 2D tactical screen. Simulation is entirely separate in war_sim.gd.
 const WarSim = preload("res://scripts/war_sim.gd")
-const TACTICAL_ART = preload("res://assets/art/tactical_atlas.svg")
+const PAINTED_ART = preload("res://assets/art/painted_atlas.webp")
+const PAINTED_FX = preload("res://assets/art/painted_fx.webp")
+const TITLE_ART = preload("res://assets/art/title_art.webp")
 const MAP_TOP_LEFT: Vector2 = Vector2(24, 101)
 const MAP_SIZE: Vector2 = Vector2(900, 570)
-const COL_BG: Color = Color("#101b23")
-const COL_PANEL: Color = Color("#1d2d37")
+const COL_BG: Color = Color("#191714")
+const COL_PANEL: Color = Color("#2b2923")
 const COL_TEXT: Color = Color("#f2f1e7")
 const COL_MUTED: Color = Color("#b6c4c5")
 const COL_BLUE: Color = Color("#69c5e8")
@@ -63,6 +65,9 @@ var last_audio_event: float = -1.0
 var last_warning: String = ""
 var last_audio_clock: float = -100.0
 var finish_seen: bool = false
+var title_screen: Control
+var outcome_dialog: AcceptDialog
+var outcome_text: Label
 
 class RenderLayer extends Control:
     var painter: Callable
@@ -76,6 +81,8 @@ func _ready() -> void:
     _build_interface()
     _build_presentation()
     _setup_sound()
+    _build_title_screen()
+    _build_outcome_dialog()
     _refresh_unit_list()
     _select_unit()
     _refresh_hud()
@@ -94,10 +101,18 @@ func _install_korean_font() -> void:
     var ui_theme := Theme.new()
     ui_theme.default_font = korean_font
     ui_theme.default_font_size = 14
+    for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+        var style := StyleBoxFlat.new()
+        style.bg_color = Color("#48392c") if state == "hover" or state == "pressed" else Color("#302b24")
+        style.border_color = Color("#bca16b") if state != "disabled" else Color("#595343")
+        style.set_border_width_all(1)
+        style.set_corner_radius_all(3)
+        ui_theme.set_stylebox(state,"Button",style)
+        ui_theme.set_stylebox(state,"OptionButton",style)
     theme = ui_theme
 
 func _build_interface() -> void:
-    _label("軍略  /  전장 지휘실", Vector2(25, 7), Vector2(420, 35), 25, COL_TEXT)
+    _button("軍略  /  전장 지휘실",Vector2(25,7),Vector2(385,35),_show_title)
     phase_label = _label("", Vector2(27, 47), Vector2(405, 25), 13, COL_GOLD)
     start_btn = _button("전투 개시", Vector2(446, 25), Vector2(102, 37), _start)
     pause_btn = _button("일시정지", Vector2(554, 25), Vector2(102, 37), _pause)
@@ -171,7 +186,11 @@ func _refresh_unit_list() -> void:
     unit_list.clear()
     for i in range(mini(3, sim.units.size())):
         var unit: Dictionary = sim.units[i]
-        unit_list.add_item("%s  ·  %s / %s" % [str(unit["name"]), str(unit["type"]), str(unit["personality"])])
+        var icon := AtlasTexture.new()
+        icon.atlas = PAINTED_ART
+        icon.region = _art_region(8+_portrait_index(str(unit["name"])))
+        unit_list.add_item("%s  ·  %s / %s" % [str(unit["name"]), str(unit["type"]), str(unit["personality"])],icon)
+    unit_list.fixed_icon_size = Vector2i(30,30)
     unit_list.select(clampi(selected_id, 0, 2))
 
 func _on_unit_selected(index: int) -> void:
@@ -211,6 +230,8 @@ func _apply_order() -> void:
     queue_redraw()
 
 func _start() -> void:
+    if is_instance_valid(title_screen):
+        title_screen.hide()
     map_mode = "선택"
     runtime_notice = ""
     sim.start()
@@ -289,6 +310,7 @@ func _process(delta: float) -> void:
     if sim.finished and not finish_seen:
         finish_seen = true
         _play_cue(520.0, 0.28)
+        _show_outcome()
 
 func _refresh_hud() -> void:
     var phase: String = "전투 준비"
@@ -388,21 +410,25 @@ func _draw_map(_canvas: Control) -> void:
     map_layer.draw_set_transform(MAP_SIZE * 0.5 - camera_center * camera_zoom, 0.0, Vector2.ONE * camera_zoom)
     var map_rect: Rect2 = Rect2(Vector2.ZERO, MAP_SIZE)
     map_layer.draw_rect(map_rect, Color("#58684e"))
+    _paint_terrain(map_rect,32,96.0)
     # Roads, hills, and woodlands are visible and influence movement.
     for y in [131.0, 282.0, 435.0]:
-        map_layer.draw_line(_screen(Vector2(5, y)), _screen(Vector2(895, y)), Color(Color("#8e906f"), 0.39), 13.0)
-        map_layer.draw_line(_screen(Vector2(5, y)), _screen(Vector2(895, y)), Color(Color("#c1b393"), 0.34), 2.0)
+        _paint_terrain(Rect2(0,y-9.0,MAP_SIZE.x,18.0),33,48.0)
     for forest in sim.forests:
-        map_layer.draw_rect(Rect2(_screen(forest.position), forest.size), Color(Color("#335443"), 0.72))
-    map_layer.draw_rect(Rect2(_screen(sim.hill.position), sim.hill.size), Color(Color("#817b61"), 0.45))
+        _paint_terrain(forest,34,90.0)
+        map_layer.draw_rect(forest,Color("#335443"),false,1.5)
+    _paint_terrain(sim.hill,35,90.0)
     _draw_terrain_texture()
     if not sim.started:
         map_layer.draw_rect(Rect2(_screen(Vector2(35,22)),Vector2(235,530)),Color(COL_BLUE,0.07))
         map_layer.draw_rect(Rect2(_screen(Vector2(35,22)),Vector2(235,530)),Color(COL_BLUE,0.4),false,1.5)
     map_layer.draw_circle(_screen(Vector2(52, 285)), 32.0, Color(Color("#72c0d4"), 0.13))
     map_layer.draw_circle(_screen(Vector2(844, 285)), 32.0, Color(Color("#f08a70"), 0.13))
-    map_layer.draw_rect(Rect2(_screen(Vector2(20, 252)), Vector2(60, 67)), Color(Color("#3b91b2"), 0.4))
-    map_layer.draw_rect(Rect2(_screen(Vector2(817, 252)), Vector2(60, 67)), Color(Color("#a45f57"), 0.44))
+    _paint_tile(46,Rect2(20,242,60,78))
+    _paint_tile(47,Rect2(18,319,64,26))
+    if not fog_enabled or sim.finished or sim.player_can_see(Vector2(844,285)):
+        _paint_tile(46,Rect2(817,242,60,78))
+        _paint_tile(47,Rect2(815,319,64,26))
     _map_text("아군 본진", Vector2(14, 241), COL_BLUE, 13)
     _map_text("적군 본진", Vector2(810, 241), COL_RED, 13)
     _map_text("북쪽 길", Vector2(428, 114), Color("#e6d8ad"), 12)
@@ -416,7 +442,8 @@ func _draw_map(_canvas: Control) -> void:
         var owner: int = int(site["owner"]) if known else -1
         var color: Color = COL_BLUE if owner == 0 else (COL_RED if owner == 1 else COL_GOLD)
         map_layer.draw_arc(site_pos, WarSim.OUTPOST_RADIUS, 0.0, TAU, 44, Color(color.r, color.g, color.b, 0.24), 1.5)
-        map_layer.draw_texture_rect_region(TACTICAL_ART,Rect2(site_pos-Vector2(18,18),Vector2(36,36)),Rect2(128,128,64,64))
+        _paint_tile(45,Rect2(site_pos-Vector2(19,30),Vector2(38,40)))
+        _paint_tile(40 if owner < 0 else 38+owner,Rect2(site_pos+Vector2(10,-25),Vector2(24,30)))
         map_layer.draw_circle(site_pos+Vector2(10,-6),3.5,color)
         var state: String = ("중립" if owner < 0 else ("아군" if owner == 0 else "적군")) if known else "미확인"
         _draw_string(str(site["name"]) + " " + state, site_pos + Vector2(-45, -18), 12, COL_TEXT)
@@ -435,7 +462,8 @@ func _draw_map(_canvas: Control) -> void:
         if str(base["state"]) == "가동":
             map_layer.draw_circle(p, WarSim.SUPPLY_RADIUS, Color(accent.r, accent.g, accent.b, 0.045))
             map_layer.draw_arc(p, WarSim.SUPPLY_RADIUS, 0.0, TAU, 56, Color(accent.r, accent.g, accent.b, 0.33), 1.5)
-        map_layer.draw_texture_rect_region(TACTICAL_ART,Rect2(p-Vector2(20,20),Vector2(40,40)),Rect2(64,128,64,64))
+        _paint_tile(43,Rect2(p-Vector2(24,25),Vector2(48,48)))
+        _paint_tile(44,Rect2(p+Vector2(15,-7),Vector2(29,25)))
         map_layer.draw_circle(p+Vector2(15,-10),4.0,accent)
         _draw_string("보급 %s · %d" % [str(base["state"]), int(base.get("stock", 100.0))], p + Vector2(-40, 24), 12, Color("#f6f4e8"))
     for commander in sim.commanders:
@@ -443,7 +471,7 @@ func _draw_map(_canvas: Control) -> void:
             continue
         var p: Vector2 = _screen(commander["pos"])
         var accent: Color = COL_BLUE if int(commander["side"]) == 0 else COL_RED
-        map_layer.draw_colored_polygon(PackedVector2Array([p + Vector2(0, -15), p + Vector2(12, 0), p + Vector2(0, 15), p + Vector2(-12, 0)]), accent)
+        _paint_tile(41,Rect2(p-Vector2(15,20),Vector2(30,36)))
         _draw_string("책사", p + Vector2(-14, -21), 13, COL_TEXT)
         if commander["pos"] != commander["goal"]:
             map_layer.draw_line(p, _screen(commander["goal"]), Color(accent.r, accent.g, accent.b, 0.6), 1.5)
@@ -454,8 +482,8 @@ func _draw_map(_canvas: Control) -> void:
             continue
         var scout_p: Vector2 = _screen(scout["pos"])
         var scout_color: Color = COL_BLUE if int(scout["side"]) == 0 else COL_RED
-        map_layer.draw_circle(scout_p, 6.0, scout_color, false, 2.0)
-        map_layer.draw_circle(scout_p, 2.5, scout_color)
+        _paint_tile(42,Rect2(scout_p-Vector2(9,9),Vector2(18,18)))
+        map_layer.draw_circle(scout_p,9.0,scout_color,false,1.5)
         map_layer.draw_line(scout_p, _screen(scout["goal"]), Color(scout_color, 0.20), 1.0)
         _draw_string("정찰", scout_p + Vector2(-12, -12), 10, scout_color)
     # Allied scout snapshots are displayed as aged reports rather than live positions.
@@ -520,6 +548,7 @@ func _draw_unit(unit: Dictionary, label_areas: Array[Rect2]) -> void:
         var point: Vector2 = _screen(spot)
         _draw_soldier(point, unit, accent, slot_index)
         slot_index += 1
+    _paint_tile(38+side,Rect2(p+Vector2(-39,-24),Vector2(24,32)),Color(1,1,1,accent.a))
     var forward: Vector2 = unit["facing"]
     map_layer.draw_line(p + forward*22.0, p + forward*35.0, Color(accent,0.8), 1.8)
     if str(unit["formation"]) == "방진":
@@ -916,52 +945,48 @@ func _draw_portrait(canvas: Control) -> void:
         "장합": portrait_index = 3
     var accent: Color = COL_BLUE if str(unit["personality"]) == "신중" else (COL_RED if str(unit["personality"]) == "공격" else COL_GOLD)
     canvas.draw_rect(Rect2(0,0,49,78),Color("#26383b"))
-    canvas.draw_texture_rect_region(TACTICAL_ART,Rect2(1,7,47,47),Rect2(portrait_index*64,64,64,64))
+    canvas.draw_texture_rect_region(PAINTED_ART,Rect2(1,7,47,47),_art_region(8+portrait_index))
     canvas.draw_rect(Rect2(1,1,47,76),accent,false,1.2)
     canvas.draw_string(korean_font,Vector2(4,65),str(unit["name"]),HORIZONTAL_ALIGNMENT_LEFT,-1,10,COL_TEXT)
     canvas.draw_rect(Rect2(6,69,37,5),Color("#0f1c23"))
     canvas.draw_rect(Rect2(6,69,37*float(unit["morale"])/100.0,5),accent)
 
 func _draw_terrain_texture() -> void:
-    for x in range(0,900,32):
-        for y in range(0,570,32):
-            var center := Vector2(x+12,y+14)
-            var shade: float = 0.035+float((x*17+y*13)%9)*0.003
-            map_layer.draw_circle(center,9.0,Color(0.15,0.22,0.13,shade))
-    for forest in sim.forests:
-        for x in range(int(forest.position.x)+7,int(forest.end.x)-4,15):
-            for y in range(int(forest.position.y)+8,int(forest.end.y)-4,16):
-                var p := Vector2(x,y)
-                var size: float = 18.0 + float((x*3+y*7)%5)
-                map_layer.draw_texture_rect_region(TACTICAL_ART,Rect2(p-Vector2.ONE*size*0.5,Vector2.ONE*size),Rect2(0,128,64,64))
-    for i in range(4):
-        var rock_pos: Vector2 = sim.hill.position + Vector2(12.0+float(i)*sim.hill.size.x/4.0,sim.hill.size.y*0.65)
-        map_layer.draw_texture_rect_region(TACTICAL_ART,Rect2(rock_pos,Vector2(18,18)),Rect2(192,128,64,64))
     for radius in [0.25,0.38,0.48]:
         var center: Vector2 = sim.hill.get_center()
         var points := PackedVector2Array()
         for k in range(49):
             var angle: float = TAU*float(k)/48.0
             points.append(center+Vector2(cos(angle)*sim.hill.size.x,sin(angle)*sim.hill.size.y)*float(radius))
-        map_layer.draw_polyline(points,Color("#b3ad84"),1.0,true)
+        map_layer.draw_polyline(points,Color(0.95,0.85,0.61,0.35),1.0,true)
 
 func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> void:
     var direction: Vector2 = unit["facing"]
-    var side: Vector2 = Vector2(-direction.y,direction.x)
     var moving: bool = (unit["pos"] as Vector2).distance_to(unit["goal"]) > 5.0 and sim.started and not sim.finished
-    var bob: float = sin(render_clock*12.0+index*1.7)*1.0 if moving else 0.0
-    p += side*bob
     var kind: int = 0
     if str(unit["type"]) == "궁병":
         kind = 1
     elif str(unit["type"]) == "기병":
         kind = 2
-    var tile: int = int(unit["side"])*3 + kind
-    var extent: float = 16.0 if kind == 2 else 13.5
-    var map_offset: Vector2 = MAP_SIZE*0.5 - camera_center*camera_zoom
-    var angle: float = direction.angle() if kind == 2 else direction.angle()+PI*0.5
-    map_layer.draw_set_transform(map_offset+p*camera_zoom,angle,Vector2.ONE*camera_zoom)
-    map_layer.draw_texture_rect_region(TACTICAL_ART,Rect2(Vector2.ONE*(-extent*0.5),Vector2.ONE*extent),Rect2(tile*64,0,64,64),Color(1.0,1.0,1.0,accent.a))
+    var tile: int = int(unit["side"])*3+kind
+    var frame: int = int(render_clock*7.0+float(index)*0.35)%4
+    if kind == 0 and int(unit["side"]) == 0:
+        var row: int = 0
+        if int(unit.get("contact_troops",0)) > 0:
+            row = 2
+        elif moving:
+            row = 1
+        elif str(unit["formation"]) == "방진":
+            row = 3
+            frame = frame%2
+        tile = 16+row*4+frame
+    var extent: float = 19.0 if kind == 2 else 16.0
+    if moving:
+        p.y += sin(render_clock*12.0+index*1.7)*0.7
+    var map_offset: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
+    var mirror: float = -1.0 if direction.x < 0.0 else 1.0
+    map_layer.draw_set_transform(map_offset+p*camera_zoom,0.0,Vector2(mirror,1.0)*camera_zoom)
+    map_layer.draw_texture_rect_region(PAINTED_ART,Rect2(-extent*0.5,-extent*0.75,extent,extent),_art_region(tile),Color(1,1,1,accent.a))
     map_layer.draw_set_transform(map_offset,0.0,Vector2.ONE*camera_zoom)
 
 func _draw_combat_effects() -> void:
@@ -973,21 +998,22 @@ func _draw_combat_effects() -> void:
         var target: Vector2 = fx["to"]
         if fog_enabled and not sim.finished and not sim.player_can_see(p) and not sim.player_can_see(target):
             continue
+        var alpha: float = clampf(1.0-age,0.0,1.0)
         match str(fx["kind"]):
             "화살":
                 var travel: float = clampf(age/0.45,0.0,1.0)
                 var pos: Vector2 = p.lerp(target,travel)
-                var direction: Vector2 = (target-p).normalized()
-                map_layer.draw_line(pos-direction*12.0,pos,Color("#ead9a0"),1.4,true)
+                var offset: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
+                map_layer.draw_set_transform(offset+pos*camera_zoom,(target-p).angle(),Vector2.ONE*camera_zoom)
+                map_layer.draw_texture_rect_region(PAINTED_FX,Rect2(-18,-10,36,20),_fx_region(0),Color(1,1,1,alpha))
+                map_layer.draw_set_transform(offset,0.0,Vector2.ONE*camera_zoom)
                 if travel >= 0.98:
-                    map_layer.draw_arc(target,8.0+age*8.0,0,TAU,16,Color(0.9,0.8,0.5,1.0-age),1.5)
+                    _paint_fx(1,target,32.0,alpha)
             "돌격":
-                map_layer.draw_arc(target,10.0+age*45.0,0,TAU,24,Color(1.0,0.72,0.28,1.0-age),3.0)
-                map_layer.draw_line(p,target,Color(1.0,0.8,0.4,(1.0-age)*0.5),2.5)
+                _paint_fx(3,target,45.0+age*35.0,alpha)
+                _paint_fx(2,p.lerp(target,0.65),45.0,alpha*0.75)
             _:
-                var middle: Vector2 = (p+target)*0.5
-                map_layer.draw_line(middle+Vector2(-5,-5),middle+Vector2(5,5),Color(1,0.92,0.68,1.0-age),2.0)
-                map_layer.draw_line(middle+Vector2(-5,5),middle+Vector2(5,-5),Color(1,0.92,0.68,1.0-age),2.0)
+                _paint_fx(4,(p+target)*0.5,29.0,alpha)
 
 func _setup_sound() -> void:
     sound_player = AudioStreamPlayer.new()
@@ -1052,3 +1078,107 @@ func _unhandled_key_input(event: InputEvent) -> void:
             KEY_HOME: _reset_camera()
             KEY_B: _open_briefing()
             KEY_A: _open_analysis()
+
+func _art_region(tile: int) -> Rect2:
+    return Rect2(float(tile%8)*128.0,float(floori(float(tile)/8.0))*128.0,128,128)
+
+func _fx_region(tile: int) -> Rect2:
+    return Rect2(float(tile%4)*128.0,float(floori(float(tile)/4.0))*128.0,128,128)
+
+func _paint_tile(tile: int, rect: Rect2, tint: Color = Color.WHITE) -> void:
+    map_layer.draw_texture_rect_region(PAINTED_ART,rect,_art_region(tile),tint)
+
+func _paint_fx(tile: int, center: Vector2, extent: float, alpha: float) -> void:
+    map_layer.draw_texture_rect_region(PAINTED_FX,Rect2(center-Vector2.ONE*extent*0.5,Vector2.ONE*extent),_fx_region(tile),Color(1,1,1,alpha))
+
+func _paint_terrain(area: Rect2, tile: int, step: float) -> void:
+    var y: float = area.position.y
+    while y < area.end.y-0.01:
+        var x: float = area.position.x
+        while x < area.end.x-0.01:
+            var extent := Vector2(minf(step,area.end.x-x),minf(step,area.end.y-y))
+            var source: Rect2 = _art_region(tile)
+            source.size = extent/step*128.0
+            map_layer.draw_texture_rect_region(PAINTED_ART,Rect2(Vector2(x,y),extent),source,Color(0.84,0.84,0.78))
+            x += step
+        y += step
+
+func _portrait_index(name: String) -> int:
+    match name:
+        "마속": return 1
+        "위연": return 2
+        "장합": return 3
+        _: return 0
+
+func _build_title_screen() -> void:
+    title_screen = Control.new()
+    title_screen.size = Vector2(1280,800)
+    add_child(title_screen)
+    var bg := ColorRect.new()
+    bg.color = Color("#201c17")
+    bg.size = title_screen.size
+    title_screen.add_child(bg)
+    var art := TextureRect.new()
+    art.texture = TITLE_ART
+    art.position = Vector2.ZERO
+    art.size = Vector2(620,800)
+    art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+    art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+    art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    title_screen.add_child(art)
+    var heading := Label.new()
+    heading.text = "軍略  군략"
+    heading.position = Vector2(690,150)
+    heading.add_theme_font_size_override("font_size",64)
+    heading.add_theme_color_override("font_color",COL_GOLD)
+    title_screen.add_child(heading)
+    var sub := Label.new()
+    sub.text = "천하를 읽고, 군을 움직이다"
+    sub.position = Vector2(694,245)
+    sub.add_theme_font_size_override("font_size",22)
+    title_screen.add_child(sub)
+    _title_button("작전실 입장",Vector2(690,330),_leave_title)
+    _title_button("전장 브리핑",Vector2(690,395),_title_brief)
+    _title_button("음향 전환",Vector2(690,460),_toggle_sound)
+    _title_button("종료",Vector2(690,525),_quit_game)
+    title_screen.show()
+
+func _title_button(caption: String, pos: Vector2, callback: Callable) -> void:
+    var btn := Button.new()
+    btn.text = caption
+    btn.position = pos
+    btn.size = Vector2(420,50)
+    btn.add_theme_font_size_override("font_size",20)
+    title_screen.add_child(btn)
+    btn.pressed.connect(callback)
+
+func _show_title() -> void:
+    if sim.started and not sim.finished:
+        sim.paused = true
+    title_screen.show()
+
+func _leave_title() -> void:
+    title_screen.hide()
+
+func _title_brief() -> void:
+    title_screen.hide()
+    _open_briefing()
+
+func _quit_game() -> void:
+    get_tree().quit()
+
+func _build_outcome_dialog() -> void:
+    outcome_dialog = AcceptDialog.new()
+    outcome_dialog.title = "군략 · 전투 결산"
+    outcome_dialog.ok_button_text = "전장으로"
+    add_child(outcome_dialog)
+    outcome_text = Label.new()
+    outcome_text.custom_minimum_size = Vector2(510,180)
+    outcome_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    outcome_text.add_theme_color_override("font_color",COL_GOLD)
+    outcome_text.add_theme_font_size_override("font_size",20)
+    outcome_dialog.add_child(outcome_text)
+
+func _show_outcome() -> void:
+    outcome_text.text = "%s\n\n%s\n전투 시간 %.1f초\n아군 잔여 병력 %d명 · 적군 잔여 병력 %d명\n전령 도착 %d · 차단 %d" % [sim.result,sim.scenario_title,sim.battle_time,sim.total_troops(0),sim.total_troops(1),sim.delivered_orders,sim.intercepted_orders]
+    outcome_dialog.popup_centered()
