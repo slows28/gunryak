@@ -21,6 +21,7 @@ GODOT_VERSION = "4.7.2"
 TESTS = [
     ("import_and_parse", ["--headless", "--editor", "--import", "--path", "{project}", "--quit"], None),
     ("simulation", ["--headless", "--path", "{project}", "--script", "res://tests/smoke.gd"], "GUNRYAK_TEST_SUMMARY"),
+    ("campaign_demo", ["--headless", "--path", "{project}", "--script", "res://tests/demo_smoke.gd"], "GUNRYAK_DEMO_PASS"),
     ("scene", ["--headless", "--path", "{project}", "--script", "res://tests/scene_smoke.gd"], "GUNRYAK_SCENE_PASS"),
 ]
 
