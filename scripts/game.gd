@@ -424,7 +424,8 @@ func _refresh_hud() -> void:
     var unit: Dictionary = sim.find_unit(selected_id)
     if not unit.is_empty():
         var leader_state: String = "부장 지휘" if bool(unit["active_deputy"]) else str(unit["general_state"])
-        selected_label.text = "%s · %s · %d명 / 사기 %d" % [str(unit["name"]), leader_state, int(float(unit["troops"])), int(float(unit["morale"]))]
+        var corps: Dictionary = sim.corps_report(selected_id)
+        selected_label.text = "%s · %s · 군단 %d명" % [str(unit["name"]),leader_state,int(corps["troops"])]
         var ammo_text: String = " · 화살 %d" % int(unit.get("ammo", 100.0)) if str(unit["type"]) == "궁병" else ""
         details_label.text = "통솔 %d · 무력 %d · 지력 %d · 판단 %d\n%s / %s · 응집 %d · 피로 %d\n식량 %d%s · %s\n%s" % [int(unit["leadership"]), int(unit["martial"]), int(unit["intelligence"]), int(unit["judgment"]), str(unit["action"]), str(unit["formation"]), int(unit["cohesion"]), int(unit["fatigue"]), int(unit["rations"]), ammo_text, "포위" if bool(unit["surrounded"]) else str(unit["obedience"]), str(unit["reason"])]
     if not unit.is_empty():
@@ -540,6 +541,13 @@ func _draw_map(_canvas: Control) -> void:
     if fog_enabled and sim.started and not sim.finished and visibility_texture != null:
         map_layer.draw_texture_rect(visibility_texture,map_rect,false)
     _draw_terrain_texture()
+    if sim.wide_field:
+        for crossing in [390.0,850.0,1300.0]:
+            var bridge := Vector2(sim.river_x(crossing),crossing)
+            if camera_zoom >= 0.75:
+                map_layer.draw_line(bridge+Vector2(-30,-38),bridge+Vector2(30,-38),Color("#59442f"),3.0,true)
+                map_layer.draw_line(bridge+Vector2(-30,38),bridge+Vector2(30,38),Color("#59442f"),3.0,true)
+            _map_plate("교량",bridge+Vector2(0,-45)*maxf(1.0,0.8/camera_zoom),COL_GOLD,maxi(11,roundi(10.0/camera_zoom)))
     if not sim.started:
         map_layer.draw_rect(Rect2(Vector2(35,22),Vector2(270*sim.layout_scale-35,sim.field_size.y-40)),Color(COL_BLUE,0.035))
         for y in range(22,int(sim.field_size.y)-18,36):
@@ -657,8 +665,9 @@ func _draw_map(_canvas: Control) -> void:
         if float(unit["troops"]) > 0.0 and _visible_unit(unit):
             visible_units.append(unit)
     visible_units.sort_custom(func(a: Dictionary,b: Dictionary) -> bool: return (a["pos"] as Vector2).y < (b["pos"] as Vector2).y)
+    var field_view := Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom).grow(125.0)
     for unit in visible_units:
-        _draw_unit(unit)
+        if field_view.has_point(unit["pos"]): _draw_unit(unit)
     _draw_combat_effects()
     var label_areas: Array[Rect2] = []
     visible_units.sort_custom(func(a: Dictionary,b: Dictionary) -> bool:
@@ -682,21 +691,29 @@ func _draw_unit(unit: Dictionary) -> void:
     elif float(unit["ambush_ready"]) >= 3.0:
         accent = Color(accent, 0.64)
     if camera_zoom < 0.65:
-        var flag := Rect2(p-Vector2(27,44)/camera_zoom,Vector2(54,60)/camera_zoom)
-        _paint_tile(38+side,flag,Color(1,1,1,accent.a))
-        map_layer.draw_arc(p,12.0/camera_zoom,0.0,TAU,24,accent,2.0/camera_zoom,true)
+        var k: float = 1.0/camera_zoom
+        var sub: bool = unit.has("parent_id")
+        var extent: Vector2 = Vector2(13,8)*k if sub else Vector2(20,12)*k
+        var block := Rect2(p-extent*0.5,extent)
+        map_layer.draw_rect(block,Color("#192a2d"))
+        map_layer.draw_rect(block,accent,false,1.5*k)
+        if not sub:
+            _paint_tile(38+side,Rect2(p-Vector2(14,32)*k,Vector2(28,34)*k),Color(1,1,1,accent.a))
+        else:
+            map_layer.draw_line(p,p+(unit["facing"] as Vector2)*8*k,accent,1.5*k,true)
         return
-    var slots: Array[Vector2] = sim.formation_slots(unit)
+    var slots: Array[Vector2] = _visual_slots(unit)
     slots.sort_custom(func(a: Vector2,b: Vector2) -> bool: return a.y < b.y)
     var slot_index: int = 0
     for spot in slots:
         # Presentation only: retain the authoritative simulation slots for contact calculations.
-        var point: Vector2 = p + (_screen(spot)-p)*1.58
-        var scatter: float = (100.0-float(unit["cohesion"]))*0.065
+        var point: Vector2 = spot
+        var scatter: float = (100.0-float(unit["cohesion"]))*0.075
         point += Vector2(sin(float(slot_index)*7.3),cos(float(slot_index)*5.7))*scatter
         _draw_soldier(point, unit, accent, slot_index)
         slot_index += 1
-    _paint_tile(38+side,Rect2(p+Vector2(-27,-50),Vector2(36,47)),Color(1,1,1,accent.a))
+    var flag_extent: Vector2 = Vector2(23,30) if unit.has("parent_id") else Vector2(36,47)
+    _paint_tile(38+side,Rect2(p-Vector2(flag_extent.x*0.5,flag_extent.y+7),flag_extent),Color(1,1,1,accent.a))
     var forward: Vector2 = unit["facing"]
     map_layer.draw_line(p + forward*22.0, p + forward*35.0, Color(accent,0.8), 1.8)
     if str(unit["formation"]) == "방진":
@@ -726,6 +743,7 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     elif str(unit["general_state"]) != "건재": state = str(unit["general_state"])
     elif bool(unit["rallying"]): state = "재집결"
     elif str(unit["action"]) == "매복": state = "매복"
+    if unit.has("parent_id") and camera_zoom < 0.8: return
     var label: String = "%s  %d" % [str(unit["name"]),int(float(unit["troops"]))]
     if not state.is_empty():
         label += " · "+state
@@ -1155,10 +1173,10 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> v
             row = 3
             frame = frame%2
         tile = 16+row*4+frame
-    var extent: float = 34.0 if kind == 2 else 27.0
+    var extent: float = 23.0 if kind == 2 else 19.0
     var phase: float = render_clock*(17.0 if kind == 2 else 10.0)+index*1.7
     var attacking: bool = int(unit.get("contact_troops",0)) > 0 and not bool(unit["routed"])
-    var hit: bool = sim.battle_time-float(unit.get("last_hit",-100.0)) < 0.16
+    var hit: bool = sim.battle_time-float(unit.get("last_hit",-100.0)) < 0.16 and index%4 == 0
     if moving:
         p += direction*sin(phase)*(2.8 if kind == 2 else 1.5)
         p.y += sin(phase)*1.5
@@ -1169,7 +1187,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> v
     var shade: Color = Color(1.0,0.72,0.62,accent.a) if hit else Color(1,1,1,accent.a)
     if str(unit["formation"]) == "방진" and not moving:
         extent *= 0.93
-    map_layer.draw_circle(p+Vector2(3.0,3.0),8.0 if kind == 2 else 6.0,Color(0.03,0.04,0.03,0.34))
+    map_layer.draw_circle(p+Vector2(2.5,2.5),5.5 if kind == 2 else 4.0,Color(0.03,0.04,0.03,0.32))
     var map_offset: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
     var mirror: float = -1.0 if direction.x < 0.0 else 1.0
     map_layer.draw_set_transform(map_offset+p*camera_zoom,0.0,Vector2(mirror,1.0)*camera_zoom)
@@ -1504,7 +1522,9 @@ func _show_outcome() -> void:
         name_label.add_theme_color_override("font_color",COL_GOLD)
         info.add_child(name_label)
         var stats := Label.new()
-        stats.text = "피해 %d   손실 %d   이탈 %d   판단 %d   공적 %d" % [int(unit["damage_dealt"]),int(unit["casualties_taken"]),int(unit["deserted"]),int(unit["decisions"]),sim.merit(unit)]
+        var corps: Dictionary = sim.corps_report(int(unit["id"]))
+        name_label.text = "%s · %s · 군단 %d명 생존" % [str(unit["name"]),str(unit["general_state"]),int(corps["troops"])]
+        stats.text = "피해 %d   손실 %d   이탈 %d   판단 %d   공적 %d" % [int(corps["damage_dealt"]),int(corps["casualties_taken"]),int(corps["deserted"]),int(corps["decisions"]),int(corps["merit"])]
         stats.add_theme_font_size_override("font_size",14)
         info.add_child(stats)
     campaign_next.visible = campaign_active
@@ -1824,3 +1844,27 @@ func _refresh_visibility() -> void:
             image.set_pixel(x,y,Color(0.035,0.075,0.09,0.02 if visible_now else 0.48))
     visibility_texture = ImageTexture.create_from_image(image)
     visibility_stamp = sim.battle_time
+
+# More visible soldiers per actual manpower, with separate ranks and spacing.
+# Contact simulation retains twelve authoritative tactical slots per detachment.
+func _visual_slots(unit: Dictionary) -> Array[Vector2]:
+    var result: Array[Vector2] = []
+    var count: int = clampi(ceili(float(unit["troops"])/3.0),1,64)
+    var front: Vector2 = unit["facing"]
+    if front.length_squared() < 0.01: front = Vector2.RIGHT
+    front = front.normalized()
+    var side: Vector2 = front.orthogonal()
+    var files: int = mini(count,8)
+    if str(unit["formation"]) == "종대": files = mini(count,4)
+    elif str(unit["formation"]) == "방진": files = maxi(1,ceili(sqrt(float(count))))
+    var ranks: int = ceili(float(count)/float(files))
+    var spacing: float = 13.5 if str(unit["type"]) == "기병" else 11.5
+    var center: Vector2 = unit["pos"]
+    for i in range(count):
+        var rank: int = floori(float(i)/float(files))
+        var width: int = mini(files,count-rank*files)
+        var file: int = i%files
+        var lateral: float = (float(file)-float(width-1)*0.5)*spacing
+        var depth: float = (float(rank)-float(ranks-1)*0.5)*spacing*0.95
+        result.append(center+side*lateral-front*depth)
+    return result
