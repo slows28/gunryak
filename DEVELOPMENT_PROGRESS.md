@@ -387,3 +387,9 @@ M6 후속 브랜치 [ai/m7-battle-presentation](https://github.com/slows28/gunry
 - `campaign_view.gd`: 지역별 점령 색, 연속 지형 명암, 등고선, 하천과 성곽 마커. 기존 연결·조작·자원 계승 유지. 지리는 가상 도식이며 추가 지형 판정/역사 재현은 아님.
 - 타이틀/결산 테마 통일, 전과 패널 카드. 실제 Godot 화면 캡처에 장수 집중 확대 화면 추가.
 - [실행 검증](https://github.com/slows28/gunryak/actions/runs/45538628858), 기록 시점 대기. 새 프레임 및 품질 평가 미확보. 새 병과 독립 프레임·고급 실제 지형/라이팅·연출·전투 로직 및 전체 캠페인 완주 미완. 사용자 별도 작업 없음.
+
+
+### 시각 개편 A 실제 실행 검증
+[CI 45538628858](https://github.com/slows28/gunryak/actions/runs/45538628858) Linux/Windows 자동 검사, 그래픽 캡처, Windows/Linux export 세 job 성공. [빌드](https://github.com/slows28/gunryak/actions/runs/45538628858/artifacts/14988496300) 다운로드 후 양 실행파일 SHA256SUMS 일치 확인. Linux 내보낸 바이너리를 로컬 Xvfb 1280×800에서 실행하고 마우스 입력으로 단독 전투 시작, 속도 ×4, 일시정지, 장수 카메라 확대, 타이틀 복귀, 캠페인 지도 열기 확인. 직접 캡처: title, before_battle, battle_live, battle_focus, campaign_map. [CI 화면](https://github.com/slows28/gunryak/actions/runs/45538628858/artifacts/14987379782)도 생성 성공.
+- 실제 화면 평가: 반복 텍스처 제거 및 글자/초상/진영 가독성 개선. 그러나 잔디가 균일한 노이즈 느낌, 도로가 지나치게 직선, 지형이 평면적, 교전 부대 스프라이트 겹침, 전략 지도 경계가 기하학적이며 하단 설명/장소 라벨 일부 겹침. 상용 아트 품질 미달. 전 병과 새 독립 애니메이션과 대규모 전열 시각 구조, 실제 배경 아트/조명, UI 자산의 추가 개발 필요.
+- 실창 Linux에서 ALSA 출력 장치 부재로 더미 오디오 사용. 실제 음향 청취, Windows GUI, 캠페인 완주 미검증. main 및 public-demo 기준선 미병합. 사용자 별도 작업 없음.
