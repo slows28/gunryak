@@ -16,6 +16,10 @@ func _capture() -> void:
     game = MAIN_SCENE.instantiate()
     root.add_child(game)
     await process_frame
+    if game.unit_list.item_count != 6:
+        push_error("VISUAL_CAPTURE_FAIL: six independent commanders not present")
+        quit(1)
+        return
     # Check real glyph availability: a successful PNG with tofu is not a pass.
     var font: Font = game.get("korean_font")
     if font == null or not font.has_char(0xAD70) or not font.has_char(0xB7B5):
@@ -30,6 +34,10 @@ func _capture() -> void:
     game.call("_begin_campaign")
     await process_frame
     await RenderingServer.frame_post_draw
+    if game.strategy_view.slot_choice.item_count != 6:
+        push_error("VISUAL_CAPTURE_FAIL: campaign slots missing")
+        quit(1)
+        return
     if not _save_frame("campaign_map.png"):
         quit(1)
         return
@@ -108,6 +116,10 @@ func _capture() -> void:
     game.queue_redraw()
     await process_frame
     await RenderingServer.frame_post_draw
+    if game.outcome_cards.get_child_count() != 6:
+        push_error("VISUAL_CAPTURE_FAIL: six commander results missing")
+        quit(1)
+        return
     if not _save_frame("battle_result.png"):
         quit(1)
         return
