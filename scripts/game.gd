@@ -1037,8 +1037,8 @@ func _play_cue(frequency: float, duration: float) -> void:
     for i in range(count):
         var t: float = float(i)/sample_rate
         var envelope: float = minf(1.0,t*80.0)*maxf(0.0,1.0-t/duration)
-        var signal: float = sin(TAU*frequency*t) + 0.22*sin(TAU*frequency*1.5*t)
-        data.encode_s16(i*2,int(clampf(signal*envelope*9000.0,-32767.0,32767.0)))
+        var waveform: float = sin(TAU*frequency*t) + 0.22*sin(TAU*frequency*1.5*t)
+        data.encode_s16(i*2,int(clampf(waveform*envelope*9000.0,-32767.0,32767.0)))
     var wav := AudioStreamWAV.new()
     wav.format = AudioStreamWAV.FORMAT_16_BITS
     wav.mix_rate = sample_rate
