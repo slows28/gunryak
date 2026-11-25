@@ -198,6 +198,11 @@ func _run() -> void:
     game.call("_leave_title")
     check(game.order_view.visible and not game.sim.started,"independent planning map opens before battle")
     check(int(game.order_view.partner_choice.get_item_metadata(0))==-1,"no-partner selection retains explicit sentinel")
+    check(game.order_view.action_buttons.size()==8,"eight visible map actions")
+    game.order_view.call("_choose_action",3)
+    check(game.order_view.action_choice.selected==3 and game.order_view.action_buttons[3].button_pressed,"action tiles update the authoritative selection")
+    game.order_view.draft_dirty=false
+    game.order_view.call("_select",game.selected_id)
     var map_sim=game.sim
     var dest:=Vector2(790,900)
     check(map_sim.issue_map_order(1,"전열 엄호",dest,0),"map order accepts destination action and partner")
