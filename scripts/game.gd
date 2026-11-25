@@ -63,6 +63,9 @@ var analysis_chart: Control
 var portrait: Control
 var sound_player: AudioStreamPlayer
 var sound_enabled: bool = true
+var music_player: AudioStreamPlayer
+var tutorial_dialog: AcceptDialog
+var retreat_dialog: ConfirmationDialog
 var last_audio_event: float = -1.0
 var last_warning: String = ""
 var last_audio_clock: float = -100.0
@@ -100,6 +103,7 @@ func _ready() -> void:
     _setup_sound()
     _build_title_screen()
     _build_outcome_dialog()
+    _build_demo_help()
     strategy_view = CampaignView.new()
     strategy_view.configure(campaign,korean_font,PAINTED_ART,_launch_campaign_battle,_show_title)
     add_child(strategy_view)
@@ -170,6 +174,8 @@ func _build_interface() -> void:
     _build_planning_dialog()
     _button("브리핑", Vector2(27, 730), Vector2(112, 26), _open_briefing)
     _button("전투 분석", Vector2(27, 761), Vector2(112, 26), _open_analysis)
+    _button("도움말", Vector2(443, 88), Vector2(73, 28), _open_demo_help)
+    _button("철수", Vector2(521, 88), Vector2(60, 28), _ask_retreat)
     warning_label = _label("", Vector2(153, 664), Vector2(600, 20), 12, COL_GOLD)
     warning_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
@@ -1138,12 +1144,16 @@ func _setup_sound() -> void:
     sound_player = AudioStreamPlayer.new()
     sound_player.volume_db = -18.0
     add_child(sound_player)
+    _setup_ambient_music()
 
 func _toggle_sound() -> void:
     sound_enabled = not sound_enabled
     runtime_notice = "전장 음향 켜짐" if sound_enabled else "전장 음향 꺼짐"
     if not sound_enabled:
         sound_player.stop()
+        if is_instance_valid(music_player): music_player.stop()
+    elif is_instance_valid(music_player):
+        music_player.play()
     _refresh_hud()
 
 func _play_cue(frequency: float, duration: float) -> void:
@@ -1261,10 +1271,11 @@ func _build_title_screen() -> void:
     _title_button("단독 전투",Vector2(690,422),_leave_title)
     _title_button("전장 브리핑",Vector2(690,478),_title_brief)
     _title_button("음향 전환",Vector2(690,534),_toggle_sound)
-    _title_button("종료",Vector2(690,590),_quit_game)
+    _title_button("도움말 / 조작",Vector2(690,590),_open_demo_help)
+    _title_button("종료",Vector2(690,646),_quit_game)
     var version := Label.new()
     version.text = "PUBLIC DEMO CANDIDATE  ·  0.9"
-    version.position = Vector2(694,680)
+    version.position = Vector2(694,716)
     title_screen.add_child(version)
     title_screen.show()
 
@@ -1565,3 +1576,64 @@ func _portrait_tile(name: String) -> int:
     if name in ["왕평","마속","위연","장합"]:
         return 8+_portrait_index(name)
     return 0
+
+
+func _build_demo_help() -> void:
+    tutorial_dialog = AcceptDialog.new()
+    tutorial_dialog.title = "군략 · 첫 출전 안내"
+    tutorial_dialog.ok_button_text = "확인"
+    tutorial_dialog.dialog_text = "1. 전략 지도에서 인접 지역을 선택합니다. 군량 35가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 작전실에서 부대 배치·경유점·방어선을 설정합니다.\n4. 전투 개시 후 장수는 자율적으로 판단합니다. 6턴 이후 전령 파견 가능.\n5. Space 일시정지, 휠 확대, 가운데 마우스 드래그 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
+    add_child(tutorial_dialog)
+    retreat_dialog = ConfirmationDialog.new()
+    retreat_dialog.title = "전투 철수"
+    retreat_dialog.dialog_text = "현재 병력을 보존하고 전투를 패배로 종료하시겠습니까?"
+    retreat_dialog.ok_button_text = "철수"
+    retreat_dialog.cancel_button_text = "계속 전투"
+    retreat_dialog.confirmed.connect(_confirm_retreat)
+    add_child(retreat_dialog)
+
+func _open_demo_help() -> void:
+    tutorial_dialog.popup_centered(Vector2i(740,330))
+
+func _ask_retreat() -> void:
+    if sim.started and not sim.finished:
+        retreat_dialog.popup_centered()
+    else:
+        runtime_notice = "진행 중인 전투에서 철수할 수 있습니다."
+        _refresh_hud()
+
+func _confirm_retreat() -> void:
+    if sim.order_retreat() and not finish_seen:
+        finish_seen = true
+        _show_outcome()
+
+# Original synthesized ambient motif, not a sampled or licensed music track.
+func _setup_ambient_music() -> void:
+    music_player = AudioStreamPlayer.new()
+    music_player.volume_db = -28.0
+    add_child(music_player)
+    var rate: int = 12000
+    var length: float = 12.0
+    var count: int = int(float(rate)*length)
+    var pcm := PackedByteArray()
+    pcm.resize(count*2)
+    var notes: Array[float] = [146.83,196.0,220.0,196.0,164.81,146.83,110.0,130.81]
+    for i in range(count):
+        var t: float = float(i)/float(rate)
+        var idx: int = mini(7,floori(t/1.5))
+        var local: float = fmod(t,1.5)
+        var env: float = minf(1.0,local*12.0)*exp(-local*2.5)
+        var freq: float = notes[idx]
+        var drone: float = sin(TAU*73.415*t)*0.14
+        var voice: float = (sin(TAU*freq*local)+0.35*sin(TAU*freq*2.0*local))*env*0.40
+        var seam: float = minf(1.0,minf(t,length-t)*4.0)
+        pcm.encode_s16(i*2,int(clampf((drone+voice)*seam*18000.0,-32767.0,32767.0)))
+    var wav := AudioStreamWAV.new()
+    wav.format = AudioStreamWAV.FORMAT_16_BITS
+    wav.mix_rate = rate
+    wav.data = pcm
+    wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+    wav.loop_begin = 0
+    wav.loop_end = count
+    music_player.stream = wav
+    music_player.play()
