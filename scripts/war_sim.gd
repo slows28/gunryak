@@ -2277,6 +2277,8 @@ func _scan_situations() -> void:
             kind = "화살 부족"
         elif float(unit["front_pressure"]) > 0.60:
             kind = "전선 압박"
+        var proposal: String=str(unit.get("mind",{}).get("proposal",""))
+        if kind == "" and proposal=="사수": kind="사수 건의"
         if kind == "":
             continue
         var key: String = "%d:%s" % [unit["id"],kind]
@@ -2285,7 +2287,7 @@ func _scan_situations() -> void:
         situation_keys[key] = battle_time
         situation_serial += 1
         var delay: float = 2.0+(unit["pos"] as Vector2).distance_to(commanders[0]["pos"])/150.0
-        situation_reports.append({"id":situation_serial,"unit_id":unit["id"],"title":str(unit["name"])+" · "+kind,"kind":kind,"pos":unit["pos"],"arrive":battle_time+delay,"expires":battle_time+delay+26.0,"status":"대기"})
+        situation_reports.append({"id":situation_serial,"unit_id":unit["id"],"title":str(unit["name"])+" · "+kind+(" / "+proposal+" 건의" if not proposal.is_empty() else ""),"kind":kind,"proposal":proposal,"pos":unit["pos"],"arrive":battle_time+delay,"expires":battle_time+delay+26.0,"status":"대기"})
         if situation_reports.size() > 40:
             situation_reports.pop_front()
 
@@ -2309,6 +2311,7 @@ func respond_situation(report_id: int, response: String) -> bool:
             return false
         if response == "현장 판단":
             report["status"] = "재량 유지"
+            GeneralMind.acknowledge(target,battle_time)
             _log(str(target["name"])+": 보고 확인, 기존 작전 유지")
             return true
         if response == "지원":
@@ -2355,7 +2358,7 @@ func _deliver_tactical(unit: Dictionary, letter: Dictionary) -> void:
     # they have a viable advantage; strict orders and high loyalty take priority.
     var enemy: Dictionary = _nearest_visible_enemy(unit)
     var advantage: bool = not enemy.is_empty() and float(unit["troops"]) > float(enemy["troops"])*1.15
-    if order == "철수" and str(unit["personality"]) == "공격" and str(unit["obedience"]) != "명령 엄수" and float(unit["loyalty"]) < 60.0 and advantage and float(unit["morale"]) > 60.0:
+    if order == "철수" and str(unit["personality"]) == "공격" and str(unit["obedience"]) != "명령 엄수" and (GeneralMind.confidence_to_refuse(unit) if long_operation else float(unit["loyalty"])) < 60.0 and advantage and float(unit["morale"]) > 60.0:
         tactical_refused += 1
         GeneralMind.order(unit,"거부: 철수 / 현장 우세 판단",battle_time,true)
         _log(str(unit["name"])+": 우세 판단으로 철수 명령 거부")
@@ -2387,7 +2390,7 @@ func _tactical_decision(unit: Dictionary, enemy: Dictionary, action: String, rea
                 return {"action":"긴급 지원","reason":"전령 명령: "+str(ally["name"])+" 지원","goal":(ally["pos"] as Vector2)+Vector2(-32,0)}
     # Autonomous initiative: an aggressive low-loyalty commander may exploit
     # an observed weak enemy, while strict or cautious commanders retain orders.
-    if enemy.is_empty() or distance > 180.0 or strength < 1.30 or float(unit["morale"]) < 65.0 or str(unit["obedience"]) == "명령 엄수" or action in ["후퇴","패주","재집결","휴식","거리 유지","측면 방어","보급 호위","탄약 보충","보급 복귀"]:
+    if enemy.is_empty() or distance > 180.0 or strength < (GeneralMind.initiative_threshold(unit) if long_operation else 1.30) or float(unit["morale"]) < 65.0 or str(unit["obedience"]) == "명령 엄수" or action in ["후퇴","패주","재집결","휴식","거리 유지","측면 방어","보급 호위","탄약 보충","보급 복귀"]:
         return result_order
     if str(unit["personality"]) == "공격" and float(unit["loyalty"]) < 65.0 and str(unit["mission"]) != "중앙 진격":
         if battle_time >= float(unit["initiative_until"]):
@@ -2395,7 +2398,7 @@ func _tactical_decision(unit: Dictionary, enemy: Dictionary, action: String, rea
             unit["deviations"] = int(unit["deviations"])+1
             unit["last_deviation"] = battle_time
             _log(str(unit["name"])+": 관측된 약한 적을 독자 추격")
-        return {"action":"돌파","reason":"독자 판단: 약한 적을 추격","goal":enemy["pos"]}
+        return {"action":"돌파","reason":"독자 판단: 관측 우세 %.2f / 필요 %.2f" % [strength,GeneralMind.initiative_threshold(unit) if long_operation else 1.30],"goal":enemy["pos"]}
     return result_order
 
 # Scale strategic locations, not soldiers, attack reach or line-of-sight.
