@@ -457,18 +457,8 @@ func _art(tile:int,rect:Rect2,tint:Color=Color.WHITE)->void:
     draw_texture_rect_region(ART,rect,Rect2(float(tile%4)*256.0,float(floori(float(tile)/4.0))*256.0,256,256),tint)
 
 func _portrait(name:String)->AtlasTexture:
-    var names:Array[String]=["왕평","마속","위연","장합"]
-    var idx:int=names.find(name)
-    if idx<0:
-        var token:=AtlasTexture.new()
-        token.atlas=ART
-        token.region=Rect2(768,0,256,256)
-        return token
-    var tex:=AtlasTexture.new()
-    tex.atlas=PORTRAITS
-    var tile:int=8+idx
-    tex.region=Rect2((tile%8)*128,floori(float(tile)/8.0)*128,128,128)
-    return tex
+    var side: int=0 if name in ["왕평","마속","위연","강유","관흥","장익"] else 1
+    return game.call("_commander_icon",name,side)
 
 func _panel_style(bg:String,border:String)->StyleBoxFlat:
     var style:=StyleBoxFlat.new()
