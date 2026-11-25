@@ -184,15 +184,15 @@ func _install_korean_font() -> void:
     theme = ui_theme
 
 func _build_interface() -> void:
-    _button("軍略",Vector2(24,16),Vector2(100,52),_show_title).add_theme_font_size_override("font_size",23)
+    _button("軍略",Vector2(24,11),Vector2(100,48),_show_title).add_theme_font_size_override("font_size",26)
     battle_title_label = _label("",Vector2(141,9),Vector2(290,35),23,COL_GOLD)
     phase_label = _label("",Vector2(143,45),Vector2(297,25),12,COL_MUTED)
-    start_btn = _button("출전",Vector2(446,16),Vector2(102,43),_start)
+    start_btn = _button("출전",Vector2(448,16),Vector2(102,39),_start)
     _primary_button(start_btn)
-    pause_btn = _button("일시정지",Vector2(554,16),Vector2(102,43),_pause)
-    speed_btn = _button("속도 ×1",Vector2(662,16),Vector2(100,43),_speed)
-    _button("초기화",Vector2(768,16),Vector2(88,43),_reset)
-    _button("작전 지도",Vector2(862,16),Vector2(76,43),_open_order_map)
+    pause_btn = _button("일시정지",Vector2(448,16),Vector2(102,39),_pause)
+    speed_btn = _button("속도 ×1",Vector2(556,16),Vector2(100,39),_speed)
+    _button("초기화",Vector2(662,16),Vector2(78,39),_reset)
+    _primary_button(_button("작전 지도",Vector2(746,16),Vector2(182,39),_open_order_map))
     status_label = _label("",Vector2(955,9),Vector2(307,64),14,COL_TEXT)
     objective_label = _label("",Vector2(26,77),Vector2(412,22),13,COL_GOLD)
     _label("軍  /  전황 관측",Vector2(956,101),Vector2(270,29),21,COL_GOLD)
@@ -273,9 +273,7 @@ func _refresh_unit_list() -> void:
     unit_list.clear()
     for i in sim.command_ids(0):
         var unit: Dictionary = sim.find_unit(i)
-        var icon := AtlasTexture.new()
-        icon.atlas = PAINTED_ART
-        icon.region = _art_region(_portrait_tile(str(unit["name"])))
+        var icon:AtlasTexture=_commander_icon(str(unit["name"]),int(unit["side"]))
         unit_list.add_item("%s  ·  %s / %s" % [str(unit["name"]),str(unit["type"]),str(unit["personality"])],icon)
         unit_list.set_item_metadata(unit_list.item_count-1,i)
     unit_list.fixed_icon_size = Vector2i(28,28)
@@ -445,7 +443,7 @@ func _refresh_hud() -> void:
         var leader: Dictionary = sim.find_unit(uid)
         if leader.is_empty(): continue
         var state: String = "패주" if bool(leader["routed"]) else ("전멸" if float(leader["troops"]) <= 0.0 else str(leader["type"]))
-        unit_list.set_item_text(index,"%d  %s · %s · %d명" % [index+1,str(leader["name"]),str(leader["formation"]) if state==str(leader["type"]) else state,roundi(sim.corps_report(uid)["troops"])])
+        unit_list.set_item_text(index,"%d  %s   %s   %s명" % [index+1,str(leader["name"]),str(leader["type"]) if state==str(leader["type"]) else state,_number_text(roundi(sim.corps_report(uid)["troops"]))])
         unit_list.set_item_custom_fg_color(index,COL_MUTED if float(leader["troops"]) <= 0.0 else (COL_RED if bool(leader["routed"]) else COL_TEXT))
     var enemy_text: String = "미확인" if fog_enabled and not sim.finished else str(sim.total_troops(1))
     status_label.text = "%s\n아군 %d  /  적군 %s\n전령 %d 이동 · %d 도착 · %d 차단" % [phase,sim.total_troops(0),enemy_text,sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
@@ -460,6 +458,7 @@ func _refresh_hud() -> void:
     apply_btn.disabled = sim.started and (sim.turn < 6 or sim.finished)
     apply_btn.text = "초기 작전 설정" if not sim.started else "전령 보내기 (6턴~)"
     start_btn.visible=not sim.started
+    pause_btn.visible=sim.started
     live_order_button.disabled=sim.finished
     live_order_button.text="작전 지도 열기" if not sim.started else "작전 지도 · 전령 지시"
     var unit: Dictionary = sim.find_unit(selected_id)
@@ -573,6 +572,11 @@ func _draw() -> void:
     draw_rect(Rect2(0,0,1280,800),COL_BG)
     draw_rect(Rect2(0,0,1280,68),COL_PANEL)
     draw_line(Vector2(24,68),Vector2(1256,68),Color("#817b5f"),1.0)
+    var elapsed:float=clampf(sim.operation_elapsed()/maxf(1.0,sim.operation_limit()),0,1)
+    draw_rect(Rect2(448,60,480,4),Color("#453d2d"))
+    draw_rect(Rect2(448,60,480*elapsed,4),Color("#cfa85d"))
+    for mark in [0.16,0.36,0.64,0.88]:
+        draw_line(Vector2(448+480*mark,59),Vector2(448+480*mark,65),Color("#e2c58b"),1.0)
     draw_rect(Rect2(940,94,324,581),COL_PANEL)
     draw_rect(Rect2(21,685,907,110),COL_PANEL)
     draw_rect(Rect2(940,685,324,110),COL_PANEL)
@@ -781,7 +785,7 @@ func _draw_unit(unit: Dictionary) -> void:
         point += Vector2(sin(float(slot_index)*7.3),cos(float(slot_index)*5.7))*scatter
         _draw_soldier(point, unit, accent, slot_index)
         slot_index += 1
-    var flag_extent: Vector2 = Vector2(23,30) if unit.has("parent_id") else Vector2(39,52)
+    var flag_extent: Vector2 = Vector2(20,26) if unit.has("parent_id") else Vector2(30,40)
     _paint_tile(38+side,Rect2(p-Vector2(flag_extent.x*0.5,flag_extent.y+7),flag_extent),Color(1,1,1,accent.a))
     var forward: Vector2 = unit["facing"]
     map_layer.draw_line(p + forward*22.0, p + forward*35.0, Color(accent,0.8), 1.8)
@@ -816,7 +820,7 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     var label: String = "%s · %s  %d" % [str(unit["name"]),str(unit["formation"]),int(float(unit["troops"]))] if camera_zoom>=0.65 else "%s %d" % [str(unit["name"]),int(float(unit["troops"]))]
     if not state.is_empty():
         label += " · "+state
-    var fs: int = maxi(10,int(round((11.0 if camera_zoom<0.65 else 13.0)*inv)))
+    var fs: int = maxi(7,int(round((11.0 if camera_zoom<0.65 else 12.0)*inv)))
     var width: float = maxf(58.0*inv,korean_font.get_string_size(label,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+12.0*inv)
     var height: float = 24.0*inv
     var chosen := Rect2()
@@ -847,7 +851,8 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     var attachment: Vector2 = chosen.get_center()
     map_layer.draw_line(p,attachment,Color(accent,0.55),1.0*inv,true)
     map_layer.draw_rect(Rect2(chosen.position+Vector2(2,2)*inv,chosen.size),Color(0,0,0,0.38))
-    map_layer.draw_rect(chosen,Color(Color("#142427"),0.92))
+    map_layer.draw_rect(chosen,Color(Color("#181d19"),0.90))
+    map_layer.draw_rect(chosen,Color("#88734c"),false,0.7*inv)
     if selected: map_layer.draw_rect(chosen,COL_GOLD,false,1.1*inv)
     map_layer.draw_rect(Rect2(chosen.position,Vector2(3.0*inv,height)),accent)
     _draw_string(label,chosen.position+Vector2(7.0*inv,14.0*inv),fs,COL_TEXT)
@@ -1220,7 +1225,7 @@ func _draw_portrait(canvas: Control) -> void:
     var unit: Dictionary = sim.find_unit(selected_id)
     if unit.is_empty(): return
     canvas.draw_rect(Rect2(0,0,76,108),Color("#142427"))
-    canvas.draw_texture_rect_region(PAINTED_ART,Rect2(1,1,74,74),_art_region(_portrait_tile(str(unit["name"]))))
+    canvas.draw_texture_rect(_commander_icon(str(unit["name"]),int(unit["side"])),Rect2(1,1,74,74),false)
     canvas.draw_rect(Rect2(0,0,76,108),Color("#8d896e"),false,1.2)
     canvas.draw_string(korean_font,Vector2(6,86),"사기",HORIZONTAL_ALIGNMENT_LEFT,-1,10,COL_MUTED)
     canvas.draw_rect(Rect2(6,92,64,6),Color("#0f1c23"))
@@ -2075,3 +2080,18 @@ func _bronze_frame(rect:Rect2)->void:
     for corner in [rect.position,Vector2(rect.end.x,rect.position.y),rect.end,Vector2(rect.position.x,rect.end.y)]:
         var d:=Vector2(1 if corner.x==rect.position.x else -1,1 if corner.y==rect.position.y else -1)
         draw_polyline(PackedVector2Array([corner+Vector2(d.x*16,0),corner+Vector2(d.x*4,d.y*4),corner+Vector2(0,d.y*16)]),Color("#dfbd78"),1.5,true)
+
+func _commander_icon(name:String,side:int)->AtlasTexture:
+    var icon:=AtlasTexture.new()
+    if name in ["왕평","마속","위연","장합"]:
+        icon.atlas=PAINTED_ART
+        icon.region=_art_region(_portrait_tile(name))
+    else:
+        icon.atlas=FIELDCRAFT
+        var tile:int=3+side
+        icon.region=Rect2((tile%4)*256,floori(float(tile)/4.0)*256,256,256)
+    return icon
+
+func _number_text(n:int)->String:
+    var t:String=str(n)
+    return t.substr(0,t.length()-3)+","+t.right(3) if t.length()>3 else t
