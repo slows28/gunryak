@@ -1264,7 +1264,7 @@ func _combat(dt: float) -> void:
         if shock > 0.0 or battle_time - float(unit["last_visual"]) >= (0.9 if unit_type == "궁병" else 0.55):
             unit["last_visual"] = battle_time
             var contact_pair: Array[Vector2]=visual_contact_pair(unit,enemy)
-            visual_effects.append({"from":pos,"to":ep,"visual_from":contact_pair[0],"visual_to":contact_pair[1],"side":int(unit["side"]),"kind":"돌격" if shock > 0.0 else ("화살" if unit_type == "궁병" else "근접"),"time":battle_time})
+            visual_effects.append({"from":pos,"to":ep,"attacker_id":int(unit["id"]),"defender_id":int(enemy["id"]),"visual_from":contact_pair[0],"visual_to":contact_pair[1],"side":int(unit["side"]),"kind":"돌격" if shock > 0.0 else ("화살" if unit_type == "궁병" else "근접"),"time":battle_time})
             if visual_effects.size() > 100:
                 visual_effects.pop_front()
     for entry in damage_entries:
