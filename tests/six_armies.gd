@@ -106,12 +106,18 @@ func _run() -> void:
         var linked: float=0.0
         var counter: float=0.0
         var flanking: float=0.0
+        var maneuver: float=0.0
+        var support: float=0.0
+        var completed: int=0
         for u in sim.units:
             if int(u["side"])==0:
                 linked+=float(u["linked_hits"])
                 counter+=float(u["counter_damage"])
                 flanking+=float(u["flank_damage"])
-        print("COOPERATION_ROW "+JSON.stringify({"scenario":scenario,"linked_damage":linked,"counter_damage":counter,"flank_damage":flanking}))
+                maneuver+=float(u["maneuver_distance"])
+                support+=float(u["support_seconds"])
+                completed+=int(u["flank_completed"])
+        print("COOPERATION_ROW "+JSON.stringify({"scenario":scenario,"linked_damage":linked,"counter_damage":counter,"flank_damage":flanking,"maneuver_distance":maneuver,"support_seconds":support,"flank_completed":completed}))
         print("SIX_ARMY_ROW "+JSON.stringify({"scenario":scenario,"seconds":sim.battle_time,"winner":sim.winning_side,"blue":sim.total_troops(0),"red":sim.total_troops(1),"delivered":sim.delivered_orders,"intercepted":sim.intercepted_orders,"issued":issued,"result":sim.result}))
     var model := Campaign.new()
     model.set_six_armies(true)
