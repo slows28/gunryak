@@ -3,7 +3,8 @@
 config_version=5
 
 [application]
-config/name="군략 | 안정성 검증판 0.4"
+config/name="군략 | 공개 데모 후보 0.9"
+config/version="0.9.0-demo"
 run/main_scene="res://main.tscn"
 config/features=PackedStringArray("4.0", "GL Compatibility")
 
