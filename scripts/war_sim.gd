@@ -2312,9 +2312,10 @@ func set_six_armies(enabled: bool) -> void:
     reset()
 
 func command_ids(side: int) -> Array[int]:
-    var ids: Array[int] = [0,1,2] if side == 0 else [3,4,5]
-    if six_armies:
-        ids.append_array([6,7,8] if side == 0 else [9,10,11])
+    var ids: Array[int] = []
+    for unit in units:
+        if int(unit["side"]) == side and not bool(unit["reserve"]) and not unit.has("parent_id"):
+            ids.append(int(unit["id"]))
     return ids
 
 func _infantry_screen(unit: Dictionary) -> Dictionary:
