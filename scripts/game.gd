@@ -57,6 +57,8 @@ var map_layer: Control
 var map_clip: Control
 var camera_zoom: float = 1.0
 var camera_center: Vector2 = MAP_SIZE * 0.5
+var visibility_texture: ImageTexture
+var visibility_stamp: float = -100.0
 var render_clock: float = 0.0
 var phase_label: Label
 var warning_label: Label
@@ -352,6 +354,14 @@ func _commander_back() -> void:
 func _process(delta: float) -> void:
     if sim.started and not sim.paused and not sim.finished:
         render_clock = sim.battle_time + step_buffer
+    if is_instance_valid(title_screen) and not title_screen.visible and (not is_instance_valid(strategy_view) or not strategy_view.visible) and not sim.finished:
+        if not planning_dialog.visible and not brief_dialog.visible and not situation_dialog.visible:
+            var pan := Vector2(float(Input.is_physical_key_pressed(KEY_RIGHT))-float(Input.is_physical_key_pressed(KEY_LEFT)),float(Input.is_physical_key_pressed(KEY_DOWN))-float(Input.is_physical_key_pressed(KEY_UP)))
+            if pan.length_squared() > 0.0:
+                camera_center += pan.normalized()*minf(delta,0.15)*410.0/camera_zoom
+                _clamp_camera()
+                map_layer.queue_redraw()
+                queue_redraw()
     if sim.started and not sim.finished and not sim.paused:
         step_buffer += minf(delta, 0.15) * game_speed
         var ticks: int = 0
@@ -377,6 +387,8 @@ func _process(delta: float) -> void:
         _update_audio_and_warning()
         queue_redraw()
         portrait.queue_redraw()
+    if fog_enabled and sim.started and not sim.finished and sim.battle_time-visibility_stamp >= 2.0:
+        _refresh_visibility()
     if is_instance_valid(map_layer) and (not sim.paused or not sim.started):
         map_layer.queue_redraw()
     if sim.finished and not finish_seen:
@@ -498,7 +510,7 @@ func _map_select(mouse_pos: Vector2) -> void:
     for i in range(mini(3, sim.units.size())):
         var unit: Dictionary = sim.units[i]
         var p: Vector2 = unit["pos"]
-        if _world_mouse(mouse_pos).distance_to(p) < 47.0:
+        if _world_mouse(mouse_pos).distance_to(p) < 47.0/maxf(0.5,camera_zoom):
             selected_id = i
             unit_list.select(i)
             _select_unit()
@@ -525,6 +537,8 @@ func _draw_map(_canvas: Control) -> void:
         map_layer.draw_texture_rect(terrain_cache,map_rect,false)
     else:
         map_layer.draw_rect(map_rect,Color("#58684e"))
+    if fog_enabled and sim.started and not sim.finished and visibility_texture != null:
+        map_layer.draw_texture_rect(visibility_texture,map_rect,false)
     _draw_terrain_texture()
     if not sim.started:
         map_layer.draw_rect(Rect2(Vector2(35,22),Vector2(270*sim.layout_scale-35,sim.field_size.y-40)),Color(COL_BLUE,0.035))
@@ -541,11 +555,12 @@ func _draw_map(_canvas: Control) -> void:
         var owner: int = int(site["owner"]) if known else -1
         var color: Color = COL_BLUE if owner == 0 else (COL_RED if owner == 1 else COL_GOLD)
         map_layer.draw_arc(site_pos, WarSim.OUTPOST_RADIUS, 0.0, TAU, 44, Color(color.r,color.g,color.b,0.20),1.2,true)
-        _paint_tile(45,Rect2(site_pos-Vector2(23,38),Vector2(46,49)))
-        _paint_tile(40 if owner < 0 else 38+owner,Rect2(site_pos+Vector2(10,-25),Vector2(24,30)))
+        var marker_scale: float = maxf(1.0,0.75/camera_zoom)
+        _paint_tile(45,Rect2(site_pos-Vector2(23,38)*marker_scale,Vector2(46,49)*marker_scale))
+        _paint_tile(40 if owner < 0 else 38+owner,Rect2(site_pos+Vector2(10,-25)*marker_scale,Vector2(24,30)*marker_scale))
         map_layer.draw_circle(site_pos+Vector2(10,-6),3.5,color)
         var state: String = ("중립" if owner < 0 else ("아군" if owner == 0 else "적군")) if known else "미확인"
-        _map_plate(str(site["name"])+" · "+state,site_pos+Vector2(0,-45),color,11)
+        _map_plate(str(site["name"])+" · "+state,site_pos+Vector2(0,-45)*marker_scale,color,maxi(11,roundi(11.0/camera_zoom)))
         if known and int(site["challenger"]) >= 0:
             var progress: float = clampf(float(site["progress"]) / WarSim.OUTPOST_CAPTURE_SECONDS, 0.0, 1.0)
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60, 4)), Color("#243138"))
@@ -721,7 +736,7 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     var found: bool = false
     var best_score: float = INF
     for offset in [Vector2(0,-56),Vector2(0,46),Vector2(-78,-32),Vector2(78,-32),Vector2(-78,37),Vector2(78,37),Vector2(0,-83),Vector2(0,73),Vector2(-105,-65),Vector2(105,-65)]:
-        var candidate := Rect2(p+(offset as Vector2)-Vector2(width*0.5,height*0.5),Vector2(width,height))
+        var candidate := Rect2(p+(offset as Vector2)*maxf(1.0,inv*0.62)-Vector2(width*0.5,height*0.5),Vector2(width,height))
         if not view.encloses(candidate):
             continue
         var score: float = (candidate.get_center()-p).length()
@@ -986,6 +1001,9 @@ func _reset_camera() -> void:
     render_clock = sim.battle_time
     camera_zoom = MAP_SIZE.x/sim.field_size.x
     camera_center = sim.field_size*0.5
+    if not sim.started:
+        visibility_stamp = -100.0
+        visibility_texture = null
     if is_instance_valid(map_layer): map_layer.queue_redraw()
     queue_redraw()
 
@@ -1788,8 +1806,21 @@ func _primary_button(btn: Button) -> void:
     btn.add_theme_stylebox_override("hover",hover)
 
 func _map_plate(value: String,p: Vector2,accent: Color,fs: int) -> void:
-    var w: float = korean_font.get_string_size(value,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+12.0
-    var rect := Rect2(p-Vector2(w*0.5,11),Vector2(w,18))
+    var k: float = maxf(1.0,float(fs)/11.0)
+    var w: float = korean_font.get_string_size(value,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+12.0*k
+    var rect := Rect2(p-Vector2(w*0.5,11*k),Vector2(w,18*k))
     map_layer.draw_rect(rect,Color(0.06,0.11,0.12,0.75))
-    map_layer.draw_rect(Rect2(rect.position,Vector2(2,18)),accent)
-    _draw_string(value,p+Vector2(-w*0.5+6,2),fs,COL_TEXT)
+    map_layer.draw_rect(Rect2(rect.position,Vector2(2,18)*k),accent)
+    _draw_string(value,p+Vector2(-w*0.5+6*k,2*k),fs,COL_TEXT)
+
+func _refresh_visibility() -> void:
+    # Only an indication of the same actual player visibility used for unit disclosure.
+    # Cached low-resolution mask; no simulation advantage from rendering.
+    var image := Image.create_empty(45,29,false,Image.FORMAT_RGBA8)
+    for y in range(29):
+        for x in range(45):
+            var p: Vector2 = Vector2((float(x)+0.5)/45.0,(float(y)+0.5)/29.0)*sim.field_size
+            var visible_now: bool = sim.player_can_see(p)
+            image.set_pixel(x,y,Color(0.035,0.075,0.09,0.02 if visible_now else 0.48))
+    visibility_texture = ImageTexture.create_from_image(image)
+    visibility_stamp = sim.battle_time
