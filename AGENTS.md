@@ -1,5 +1,8 @@
 # Gunryak — repository instructions for Codex and development agents
 
+## Mandatory handover
+Read `CODEX_HANDOVER.md` before planning or editing. It is the authoritative current project handoff, including owner requirements and the latest verified CI failure/success split. `DEVELOPMENT_PROGRESS.md` retains the full historical record. Do not restart from main. Issue #4 is the integrated implementation milestone.
+
 ## Objective
 Build a compelling FM-inspired historical army-command game, not a troop movement simulator. The owner has rejected the existing demo for visual quality, lack of battle feeling and unclear commander decisions. A successful build is NOT a successful game.
 
