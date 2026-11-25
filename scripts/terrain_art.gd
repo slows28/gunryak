@@ -1,4 +1,5 @@
 extends RefCounted
+const FieldGeometry=preload("res://scripts/field_geometry.gd")
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const PAINTED_GROUND = preload("res://assets/art/painted_atlas.webp")
 const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
@@ -78,14 +79,13 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
     rivers.resize(h)
     for yy in range(h):
         var wy:float=float(yy)/bake
-        rivers[yy]=1120.0+sin(wy/225.0)*100.0+sin(wy/89.0)*34.0
+        rivers[yy]=FieldGeometry.river_x(wy)
     for lane in range(3):
         var row:=PackedFloat32Array()
         row.resize(w)
         for xx in range(w):
             var wx:float=float(xx)/bake
-            row[xx]=[131.0,282.0,435.0][lane]*scale
-            if scale>1.0: row[xx]+=sin(wx/220.0+float(lane)*1.6)*48.0+sin(wx/94.0+float(lane))*19.0
+            row[xx]=FieldGeometry.road_y(wx,lane,scale,scenario)
         roads.append(row)
     for y in range(h):
         var grid_y: float=float(y)/float(relief_stride)
@@ -183,7 +183,7 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             var point:=Vector2(rng.randf_range(8,extent.x-8),rng.randf_range(8,extent.y-8))
             var road_distance: float=INF
             for lane in range(3):
-                var cy: float=[131.0,282.0,435.0][lane]*scale+sin(point.x/220.0+float(lane)*1.6)*48.0+sin(point.x/94.0+float(lane))*19.0
+                var cy: float=FieldGeometry.road_y(point.x,lane,scale,scenario)
                 road_distance=minf(road_distance,absf(point.y-cy))
             var river: float=absf(point.x-(1120.0+sin(point.y/225.0)*100.0+sin(point.y/89.0)*34.0))
             if road_distance < 24.0 or river < 45.0: continue
@@ -215,7 +215,7 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             var center:Vector2=hill.position+Vector2(rng.randf_range(18,hill.size.x-18),rng.randf_range(18,hill.size.y-18))
             var road_distance:float=INF
             for lane in range(3):
-                var cy:float=[131.0,282.0,435.0][lane]*scale+sin(center.x/220.0+float(lane)*1.6)*48.0+sin(center.x/94.0+float(lane))*19.0
+                var cy:float=FieldGeometry.road_y(center.x,lane,scale,scenario)
                 road_distance=minf(road_distance,absf(center.y-cy))
             if road_distance<55.0 or absf(center.x-(1120.0+sin(center.y/225.0)*100.0+sin(center.y/89.0)*34.0))<90.0: continue
             image.blend_rect(rock,Rect2i(0,0,rock.get_width(),rock.get_height()),Vector2i(center*bake)-Vector2i(rock.get_width()/2,rock.get_height()/2))
@@ -239,7 +239,7 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             var bank: float=absf(p.x-(1120.0+sin(p.y/225.0)*100.0+sin(p.y/89.0)*34.0))
             var road_distance: float=INF
             for lane in range(3):
-                var cy:float=[131.0,282.0,435.0][lane]*scale+sin(p.x/220.0+float(lane)*1.6)*48.0+sin(p.x/94.0+float(lane))*19.0
+                var cy:float=FieldGeometry.road_y(p.x,lane,scale,scenario)
                 road_distance=minf(road_distance,absf(p.y-cy))
             if road_distance<43.0 or bank<54.0: continue
             var kind: int=2
