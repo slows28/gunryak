@@ -1,6 +1,7 @@
 extends RefCounted
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const PAINTED_GROUND = preload("res://assets/art/painted_atlas.webp")
+const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
 ## Deterministic, continuous terrain art. Gameplay coordinates remain unchanged.
 static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, scenario: int, scale: float = 1.0) -> ImageTexture:
     # Bake higher-resolution wide terrain; retain true world coordinates.
@@ -67,8 +68,10 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                 ground = ground.lerp(dirt.lightened(g*0.09),wear*0.98)
             if d > 25.0 and micro > 0.44:
                 ground = ground.lerp(Color("#9aa96a"),(micro-0.44)*0.24)
-            if d < 9.0:
-                ground = ground.darkened((1.0-smoothstep(0.7,2.4,absf(d-6.0)))*0.20)
+            if d < 12.0:
+                var rut: float = 1.0-smoothstep(0.8,3.0,absf(d-7.0+g*1.5))
+                ground = ground.darkened(rut*0.32)
+                ground = ground.lightened((1.0-smoothstep(0.6,2.0,absf(d-10.0)))*0.13)
             elif d < 16.0:
                 ground = ground.lightened(maxf(0.0,micro)*0.08)
             for forest in forests:
@@ -91,11 +94,17 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                 var rx: float = rivers[y]
                 var bank: float = absf(p.x-rx)
                 var bridge: bool = absf(p.y-390.0)<=38.0 or absf(p.y-850.0)<=38.0 or absf(p.y-1300.0)<=38.0
-                if bank < 41.0:
-                    ground = ground.lerp(Color("#908b70").lightened(maxf(0.0,micro)*0.16),(1.0-smoothstep(28.0,41.0,bank))*0.88)
+                if bank < 49.0:
+                    var silt: Color = Color("#5f614c").lerp(Color("#b7ad84"),clampf(0.48+g*0.6+micro*0.3,0.0,1.0))
+                    ground = ground.lerp(silt,(1.0-smoothstep(28.0,49.0,bank))*0.90)
+                    if bank>28.0 and bank<38.0:
+                        ground=ground.darkened((1.0-smoothstep(0.0,5.0,absf(bank-32.0)))*0.22)
                 if bank < 27.0:
-                    var water: Color = Color("#23494f").lerp(Color("#77a8a1"),smoothstep(0.3,0.8,v))
-                    water = water.lightened(maxf(0.0,sin(p.y*0.22+p.x*0.09))*0.12)
+                    var depth: float = 1.0-smoothstep(5.0,26.0,bank)
+                    var water: Color = Color("#305f65").lerp(Color("#1b414a"),depth).lerp(Color("#759d8b"),smoothstep(0.40,0.85,v)*0.45)
+                    var ripple: float = sin(p.y*0.22+p.x*0.09+g*1.9)
+                    water = water.lightened(maxf(0.0,ripple)*0.19+maxf(0.0,micro)*0.09)
+                    water = water.darkened(maxf(0.0,-ripple)*0.09)
                     water = water.lerp(Color("#d3d6ae"),(1.0-smoothstep(0.0,3.0,absf(bank-25.0)))*maxf(0.0,g+0.25)*0.34)
                     ground = ground.lerp(water,1.0-smoothstep(24.0,27.0,bank))
                     if bridge:
@@ -146,6 +155,38 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                 road_distance=minf(road_distance,absf(center.y-cy))
             if road_distance<55.0 or absf(center.x-(1120.0+sin(center.y/225.0)*100.0+sin(center.y/89.0)*34.0))<90.0: continue
             image.blend_rect(rock,Rect2i(0,0,rock.get_width(),rock.get_height()),Vector2i(center*bake)-Vector2i(rock.get_width()/2,rock.get_height()/2))
+    # Bake vegetation and rock detail once. Keep actual road and river collision areas free.
+    if scale>1.0:
+        var scenery: Image=SCENERY_ART.get_image()
+        if scenery.is_compressed(): scenery.decompress()
+        if scenery.get_format()!=Image.FORMAT_RGBA8: scenery.convert(Image.FORMAT_RGBA8)
+        var details: Array[Image]=[]
+        for kind in range(3):
+            var tile: Image=scenery.get_region(Rect2i(kind*256,256,256,256))
+            for variant in range(3):
+                var patch: Image=tile.duplicate()
+                var size: int=roundi((26.0+variant*13.0+(14.0 if kind==0 else 0.0))*bake)
+                patch.resize(size,size,Image.INTERPOLATE_LANCZOS)
+                if variant==1: patch.flip_x()
+                details.append(patch)
+        var decor: Array[Dictionary]=[]
+        for i in range(1850):
+            var p:=Vector2(rng.randf_range(40,extent.x-40),rng.randf_range(40,extent.y-40))
+            var bank: float=absf(p.x-(1120.0+sin(p.y/225.0)*100.0+sin(p.y/89.0)*34.0))
+            var road_distance: float=INF
+            for lane in range(3):
+                var cy:float=[131.0,282.0,435.0][lane]*scale+sin(p.x/220.0+float(lane)*1.6)*48.0+sin(p.x/94.0+float(lane))*19.0
+                road_distance=minf(road_distance,absf(p.y-cy))
+            if road_distance<43.0 or bank<60.0: continue
+            var kind: int=2
+            if bank<120.0 or hill.has_point(p): kind=0 if i%3==0 else 1
+            elif i%5==0: kind=1
+            decor.append({"pos":p,"tile":kind*3+rng.randi_range(0,2)})
+        decor.sort_custom(func(a: Dictionary,b: Dictionary) -> bool: return (a["pos"] as Vector2).y<(b["pos"] as Vector2).y)
+        for item in decor:
+            var patch: Image=details[int(item["tile"])]
+            var center: Vector2=item["pos"]
+            image.blend_rect(patch,Rect2i(Vector2i.ZERO,patch.get_size()),Vector2i(center*bake)-Vector2i(patch.get_width()/2,patch.get_height()/2))
     # Draw forest clusters as overlapping individual crowns, not rectangular tiles.
     var trees: Array[Dictionary] = []
     for forest in forests:
