@@ -11,6 +11,8 @@ const SOLDIER_ART = preload("res://assets/art/soldier_sprites.svg")
 const SOLDIER_MOTION = preload("res://assets/art/soldier_motion.svg")
 const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
 const BRIDGE_HQ = preload("res://assets/art/bridge_hq.svg")
+const GENERAL_PORTRAITS=preload("res://assets/art/general_portraits.svg")
+const PORTRAIT_NAMES=["왕평","마속","위연","강유","관흥","장익","장합","위군 궁대","위군 기병","곽회","비요","왕쌍"]
 const COMMAND_SKIN = preload("res://assets/art/command_skin.svg")
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const PAINTED_FX = preload("res://assets/art/painted_fx.webp")
@@ -253,6 +255,7 @@ func _build_interface() -> void:
     enemy_list.position=unit_list.position
     enemy_list.size=unit_list.size
     enemy_list.add_theme_font_size_override("font_size",13)
+    enemy_list.fixed_icon_size=Vector2i(28,28)
     enemy_list.add_theme_constant_override("v_separation",5)
     add_child(enemy_list)
     enemy_list.item_selected.connect(_inspect_enemy_row)
@@ -429,7 +432,8 @@ func _refresh_enemy_roster() -> void:
             enemy_list.set_item_metadata(0,-1)
         else:
             for id in visible_ids:
-                enemy_list.add_item("")
+                var leader: Dictionary=sim.find_unit(id)
+                enemy_list.add_item("",_commander_icon(str(leader["name"]),1))
                 enemy_list.set_item_metadata(enemy_list.item_count-1,id)
     for i in range(visible_ids.size()):
         var u: Dictionary=sim.find_unit(visible_ids[i])
@@ -688,6 +692,8 @@ func _refresh_hud() -> void:
         details_label.text = "%s · %s\n자신감 %d / 긴장 %d" % [str(psyche.get("mood","준비")),str(unit["formation"]),roundi(float(psyche.get("confidence",0.0))),roundi(float(psyche.get("stress",0.0)))]
         details_label.modulate=_mood_color(str(psyche.get("mood","준비")))
         decision_label.text = str(unit["reason"])
+        var suggestion: String=str(psyche.get("proposal",""))
+        if not suggestion.is_empty(): decision_label.text+="\n건의: "+suggestion
         decision_label.tooltip_text=str(unit["reason"])+"\n"+str(psyche.get("observed",""))+"\n우려: "+str(psyche.get("concern",""))+"\n최근 명령: "+str(psyche.get("last_order",""))
     if not unit.is_empty():
         details_label.tooltip_text = "%s\n사기 %d · 응집 %d · 피로 %d\n식량 %d · 화살 %d\n%s" % [str(unit["name"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"]),str(unit["reason"])]
@@ -785,7 +791,7 @@ func _open_mind_report() -> void:
     mind_dialog.popup_centered(Vector2i(870,650))
 
 func _refresh_mind_report() -> void:
-    var lines: Array[String]=["[color=#d7bd85]장수 개인의 심리 추정 모델 · 병사 사기와 별개 · 실제 AI 판단 근거 기록[/color]","[color=#a6b6b4]현재 심리는 표시용 모델이며 AI의 추가 전투 보정에는 아직 사용하지 않습니다.[/color]"]
+    var lines: Array[String]=["[color=#d7bd85]장수 개인의 심리 추정 모델 · 병사 사기와 별개 · 실제 AI 판단 근거 기록[/color]","[color=#a6b6b4]심리·신뢰는 독자 추격과 철수 명령 거부 기준에 제한적으로 반영됩니다. 공격력·방어력 보정은 없습니다.[/color]"]
     for id in sim.command_ids(0):
         var u: Dictionary=sim.find_unit(id)
         var m: Dictionary=u.get("mind",{})
@@ -802,6 +808,8 @@ func _refresh_mind_report() -> void:
                 pending="  |  전령 이동 중: "+str(courier.get("tactical_order",courier.get("mission","승계")))
                 break
         lines.append("최근 명령: %s%s" % [str(m["last_order"]),pending])
+        var profile: Dictionary=m.get("profile",{})
+        lines.append("성향: %s · 침착성 %d · 주도성 %d  |  건의: %s" % [str(profile.get("style","균형")),roundi(float(profile.get("composure",65.0))),roundi(float(profile.get("initiative",55.0))),str(m.get("proposal","")) if not str(m.get("proposal","")).is_empty() else "없음"])
         if id==selected_id:
             var h: Array=m["history"]
             for j in range(maxi(0,h.size()-3),h.size()):
@@ -1583,7 +1591,7 @@ func _build_presentation() -> void:
     _button("음향",Vector2(663,74),Vector2(65,28),_toggle_sound)
     var card := RenderLayer.new()
     card.position = Vector2(950,555)
-    card.size = Vector2(76,108)
+    card.size = Vector2(76,118)
     card.mouse_filter = Control.MOUSE_FILTER_IGNORE
     card.painter = _draw_portrait
     add_child(card)
@@ -1678,12 +1686,17 @@ func _draw_minimap() -> void:
 func _draw_portrait(canvas: Control) -> void:
     var unit: Dictionary = sim.find_unit(observed_enemy_id if observing_enemy else selected_id)
     if unit.is_empty(): return
-    canvas.draw_rect(Rect2(0,0,76,108),Color("#142427"))
+    canvas.draw_rect(Rect2(0,0,76,118),Color("#142427"))
     canvas.draw_texture_rect(_commander_icon(str(unit["name"]),int(unit["side"])),Rect2(1,1,74,74),false)
-    canvas.draw_rect(Rect2(0,0,76,108),Color("#8d896e"),false,1.2)
+    canvas.draw_rect(Rect2(0,0,76,118),Color("#8d896e"),false,1.2)
     canvas.draw_string(korean_font,Vector2(6,86),"사기",HORIZONTAL_ALIGNMENT_LEFT,-1,10,COL_MUTED)
     canvas.draw_rect(Rect2(6,92,64,6),Color("#0f1c23"))
     canvas.draw_rect(Rect2(6,92,64*float(unit["morale"])/100.0,6),COL_BLUE if int(unit["side"])==0 else COL_RED)
+    if int(unit["side"])==0:
+        var mood: String=str(unit.get("mind",{}).get("mood","준비"))
+        canvas.draw_rect(Rect2(1,101,74,16),Color("#202923"))
+        var w:float=korean_font.get_string_size(mood,HORIZONTAL_ALIGNMENT_LEFT,-1,11).x
+        canvas.draw_string(korean_font,Vector2((76-w)*0.5,113),mood,HORIZONTAL_ALIGNMENT_LEFT,-1,11,_mood_color(mood))
 
 func _draw_terrain_texture() -> void:
     # Small compass and a clean frame give orientation without repeated labels.
@@ -1717,11 +1730,11 @@ func _soldier_pose(unit: Dictionary, index: int, now: float) -> int:
     var routed: bool = bool(unit.get("routed",false))
     if not routed and now-float(unit.get("last_hit",-100.0))<0.09 and index%7==0:
         return 5
-    var age: float = maxf(0.0,now-float(unit.get("last_visual",-100.0)))
+    var age: float = now-float(unit.get("last_visual",-100.0))
     var interval: float = 0.9 if kind=="궁병" else 0.55
     var engaged: bool = int(unit.get("contact_troops",0))>0
     if kind=="궁병" and float(unit.get("ammo",0.0))<=0.0: engaged=false
-    if not routed and age<0.27:
+    if not routed and age>=0.0 and age<0.27:
         return 3 if age<0.11 else 4
     if not routed and engaged and age>=interval-0.19 and age<=interval+0.1:
         return 2
@@ -1740,15 +1753,24 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> v
     # The atlas uses a shared foot anchor. Taller silhouettes, compact lateral footprint.
     var extent: Vector2 = Vector2(17,22) if kind==2 else Vector2(13,18)
     if not sim.six_armies: extent*=1.25
-    var pose: int = _soldier_pose(unit,index,render_clock)
+    # Front and rear ranks no longer perform the same thrust on every tick.
+    var forward: Vector2=direction.normalized()
+    var depth: float=(p-(unit["pos"] as Vector2)).dot(forward)
+    var visual_contact: bool=kind==1 or depth>=-5.0
+    var delay: float=float(index%5)*0.026
+    var pose: int = _soldier_pose(unit,index,render_clock-delay)
+    if not visual_contact and pose in [2,3,4]: pose=-1
     var phase: float = render_clock*sim.operation_scale()*(13.0 if kind==2 else 9.0)+index*1.7
     var hit: bool = sim.battle_time-float(unit.get("last_hit",-100.0))<0.16 and index%4==0
     if moving:
         p+=direction*sin(phase)*(2.0 if kind==2 else 1.0)
         p.y+=sin(phase)*0.9
-    if pose==3 and kind!=1: p+=direction*(2.5 if kind==2 else 1.4)
+    if pose==3 and kind!=1 and visual_contact:
+        p+=direction*(3.5 if kind==2 else 2.2)
+    elif pose==2 and kind!=1: p-=direction*0.8
     if hit: p-=direction*1.0
-    var shade: Color = Color(1.0,0.78,0.70,accent.a) if hit else Color(1,1,1,accent.a)
+    var variation: float=0.88+float(posmod(index*17+int(unit["id"])*7,11))*0.012
+    var shade: Color = Color(1.0,0.78,0.70,accent.a) if hit else Color(variation,variation,variation,accent.a)
     var map_offset: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
     # Shadow is separated from the art, so feet stay grounded and faction colors stay clear.
     map_layer.draw_set_transform(map_offset+(p+Vector2(2.5,1.0))*camera_zoom,0.0,Vector2(1.0,0.45)*camera_zoom)
@@ -2659,9 +2681,10 @@ func _bronze_frame(rect:Rect2)->void:
 
 func _commander_icon(name:String,side:int)->AtlasTexture:
     var icon:=AtlasTexture.new()
-    if name in ["왕평","마속","위연","장합"]:
-        icon.atlas=PAINTED_ART
-        icon.region=_art_region(_portrait_tile(name))
+    var id: int=PORTRAIT_NAMES.find(name)
+    if id>=0:
+        icon.atlas=GENERAL_PORTRAITS
+        icon.region=Rect2((id%4)*288,floori(float(id)/4.0)*288,288,288)
     else:
         icon.atlas=FIELDCRAFT
         var tile:int=3+side
