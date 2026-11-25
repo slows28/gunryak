@@ -172,7 +172,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
         "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
         "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
-        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0
+        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0, "screened_damage":0.0, "screen_events":0
     }
     _set_general_profile(unit)
     if unit_type == "기병":
@@ -1129,6 +1129,7 @@ func _combat(dt: float) -> void:
         var counter: float = tactical_matchup(unit,enemy,flank or rear) if six_armies else 1.0
         var link: bool = six_armies and _has_combined_arms(unit,enemy,targets)
         attack *= counter*(1.15 if link else 1.0)
+        var guard: Dictionary = _physical_screen(enemy,unit) if six_armies else {}
         var damage: float = attack * (float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"]))) * (float(unit["morale"]) / 100.0) * exposure * supply_factor * dt
         if wide_field:
             damage *= float(unit.get("strength_share",1.0))
@@ -1144,6 +1145,12 @@ func _combat(dt: float) -> void:
                 "방진": damage *= 0.84
             shock *= ARMY_SCALE
         if wide_field: shock *= float(unit.get("strength_share",1.0))
+        if not guard.is_empty():
+            var saved: float=damage*0.25+shock*0.60
+            damage*=0.75
+            shock*=0.40
+            guard["screened_damage"]+=saved
+            guard["screen_events"]+=1
         damage_entries.append({"target":int(enemy["id"]), "source":int(unit["id"]), "damage":maxf(0.0, damage + shock), "flank":flank or rear, "shock":shock, "ambush":ambush, "counter":counter, "linked":link})
         if shock > 0.0 or battle_time - float(unit["last_visual"]) >= (0.9 if unit_type == "궁병" else 0.55):
             unit["last_visual"] = battle_time
@@ -2554,8 +2561,9 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
     var forward: Vector2=ally["facing"]
     if forward.length_squared()<0.01: forward=Vector2.RIGHT if int(unit["side"])==0 else Vector2.LEFT
     if mission=="전열 엄호":
-        var support_point: Vector2=ap-forward*108.0+forward.orthogonal()*36.0
-        if str(unit["type"])!="궁병": support_point=ap+forward.orthogonal()*95.0-forward*25.0
+        var wing: float=1.0 if int(unit["id"])%2==0 else -1.0
+        var support_point: Vector2=ap-forward*108.0+forward.orthogonal()*36.0*wing
+        if str(unit["type"])!="궁병": support_point=ap+forward.orthogonal()*95.0*wing-forward*25.0
         return {"action":"협동 엄호","reason":str(ally["name"])+"군 후방·측면 엄호","goal":support_point}
     if mission=="구원 지원":
         return {"action":"구원 지원","reason":str(ally["name"])+"군 압박 완화","goal":ap+forward.orthogonal()*90.0}
@@ -2615,6 +2623,7 @@ func _tactical_target(unit: Dictionary,nearest: Dictionary) -> Dictionary:
         var direction: Vector2=(p-ep).normalized()
         var flank: bool=direction.dot(enemy["facing"])<0.3
         var score: float=110.0-d*0.6+45.0*(tactical_matchup(unit,enemy,flank)-1.0)
+        if not _physical_screen(enemy,unit).is_empty(): score-=35.0
         if str(enemy["next_formation"])!="": score+=12.0
         if score<=score_best: continue
         if formation_contacts(unit,enemy,reach)<=0: continue
@@ -2644,3 +2653,24 @@ func _locally_observed(unit: Dictionary,enemy: Dictionary) -> bool:
         if float(enemy["ambush_ready"])>=3.0: vision*=0.48
     if terrain_at(p)=="고지": vision*=1.15
     return p.distance_to(ep)<=vision
+
+# A real healthy infantry line must lie between a melee attacker and its
+# archer target. Mere proximity never grants protection.
+func _physical_screen(protected: Dictionary,attacker: Dictionary) -> Dictionary:
+    if str(protected["type"])!="궁병" or str(attacker["type"])=="궁병": return {}
+    var p: Vector2=protected["pos"]
+    var a: Vector2=attacker["pos"]
+    var axis: Vector2=p-a
+    var length: float=axis.length()
+    if length<25.0 or length>240.0: return {}
+    var direction: Vector2=axis/length
+    for guard in units:
+        if int(guard["side"])!=int(protected["side"]) or str(guard["type"])!="보병" or bool(guard["routed"]) or float(guard["troops"])<600.0 or float(guard["cohesion"])<40.0: continue
+        var offset: Vector2=(guard["pos"] as Vector2)-a
+        var projection: float=offset.dot(direction)
+        if projection<=5.0 or projection>=length-5.0: continue
+        if absf(offset.dot(direction.orthogonal()))>42.0: continue
+        if (guard["pos"] as Vector2).distance_to(p)>135.0: continue
+        if formation_contacts(guard,attacker,30.0)<=0: continue
+        return guard
+    return {}
