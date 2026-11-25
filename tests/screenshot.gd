@@ -49,6 +49,15 @@ func _capture() -> void:
     if not _save_frame("battle_28s.png"):
         quit(1)
         return
+    for i in range(320):
+        game.call("_process", 0.1)
+    game.call("_refresh_hud")
+    game.queue_redraw()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("battle_60s.png"):
+        quit(1)
+        return
     print("GUNRYAK_VISUAL_CAPTURE_PASSED")
     quit(0)
 

@@ -242,11 +242,15 @@ func _refresh_hud() -> void:
     var lines: String = ""
     for i in range(start_line, sim.events.size()):
         lines += sim.events[i] + "\n"
+    if sim.finished:
+        lines = ""
+        for report_line in sim.battle_report():
+            lines += report_line + "\n"
     event_label.text = lines
     if not sim.started:
         notice_label.text = "① 장수별 작전 설정\n② 전투 개시\n③ 지도에서 아군 클릭 가능"
     elif sim.finished:
-        notice_label.text = "전투가 종료됐습니다.\n[초기화]로 재실행할 수 있습니다."
+        notice_label.text = "장수별 결산은 아래 전황 창\n[초기화]로 재실행 가능합니다."
     elif sim.turn < 6:
         notice_label.text = "최초 5턴은 사전 명령 수행.\n이후부터 전령 전달이 가능합니다."
     else:
@@ -293,6 +297,23 @@ func _draw() -> void:
     _map_text("북쪽 길", Vector2(428, 114), Color("#e6d8ad"), 12)
     _map_text("중앙 고지", Vector2(413, 264), Color("#e6d8ad"), 12)
     _map_text("남쪽 숲", Vector2(490, 397), Color("#d3e4ca"), 12)
+    # Capture sites show control, contested progress and victory holds directly.
+    for site in sim.outposts:
+        var site_pos: Vector2 = _screen(site["pos"])
+        var owner: int = int(site["owner"])
+        var color: Color = COL_BLUE if owner == 0 else (COL_RED if owner == 1 else COL_GOLD)
+        draw_arc(site_pos, WarSim.OUTPOST_RADIUS, 0.0, TAU, 44, Color(color.r, color.g, color.b, 0.24), 1.5)
+        draw_colored_polygon(PackedVector2Array([
+            site_pos + Vector2(0, -12),
+            site_pos + Vector2(9, -3),
+            site_pos + Vector2(0, 6),
+            site_pos + Vector2(-9, -3)]), color)
+        var state: String = "중립" if owner < 0 else ("아군" if owner == 0 else "적군")
+        _draw_string(str(site["name"]) + " " + state, site_pos + Vector2(-45, -18), 12, COL_TEXT)
+        if int(site["challenger"]) >= 0:
+            var progress: float = clampf(float(site["progress"]) / WarSim.OUTPOST_CAPTURE_SECONDS, 0.0, 1.0)
+            draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60, 4)), Color("#243138"))
+            draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60.0 * progress, 4)), COL_BLUE if int(site["challenger"]) == 0 else COL_RED)
     for base in sim.bases:
         if not bool(base["alive"]):
             continue

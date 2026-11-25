@@ -358,6 +358,94 @@ func _initialize() -> void:
     check(str(escorted_recipient["mission"]) == "본진 방어", "delivered courier changes mission")
     check(escorted.validate_state().is_empty(), "courier interception state remains valid")
 
+
+    # M3-1: Re-formation duration varies with ability and creates vulnerability.
+    var reform_test = WarSim.new()
+    var veteran_reformer: Dictionary = reform_test.find_unit(0)
+    var junior_reformer: Dictionary = reform_test.find_unit(1)
+    veteran_reformer["policy"] = "방진 유지"
+    junior_reformer["policy"] = "방진 유지"
+    reform_test._decide(veteran_reformer)
+    reform_test._decide(junior_reformer)
+    check(float(veteran_reformer["form_remaining"]) < float(junior_reformer["form_remaining"]), "experienced general changes formation sooner")
+    var shock = WarSim.new()
+    for u in shock.units:
+        if int(u["id"]) not in [0, 3]:
+            u["troops"] = 0.0
+    var reform_attacker: Dictionary = shock.find_unit(0)
+    var reform_defender: Dictionary = shock.find_unit(3)
+    reform_attacker["pos"] = Vector2(400, 300)
+    reform_defender["pos"] = Vector2(431, 300)
+    shock._combat(0.1)
+    var stable_loss: float = float(reform_defender["initial_troops"]) - float(reform_defender["troops"])
+    reform_defender["troops"] = reform_defender["initial_troops"]
+    reform_defender["morale"] = 100.0
+    reform_defender["next_formation"] = "방진"
+    reform_defender["form_remaining"] = 2.0
+    shock._combat(0.1)
+    var reform_loss: float = float(reform_defender["initial_troops"]) - float(reform_defender["troops"])
+    check(reform_loss > stable_loss, "formation changing under fire causes greater actual losses")
+    shock._formation_transition(reform_defender, 2.1)
+    check(int(reform_defender["reforms_completed"]) == 1, "formation transition counted in battle report")
+
+    # M3-2: A cautious commander reacts to seen cavalry and counterattacks weakness.
+    var counter = WarSim.new()
+    var veteran: Dictionary = counter.find_unit(3)
+    veteran["pos"] = Vector2(420, 300)
+    var cavalry_threat: Dictionary = counter.find_unit(2)
+    cavalry_threat["pos"] = Vector2(535, 300)
+    counter._decide(veteran)
+    check(str(veteran["action"]) == "방어" and str(veteran["next_formation"]) == "방진", "cautious enemy sees cavalry and orders square")
+    cavalry_threat["pos"] = Vector2(140, 430)
+    var weak_infantry: Dictionary = counter.find_unit(0)
+    weak_infantry["pos"] = Vector2(470, 300)
+    weak_infantry["troops"] = 45.0
+    veteran["action"] = "방어"
+    counter._decide(veteran)
+    check(str(veteran["action"]) == "반격", "experienced cautious enemy counterattacks observed weakness")
+
+    # M3-3: Raiders have to defeat or draw off physical supply guards.
+    var depot = WarSim.new()
+    var camp: Dictionary = depot.bases[0]
+    for friend in depot.units:
+        if int(friend["side"]) == 0:
+            friend["pos"] = Vector2(310, 220)
+    var camp_guard: Dictionary = depot.find_unit(0)
+    camp_guard["pos"] = Vector2(125, 308)
+    depot.find_unit(3)["pos"] = Vector2(116, 310)
+    depot._supply_logic(0.1)
+    check(bool(camp["alive"]), "defended supply base withstands raider at gate")
+    camp_guard["pos"] = Vector2(340, 310)
+    depot._supply_logic(0.1)
+    check(not bool(camp["alive"]), "undefended supply base can be destroyed by physical raid")
+
+    # M3-4: Uncontested occupation requires elapsed time; defenders deny capture.
+    var flags = WarSim.new()
+    for enemy in flags.units:
+        if int(enemy["side"]) == 1:
+            enemy["pos"] = Vector2(790, 280)
+    var site_a: Dictionary = flags.outposts[0]
+    var site_b: Dictionary = flags.outposts[1]
+    flags.find_unit(0)["pos"] = site_a["pos"]
+    flags.find_unit(2)["pos"] = site_b["pos"]
+    flags._update_outposts(7.1)
+    check(int(site_a["owner"]) == 0 and int(site_b["owner"]) == 0, "both strategic objectives captured after required occupation")
+    flags.find_unit(3)["pos"] = site_a["pos"]
+    flags._update_outposts(0.5)
+    check(is_equal_approx(float(site_a["hold"]), 0.0), "enemy contest blocks strategic hold")
+    flags.find_unit(3)["pos"] = Vector2(800, 300)
+    flags._update_outposts(8.1)
+    flags.turn = 3
+    flags._check_victory()
+    check(flags.finished and flags.result.find("요충지") >= 0, "holding both outposts triggers scenario victory")
+
+    # M3-5: Reports use actual combat losses and recorded commands.
+    var report: Array[String] = flags.battle_report()
+    check(report.size() == 4, "battle report gives outcome and three player generals")
+    check(report[0].find("요충지") >= 0, "battle report retains actual victory reason")
+    check(report[1].find("판단") >= 0 and report[1].find("피해") >= 0, "report includes decisions and damage")
+    check(float(reform_attacker["damage_dealt"]) > 0.0 and float(reform_defender["casualties_taken"]) > 0.0, "report telemetry is based on real combat")
+
     print("GUNRYAK_TEST_SUMMARY pass=%d fail=%d" % [passes, failures])
     quit(0 if failures == 0 else 1)
 
