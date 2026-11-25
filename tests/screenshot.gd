@@ -171,6 +171,40 @@ func _capture() -> void:
     game.call("_clamp_camera")
     game.map_layer.queue_redraw()
     print("SCENERY_ATLAS_PASS: six populated atlas regions and real bridge capture")
+    var motion_atlas: Texture2D=load("res://assets/art/soldier_motion.svg")
+    if motion_atlas==null or motion_atlas.get_size()!=Vector2(1728,576):
+        push_error("VISUAL_CAPTURE_FAIL: motion atlas dimensions invalid")
+        quit(1)
+        return
+    var motion_pixels: Image=motion_atlas.get_image()
+    for row in range(6):
+        for col in range(18):
+            var cell:=Rect2i(col*96,row*96,96,96)
+            if motion_pixels.get_region(cell).get_used_rect().size.x<20:
+                push_error("VISUAL_CAPTURE_FAIL: empty motion atlas cell")
+                quit(1)
+                return
+    var pose_unit: Dictionary={"type":"보병","motion_speed":0.0,"routed":false,"last_visual":10.0,"last_hit":-100.0,"contact_troops":4,"ammo":100.0}
+    if game.call("_soldier_pose",pose_unit,1,10.04)!=3 or game.call("_soldier_pose",pose_unit,1,10.20)!=4 or game.call("_soldier_pose",pose_unit,1,10.43)!=2:
+        push_error("VISUAL_CAPTURE_FAIL: attack pose timing incorrect")
+        quit(1)
+        return
+    pose_unit["type"]="궁병"
+    pose_unit["ammo"]=0.0
+    if game.call("_soldier_pose",pose_unit,1,10.8)!=-1:
+        push_error("VISUAL_CAPTURE_FAIL: empty quiver still preparing shot")
+        quit(1)
+        return
+    pose_unit["type"]="기병"
+    pose_unit["motion_speed"]=50.0
+    pose_unit["routed"]=true
+    var stride:int=game.call("_soldier_pose",pose_unit,1,10.02)
+    if stride<0 or stride>1 or game.call("_soldier_pose",pose_unit,1,10.02)!=stride:
+        push_error("VISUAL_CAPTURE_FAIL: routed or frozen stride invalid")
+        quit(1)
+        return
+    print("SOLDIER_MOTION_PASS: 108 atlas cells and deterministic attack/march timing")
+
 
     # Same simulation tick, same camera: compare quiet and detailed presentation.
     var frozen_time: float = game.sim.battle_time
