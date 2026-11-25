@@ -66,6 +66,15 @@ var sound_enabled: bool = true
 var music_player: AudioStreamPlayer
 var tutorial_dialog: AcceptDialog
 var retreat_dialog: ConfirmationDialog
+var situation_btn: Button
+var situation_dialog: AcceptDialog
+var situation_list: ItemList
+var situation_detail: Label
+var situation_options: Array[Button] = []
+var situation_ids: Array[int] = []
+var situation_selected: int = -1
+var situation_pause_before: bool = false
+var situation_notice: String = ""
 var last_audio_event: float = -1.0
 var last_warning: String = ""
 var last_audio_clock: float = -100.0
@@ -95,6 +104,7 @@ class RenderLayer extends Control:
             painter.call(self)
 
 func _ready() -> void:
+    sim.tactical_enabled = true
     _install_korean_font()
     _build_map_layer()
     _rebuild_terrain()
@@ -104,6 +114,7 @@ func _ready() -> void:
     _build_title_screen()
     _build_outcome_dialog()
     _build_demo_help()
+    _build_situations()
     strategy_view = CampaignView.new()
     strategy_view.configure(campaign,korean_font,PAINTED_ART,_launch_campaign_battle,_show_title)
     add_child(strategy_view)
@@ -176,6 +187,7 @@ func _build_interface() -> void:
     _button("전투 분석", Vector2(27, 761), Vector2(112, 26), _open_analysis)
     _button("도움말", Vector2(443, 88), Vector2(73, 28), _open_demo_help)
     _button("철수", Vector2(521, 88), Vector2(60, 28), _ask_retreat)
+    situation_btn = _button("긴급 보고",Vector2(585,88),Vector2(75,28),_open_situations)
     warning_label = _label("", Vector2(153, 664), Vector2(600, 20), 12, COL_GOLD)
     warning_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
@@ -354,9 +366,14 @@ func _refresh_hud() -> void:
         phase = "일시정지"
     elif sim.started:
         phase = "작전 %d턴  /  %.0f초" % [sim.turn, sim.battle_time]
-        phase_label.text = "02 자율 교전  |  " + ("전령 지휘 가능" if sim.turn >= 6 else "초기 작전 수행")
+        phase_label.text = "02 자율 교전  |  " + ("긴급 지휘력 %d / 4" % sim.command_points if sim.turn >= 6 else "초기 작전 수행 · 보고 수신")
     var enemy_text: String = "미확인" if fog_enabled and not sim.finished else str(sim.total_troops(1))
     status_label.text = "%s | %s\n아군 %d : 적군 %s\n전령 이동 %d · 도착 %d · 차단 %d" % [phase, sim.scenario_title, sim.total_troops(0), enemy_text, sim.couriers.size(), sim.delivered_orders, sim.intercepted_orders]
+    if is_instance_valid(situation_btn):
+        var count: int = sim.open_situations().size()
+        situation_btn.text = "보고 %d" % count if count > 0 else "긴급 보고"
+        situation_btn.disabled = not sim.started or sim.finished
+        situation_btn.modulate = COL_GOLD if count > 0 else Color.WHITE
     start_btn.disabled = sim.started or sim.finished
     pause_btn.disabled = not sim.started or sim.finished
     pause_btn.text = "재개" if sim.paused else "일시정지"
@@ -575,6 +592,11 @@ func _draw_map(_canvas: Control) -> void:
                 map_layer.draw_arc(anchor, 28.0,0.0,TAU,32,COL_BLUE,2.0)
                 _draw_string("사수",anchor+Vector2(-12,4),11,COL_BLUE)
     _draw_fortifications()
+    for report in sim.open_situations():
+        var rp: Vector2 = report["pos"]
+        var pulse: float = 0.65+0.25*sin(render_clock*5.0)
+        map_layer.draw_arc(rp,46.0,0.0,TAU,40,Color(1.0,0.72,0.30,pulse),2.0,true)
+        _draw_string("!",rp+Vector2(31,-33),21,COL_GOLD)
     if not sim.convoy.is_empty():
         var wagon: Vector2 = sim.convoy["pos"]
         _paint_tile(44,Rect2(wagon-Vector2(17,15),Vector2(34,30)))
@@ -1378,7 +1400,7 @@ func _build_outcome_dialog() -> void:
 
 func _show_outcome() -> void:
     outcome_heading.text = sim.result
-    outcome_text.text = "%s  /  %.1f초  /  전령 도착 %d · 차단 %d" % [sim.scenario_title,sim.battle_time,sim.delivered_orders,sim.intercepted_orders]
+    outcome_text.text = "%s  /  %.1f초  /  전령 도착 %d · 차단 %d\n긴급 지시 수락 %d · 거부 %d" % [sim.scenario_title,sim.battle_time,sim.delivered_orders,sim.intercepted_orders,sim.tactical_delivered,sim.tactical_refused]
     if campaign_active:
         if not battle_recorded:
             battle_recorded = campaign.conclude(sim)
@@ -1582,7 +1604,7 @@ func _build_demo_help() -> void:
     tutorial_dialog = AcceptDialog.new()
     tutorial_dialog.title = "군략 · 첫 출전 안내"
     tutorial_dialog.ok_button_text = "확인"
-    tutorial_dialog.dialog_text = "1. 전략 지도에서 인접 지역을 선택합니다. 군량 35가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 작전실에서 부대 배치·경유점·방어선을 설정합니다.\n4. 전투 개시 후 장수는 자율적으로 판단합니다. 6턴 이후 전령 파견 가능.\n5. Space 일시정지, 휠 확대, 가운데 마우스 드래그 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
+    tutorial_dialog.dialog_text = "1. 전략 지도에서 인접 지역을 선택합니다. 군량 35가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 작전실에서 부대 배치·경유점·방어선을 설정합니다.\n4. 전투 개시 후 장수는 자율적으로 판단합니다. 6턴 이후 전령 파견 가능. 긴급 보고를 열어 지원·사수·재집결·철수 지시를 내릴 수 있습니다.\n5. Space 일시정지, 휠 확대, 가운데 마우스 드래그 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
     add_child(tutorial_dialog)
     retreat_dialog = ConfirmationDialog.new()
     retreat_dialog.title = "전투 철수"
@@ -1637,3 +1659,93 @@ func _setup_ambient_music() -> void:
     wav.loop_end = count
     music_player.stream = wav
     music_player.play()
+
+
+func _build_situations() -> void:
+    situation_dialog = AcceptDialog.new()
+    situation_dialog.title = "책사 지휘실 · 긴급 전황"
+    situation_dialog.ok_button_text = "전장 복귀"
+    situation_dialog.confirmed.connect(_close_situations)
+    situation_dialog.canceled.connect(_close_situations)
+    add_child(situation_dialog)
+    var layout := VBoxContainer.new()
+    layout.custom_minimum_size = Vector2(640,320)
+    layout.add_theme_constant_override("separation",9)
+    situation_dialog.add_child(layout)
+    situation_list = ItemList.new()
+    situation_list.custom_minimum_size = Vector2(620,120)
+    situation_list.item_selected.connect(_select_situation)
+    layout.add_child(situation_list)
+    situation_detail = Label.new()
+    situation_detail.custom_minimum_size = Vector2(620,100)
+    situation_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    layout.add_child(situation_detail)
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation",8)
+    layout.add_child(row)
+    for order in ["사수","재집결","지원","철수","현장 판단"]:
+        var btn := Button.new()
+        btn.text = order
+        btn.custom_minimum_size = Vector2(112,36)
+        btn.pressed.connect(_respond_situation.bind(order))
+        row.add_child(btn)
+        situation_options.append(btn)
+
+func _open_situations() -> void:
+    if not sim.started or sim.finished:
+        return
+    situation_pause_before = sim.paused
+    sim.paused = true
+    situation_notice = ""
+    situation_selected = -1
+    _refresh_situations()
+    situation_dialog.popup_centered()
+
+func _close_situations() -> void:
+    if sim.started and not sim.finished:
+        sim.paused = situation_pause_before
+    _refresh_hud()
+
+func _refresh_situations() -> void:
+    situation_list.clear()
+    situation_ids.clear()
+    for report in sim.open_situations():
+        situation_ids.append(int(report["id"]))
+        situation_list.add_item("%s  |  %.0f초 남음" % [report["title"],maxf(0.0,float(report["expires"])-sim.battle_time)])
+    if situation_ids.is_empty():
+        situation_selected = -1
+        situation_detail.text = "현재 대응할 긴급 보고가 없습니다.\n보고는 장수의 실제 상태를 기반으로 지연 수신됩니다.\n"+situation_notice
+    else:
+        var index: int = situation_ids.find(situation_selected)
+        if index < 0: index = 0
+        situation_list.select(index)
+        _select_situation(index)
+    for btn in situation_options:
+        btn.disabled = situation_selected < 0 or (btn.text != "현장 판단" and (sim.turn < 6 or sim.command_points <= 0))
+
+func _select_situation(index: int) -> void:
+    if index < 0 or index >= situation_ids.size():
+        return
+    situation_selected = situation_ids[index]
+    for report in sim.open_situations():
+        if int(report["id"]) != situation_selected:
+            continue
+        var context: String = ""
+        match str(report["kind"]):
+            "포위 위험": context = "지원군을 보내 퇴로를 확보하거나 철수로 병력을 보존하십시오."
+            "전열 붕괴 위험": context = "재집결은 응집과 피로 회복에 유리하나 전선을 양보할 수 있습니다."
+            "군량 부족": context = "철수 또는 재집결로 생존을 도모하십시오. 사수는 소모를 계속 감수합니다."
+            "명령 이탈": context = "독자 판단을 허용하거나 긴급 사수 지시로 작전을 수정할 수 있습니다."
+            _: context = "지정 위치 사수 또는 가까운 아군의 지원을 선택하십시오."
+        situation_detail.text = "%s\n%s\n긴급 지휘력 %d/4 · 명령은 실제 전령으로 이동합니다. 6턴 이전에는 관찰만 가능합니다.\n%s" % [report["title"],context,sim.command_points,situation_notice]
+        break
+
+func _respond_situation(order: String) -> void:
+    if situation_selected < 0:
+        return
+    if sim.respond_situation(situation_selected,order):
+        situation_notice = "대응 기록: "+order
+    else:
+        situation_notice = "지시 불가: 지휘력·중복 전령·지원 가능 부대를 확인하십시오."
+    _refresh_situations()
+    _refresh_hud()
