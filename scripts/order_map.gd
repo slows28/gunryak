@@ -59,19 +59,28 @@ func configure(owner_game: Control,used_font: Font) -> void:
     info.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     _label("① 행동",Vector2(1048,235),Vector2(216,24),14,GOLD)
     action_choice=_choice(Vector2(1046,265),Vector2(218,39),ACTIONS)
-    action_choice.item_selected.connect(func(_i: int): draft_dirty=true; queue_redraw())
+    action_choice.item_selected.connect(func(_i: int):
+        draft_dirty=true
+        queue_redraw())
     _label("② 목적지 · 지도에서 지정",Vector2(1048,320),Vector2(220,25),14,GOLD)
     destination_label=_label("",Vector2(1048,350),Vector2(220,52),15,Color("#eadbc1"))
     destination_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     _label("③ 협동 대상",Vector2(1048,415),Vector2(216,25),14,GOLD)
     partner_choice=_choice(Vector2(1046,447),Vector2(218,39),[])
-    partner_choice.item_selected.connect(func(_i: int): draft_dirty=true; queue_redraw())
+    partner_choice.item_selected.connect(func(_i: int):
+        draft_dirty=true
+        queue_redraw())
     apply=_button("지시 확정",Vector2(1046,510),Vector2(218,45),_apply)
-    _label("진형·교전은 장수의 현장 판단",Vector2(1048,565),Vector2(218,51),13,Color("#c4b69e")).autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    _button("미확정 취소",Vector2(1046,558),Vector2(218,31),func():
+        draft_dirty=false
+        _select(selected_id))
+    _label("진형·교전은 장수의 현장 판단",Vector2(1048,593),Vector2(218,32),13,Color("#c4b69e")).autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     feedback=_label("",Vector2(25,637),Vector2(920,58),17,GOLD)
     feedback.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    _button("상세 편성",Vector2(22,721),Vector2(170,54),func(): game._open_planning())
-    _button("메뉴",Vector2(205,721),Vector2(116,54),func(): hide(); game._show_title())
+    _button("상세 편성",Vector2(22,721),Vector2(170,54),func(): game.call("_open_planning"))
+    _button("메뉴",Vector2(205,721),Vector2(116,54),func():
+        hide()
+        game.call("_show_title"))
     launch=_button("전투 개시",Vector2(1008,718),Vector2(252,58),_launch)
     var style:=StyleBoxFlat.new()
     style.bg_color=Color("#704133")
@@ -123,6 +132,7 @@ func open(mid_battle:bool=false)->void:
         roster.set_item_metadata(roster.item_count-1,id)
     feedback.text="부대 말을 끌거나 지도에 목적지를 찍고 행동 및 연계 대상을 지정하십시오."
     if mid_battle: feedback.text="전투 중 명령은 6턴부터 전령으로 전달됩니다. 확정 전까지 기존 작전 유지."
+    draft_dirty=false
     _select(game.selected_id)
     show()
     game.move_child(self,game.get_child_count()-1)
@@ -131,6 +141,11 @@ func open(mid_battle:bool=false)->void:
 func _select(id:int)->void:
     var u:Dictionary=sim.find_unit(id)
     if u.is_empty(): return
+    if draft_dirty and selected_id!=id:
+        feedback.text="현재 부대의 미확정 지시를 먼저 확정하거나 취소하십시오."
+        for i in range(roster.item_count):
+            if int(roster.get_item_metadata(i))==selected_id: roster.select(i)
+        return
     selected_id=id
     game.selected_id=id
     for i in range(roster.item_count):
@@ -148,7 +163,7 @@ func _select(id:int)->void:
         partner_choice.add_item(str(friend["name"])+" 군단",other)
         if other==assigned: partner_choice.select(partner_choice.item_count-1)
     has_destination=bool(u.get("has_destination",false))
-    destination=u.get("order_destination",u["pos"])
+    destination=u.get("order_destination",u["pos"]) if has_destination else u["pos"]
     draft_dirty=false
     _update_destination()
     queue_redraw()
@@ -173,8 +188,8 @@ func _launch()->void:
         feedback.text="미확정 지시가 있습니다. 지시 확정 후 진행하십시오."
         return
     hide()
-    if in_battle: game._return_to_battle()
-    else: game._start()
+    if in_battle: game.call("_return_to_battle")
+    else: game.call("_start")
 
 func _point(p:Vector2)->Vector2:
     return MAP.position+p/sim.field_size*MAP.size
@@ -195,7 +210,13 @@ func _gui_input(event:InputEvent)->void:
                 if float(u["troops"])>0 and d<best:
                     best=d
                     drag_id=id
-            if drag_id>=0: _select(drag_id)
+            if drag_id>=0:
+                _select(drag_id)
+                if selected_id!=drag_id:
+                    drag_id=-1
+                    drag_origin=Vector2.ZERO
+                    accept_event()
+                    return
             dragging=false
             accept_event()
         elif not event.pressed and (drag_id>=0 or MAP.has_point(drag_origin)):
