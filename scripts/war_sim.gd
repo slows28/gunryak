@@ -7,6 +7,10 @@ const FIELD_H: float = 570.0
 # Compact mode remains available for legacy regression fixtures. The game uses wide mode.
 var wide_field: bool = false
 var six_armies: bool = false
+var long_operation: bool = false
+const OPERATION_SCALE: float = 4.0
+const LONG_LIMIT: float = 375.0
+const LONG_OBJECTIVE_OPEN: float = 270.0
 var field_size: Vector2 = Vector2(FIELD_W,FIELD_H)
 var layout_scale: float = 1.0
 const TURN_SECONDS: float = 18.0
@@ -255,7 +259,7 @@ func step(dt: float) -> void:
         return
     battle_time += dt
     step_count += 1
-    var current_turn: int = int(floor(battle_time / TURN_SECONDS)) + 1
+    var current_turn: int = int(floor(battle_time / (15.0 if long_operation else TURN_SECONDS))) + 1
     if current_turn != turn:
         turn = current_turn
         _on_new_turn()
@@ -430,7 +434,7 @@ func _supply_logic(dt: float) -> void:
                 own_base["stock"] = maxf(0.0, float(own_base["stock"]) - ammo_fill*share)
         else:
             unit["supplied"] = false
-            unit["rations"] = maxf(0.0, float(unit["rations"]) - dt * (0.44 if wide_field else 0.65))
+            unit["rations"] = maxf(0.0, float(unit["rations"]) - dt * (0.32 if long_operation else (0.44 if wide_field else 0.65)))
             unit["out_supply"] = float(unit["out_supply"]) + dt
             if float(unit["out_supply"]) >= TURN_SECONDS * 3.0:
                 unit["morale"] = maxf(0.0, float(unit["morale"]) - dt * 0.15)
@@ -1073,7 +1077,7 @@ func _combat(dt: float) -> void:
         if unit_type == "궁병":
             if float(unit["ammo"]) <= 0.0:
                 continue
-            var ammo_used: float = minf(float(unit["ammo"]), dt * 0.85)
+            var ammo_used: float = minf(float(unit["ammo"]), dt * (0.60 if long_operation else 0.85))
             unit["ammo"] = maxf(0.0, float(unit["ammo"]) - ammo_used)
             unit["shots_used"] = float(unit["shots_used"]) + ammo_used
             # Close fighting degrades bow effectiveness; cover blocks some shots.
@@ -1156,6 +1160,9 @@ func _combat(dt: float) -> void:
                 "안행진": damage *= 1.22 if unit_type == "궁병" else 0.85
                 "방진": damage *= 0.84
             shock *= ARMY_SCALE
+        if long_operation:
+            damage *= 0.75
+            shock *= 0.85
         if wide_field: shock *= float(unit.get("strength_share",1.0))
         if not guard.is_empty():
             var saved: float=damage*0.25+shock*0.60
@@ -1236,7 +1243,7 @@ func _update_outposts(dt: float) -> void:
             site["challenger"] = faction
             site["progress"] = 0.0
         site["progress"] = float(site["progress"]) + dt
-        if float(site["progress"]) >= OUTPOST_CAPTURE_SECONDS:
+        if float(site["progress"]) >= capture_duration():
             site["owner"] = faction
             site["hold"] = 0.0
             site["challenger"] = -1
@@ -1244,25 +1251,26 @@ func _update_outposts(dt: float) -> void:
             _log("%s: %s 점령" % [str(site["name"]), "아군" if faction == 0 else "적군"])
 
 func _objective_winner() -> int:
+    if long_operation and battle_time < LONG_OBJECTIVE_OPEN: return -1
     if outposts.size() < 2 or turn < (6 if wide_field else 3):
         return -1
     if scenario_id == 1:
         if six_armies and battle_time < 125.0: return -1
         var central: Dictionary = outposts[0]
-        if int(central["owner"]) >= 0 and float(central["hold"]) >= (30.0 if wide_field else 18.0):
+        if int(central["owner"]) >= 0 and float(central["hold"]) >= (45.0 if long_operation else (30.0 if wide_field else 18.0)):
             return int(central["owner"])
         return -1
     if scenario_id in [2,3]:
         return -1
     if scenario_id == 4:
-        if not structures.is_empty() and float(structures[0]["hp"]) <= 0.0 and int(outposts[0]["owner"]) == 0 and float(outposts[0]["hold"]) >= 12.0:
+        if not structures.is_empty() and float(structures[0]["hp"]) <= 0.0 and int(outposts[0]["owner"]) == 0 and float(outposts[0]["hold"]) >= (30.0 if long_operation else 12.0):
             return 0
         return -1
     if six_armies and scenario_id == 0:
         var secured: Array[int] = [0,0]
         for site in outposts:
             var faction: int = int(site["owner"])
-            if faction >= 0 and float(site["hold"]) >= OUTPOST_HOLD_SECONDS: secured[faction] += 1
+            if faction >= 0 and float(site["hold"]) >= (45.0 if long_operation else OUTPOST_HOLD_SECONDS): secured[faction] += 1
         for faction in range(2):
             if secured[faction] >= 2: return faction
         return -1
@@ -1464,7 +1472,7 @@ func _update_battle_condition(dt: float) -> void:
         var p: Vector2 = unit["pos"]
         var enemy: Dictionary = _nearest_visible_enemy(unit)
         var safe: bool = enemy.is_empty() or p.distance_to(enemy["pos"]) > 110.0
-        var recovery: bool = str(unit["action"]) in ["재집결", "휴식", "방어", "거점 방어", "거리 유지", "긴급 방어", "전술 재집결"]
+        var recovery: bool = str(unit["action"]) in ["재집결", "휴식", "방어", "거점 방어", "거리 유지", "긴급 방어", "전술 재집결","지정 지역 사수","예비 대기","협동 대기"]
         if safe and recovery:
             unit["fatigue"] = maxf(0.0, float(unit["fatigue"]) - dt * 2.1)
             unit["cohesion"] = minf(100.0, float(unit["cohesion"]) + dt * (2.6 if bool(unit["supplied"]) else 1.1) * (0.55 + _effective_stat(unit, "leadership") * 0.006))
@@ -1713,7 +1721,9 @@ func _encirclement(unit: Dictionary) -> bool:
 
 func _update_reserves() -> void:
     for side in range(2):
-        if reinforcements_used[side] >= reserve_limit[side] or battle_time < reserve_next[side]:
+        if reinforcements_used[side] >= reserve_limit[side]:
+            continue
+        if battle_time < reserve_next[side] and (not long_operation or _operational_armies(side)>0):
             continue
         var active: int = 0
         var ratio: float = 0.0
@@ -1734,7 +1744,7 @@ func _update_reserves() -> void:
                 worst = stress
                 assigned = unit
         var expected: int = 6 if six_armies else 3
-        if active >= expected and ratio > float(expected)*0.72 and pressure < 0.45 and turn < 5:
+        if active >= expected and ratio > float(expected)*0.72 and pressure < 0.45 and (long_operation or turn < 5):
             continue
         reinforcements_used[side] += 1
         reserve_next[side] = battle_time + 22.0
@@ -2010,7 +2020,7 @@ func player_can_see(position: Vector2, concealed: bool = false) -> bool:
 func timeline_text() -> String:
     var lines: PackedStringArray = []
     for entry in timeline:
-        lines.append("%05.1f초 | %02d턴 | %s" % [float(entry["time"]),int(entry["turn"]),str(entry["message"])])
+        lines.append("%05.1f초 | %02d턴 | %s" % [float(entry["time"])*operation_scale(),int(entry["turn"]),str(entry["message"])])
     return "\n".join(lines)
 
 func request_deputy_takeover(unit_id: int) -> bool:
@@ -2101,7 +2111,7 @@ func _update_convoy(dt: float) -> void:
     if attackers > 0:
         convoy["hp"] = maxf(0.0,float(convoy["hp"])-dt*float(attackers)* (0.8 if guards > 0 else 3.5))
     if guards > 0 and attackers == 0:
-        convoy["pos"] = p.move_toward(convoy["goal"],dt*(25.0 if wide_field else 16.0))
+        convoy["pos"] = p.move_toward(convoy["goal"],dt*(7.5 if long_operation else (25.0 if wide_field else 16.0)))
 
 # Cavalry and withdrawing units bypass barriers using end-point detours.
 # Infantry can stay and attack the barrier. This is local steering, not global A*.
@@ -2335,6 +2345,15 @@ func _expand_layout() -> void:
     elif scenario_id == 2:
         scenario_goal = "300초 동안 아군 보급기지 사수"
     reserve_next = [36.0,36.0]
+    if long_operation:
+        scenario_limit = 420.0 if scenario_id == 3 else LONG_LIMIT
+        reserve_next = [135.0,135.0]
+        match scenario_id:
+            0: scenario_goal="18분 이후 세 거점 중 두 곳을 3분 연속 확보"
+            1: scenario_goal="18분 이후 중앙 고지 3분 연속 확보"
+            2: scenario_goal="25분 동안 아군 보급기지 사수"
+            3: scenario_goal="28분 이내 군량 수레를 동쪽 도착점까지 호위"
+            4: scenario_goal="18분 이후 성문 파괴 및 중앙 거점 2분 확보"
 
 # Wide-field corps are split into actual autonomous detachments, never extra
 # fictional soldiers. Main commanders remain IDs 0–5; reserves follow.
@@ -2723,3 +2742,39 @@ func _destination_order(unit: Dictionary,enemy: Dictionary,action: String,reason
             return {"action":"돌파" if str(unit["type"])=="기병" else "교전","reason":"지정 지역 적군 공격","goal":enemy["pos"]}
         return {"action":"지정 지역 사수","reason":"목표 지역 장악","goal":dest if p.distance_to(dest)>55.0 else p}
     return original
+
+# The engine retains its tested fixed-step model. At normal playback the live
+# game consumes one model second per four operation seconds. Legacy fixtures
+# stay at their original scale and can explicitly opt into long operations.
+func set_long_operation(enabled: bool) -> void:
+    long_operation=enabled
+    if enabled:
+        six_armies=true
+        wide_field=true
+    reset()
+
+func operation_scale() -> float:
+    return OPERATION_SCALE if long_operation else 1.0
+
+func operation_elapsed() -> float:
+    return battle_time*operation_scale()
+
+func operation_limit() -> float:
+    return scenario_limit*operation_scale()
+
+func capture_duration() -> float:
+    return 15.0 if long_operation else OUTPOST_CAPTURE_SECONDS
+
+func operation_phase() -> String:
+    var seconds: float=operation_elapsed()
+    if seconds<240.0: return "정찰 · 행군"
+    if seconds<540.0: return "초기 교전"
+    if seconds<960.0: return "본격 교전"
+    if seconds<1320.0: return "전황 변화"
+    return "결전"
+
+func _operational_armies(side: int) -> int:
+    var count: int=0
+    for unit in units:
+        if int(unit["side"])==side and float(unit["troops"])>0.0 and not bool(unit["routed"]): count+=1
+    return count
