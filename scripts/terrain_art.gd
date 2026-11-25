@@ -5,8 +5,8 @@ const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
 ## Deterministic, continuous terrain art. Gameplay coordinates remain unchanged.
 static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, scenario: int, scale: float = 1.0) -> ImageTexture:
     # Bake higher-resolution wide terrain; retain true world coordinates.
-    # 2025×1282 on the standard wide field, 2.25× previous pixel count.
-    var bake: float = 0.75 if scale > 1.0 else 1.0
+    # Native world-pixel density for the zoomed battlefield. Mipmaps serve overview.
+    var bake: float = 1.0
     var w: int = int(extent.x*bake)
     var h: int = int(extent.y*bake)
     var image := Image.create_empty(w,h,false,Image.FORMAT_RGBA8)
@@ -20,7 +20,7 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
     grain.fractal_octaves = 2
     var dark := Color("#263e2b")
     var middle := Color("#5a7241")
-    var light := Color("#a8aa74")
+    var light := Color("#b0ad73")
     var path := Color("#b99a66")
     var shade := Color("#324437")
     var crest := Color("#aaa583")
@@ -58,7 +58,7 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             ground=ground.lerp(painted,0.61)
             ground=ground.darkened(maxf(0.0,0.47-v)*0.38).lightened(maxf(0.0,v-0.53)*0.17)
             var micro: float = grain.get_noise_2d(p.x*2.1+49.0,p.y*2.1-33.0)
-            ground = ground.lightened(maxf(0.0,g)*0.19+maxf(0.0,micro)*0.11).darkened(maxf(0.0,-g)*0.16+maxf(0.0,-micro)*0.08)
+            ground = ground.lightened(maxf(0.0,g)*0.20+maxf(0.0,micro)*0.19).darkened(maxf(0.0,-g)*0.18+maxf(0.0,-micro)*0.15)
             # Road centers match the simulation; edges are worn, not tiled.
             var d: float = INF
             for lane in range(3):
@@ -121,7 +121,7 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
     rng.seed = 2148+scenario*37
     # Cached grass tufts and pebbles, kept off roads, waterways and forest interiors.
     if scale > 1.0:
-        for i in range(5600):
+        for i in range(26500):
             var point:=Vector2(rng.randf_range(8,extent.x-8),rng.randf_range(8,extent.y-8))
             var road_distance: float=INF
             for lane in range(3):
@@ -131,11 +131,14 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             if road_distance < 24.0 or river < 45.0: continue
             var pixel:=Vector2i(point*bake)
             var base: Color=image.get_pixel(pixel.x,pixel.y)
-            for j in range(3):
-                var xx: int=pixel.x+j-1
-                var yy: int=pixel.y-1-((i+j)%2)
-                image.set_pixel(xx,yy,base.lightened(0.12+float(j)*0.025))
-            image.set_pixel(pixel.x,pixel.y,base.darkened(0.22))
+            # Tiny rooted strokes, not scattered rectangular vegetation stamps.
+            var leaf: Color=base.lerp(Color("#c4bb7d"),0.20+rng.randf()*0.23)
+            var blade: int=2+rng.randi_range(0,2)
+            for j in range(blade):
+                var xx: int=pixel.x+floori(float(j)/2.0)-1
+                var yy: int=pixel.y-j
+                image.set_pixel(xx,yy,leaf.darkened(float(j)*0.045))
+            image.set_pixel(pixel.x,pixel.y,base.darkened(0.25))
     var tree_images: Array[Image] = []
     var atlas: Image=FIELDCRAFT.get_image()
     if atlas.is_compressed(): atlas.decompress()
@@ -210,6 +213,22 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
         var tree: Image = tree_images[int(t["tile"])]
         var center: Vector2 = t["pos"]
         image.blend_rect(tree,Rect2i(0,0,tree.get_width(),tree.get_height()),Vector2i(center*bake)-Vector2i(tree.get_width()/2,int(tree.get_height()*0.70)))
+    # Riverbanks retain exact simulation boundary; gravel and reeds lie outside it.
+    if scale>1.0:
+        for i in range(4600):
+            var wy: float=rng.randf_range(12,extent.y-12)
+            if absf(wy-390.0)<46.0 or absf(wy-850.0)<46.0 or absf(wy-1300.0)<46.0: continue
+            var bank: float=-1.0 if i%2==0 else 1.0
+            var rx: float=1120.0+sin(wy/225.0)*100.0+sin(wy/89.0)*34.0
+            var wx: float=rx+bank*rng.randf_range(31.0,50.0)
+            var px: int=roundi(wx*bake)
+            var py: int=roundi(wy*bake)
+            var stone: Color=image.get_pixel(px,py).lerp(Color("#c1baa0"),rng.randf_range(0.16,0.53))
+            image.set_pixel(px,py,stone)
+            image.set_pixel(px+1,py,stone.darkened(0.28))
+            if i%4==0:
+                image.set_pixel(px,py-1,stone.lightened(0.15))
+                image.set_pixel(px+1,py-2,Color("#778a55"))
     image.generate_mipmaps()
     return ImageTexture.create_from_image(image)
 
