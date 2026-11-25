@@ -7,6 +7,9 @@ const GOLD=Color("#d5b473")
 const BLUE=Color("#315b79")
 const RED=Color("#934e3e")
 const MAP=Rect2(226,90,804,510)
+const ART=preload("res://assets/art/fieldcraft.svg")
+const PARCHMENT=preload("res://assets/art/war_parchment.svg")
+const PORTRAITS=preload("res://assets/art/painted_atlas.webp")
 var game: Control
 var sim
 var font: Font
@@ -44,7 +47,11 @@ func configure(owner_game: Control,used_font: Font) -> void:
     roster.position=Vector2(16,128)
     roster.size=Vector2(199,334)
     roster.add_theme_font_size_override("font_size",15)
-    roster.add_theme_constant_override("v_separation",18)
+    roster.add_theme_constant_override("v_separation",8)
+    roster.fixed_icon_size=Vector2i(38,38)
+    roster.add_theme_stylebox_override("panel",_panel_style("#1e201d","#77603d"))
+    roster.add_theme_stylebox_override("selected",_panel_style("#50402c","#e4bd6b"))
+    roster.add_theme_stylebox_override("selected_focus",_panel_style("#50402c","#e4bd6b"))
     add_child(roster)
     roster.item_selected.connect(func(index: int): _select(int(roster.get_item_metadata(index))))
     _label("지도 조작",Vector2(24,478),Vector2(185,25),16,GOLD)
@@ -55,7 +62,7 @@ func configure(owner_game: Control,used_font: Font) -> void:
     var guide=_label("말을 끌어 목적지 지정\n초기 배치 선택 시\n아군 영역 내 이동",Vector2(24,551),Vector2(190,80),13,Color("#c4b69e"))
     guide.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     _label("작전 지시",Vector2(1048,88),Vector2(220,30),19,GOLD)
-    info=_label("",Vector2(1048,125),Vector2(218,103),15,Color("#eadbc1"))
+    info=_label("",Vector2(1111,125),Vector2(155,103),13,Color("#eadbc1"))
     info.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     _label("① 행동",Vector2(1048,235),Vector2(216,24),14,GOLD)
     action_choice=_choice(Vector2(1046,265),Vector2(218,39),ACTIONS)
@@ -116,6 +123,9 @@ func _button(t:String,p:Vector2,s:Vector2,callback:Callable)->Button:
     b.position=p
     b.size=s
     b.pressed.connect(callback)
+    b.add_theme_stylebox_override("normal",_panel_style("#2b2a24","#957b4b"))
+    b.add_theme_stylebox_override("hover",_panel_style("#51432c","#e7c77d"))
+    b.add_theme_stylebox_override("pressed",_panel_style("#655135","#f1d79b"))
     add_child(b)
     return b
 
@@ -128,7 +138,8 @@ func open(mid_battle:bool=false)->void:
     roster.clear()
     for id in sim.command_ids(0):
         var u:Dictionary=sim.find_unit(id)
-        roster.add_item("%s  ·  %d명"%[u["name"],int(u["troops"])])
+        var portrait: AtlasTexture=_portrait(str(u["name"]))
+        roster.add_item("%s  %d명\n%s"%[u["name"],int(u["troops"]),u["type"]],portrait)
         roster.set_item_metadata(roster.item_count-1,id)
     feedback.text="부대 말을 끌거나 지도에 목적지를 찍고 행동 및 연계 대상을 지정하십시오."
     if mid_battle: feedback.text="전투 중 명령은 6턴부터 전령으로 전달됩니다. 확정 전까지 기존 작전 유지."
@@ -245,15 +256,19 @@ func _gui_input(event:InputEvent)->void:
         accept_event()
 
 func _draw()->void:
-    draw_rect(Rect2(0,0,1280,800),Color("#211c17"))
-    draw_rect(Rect2(0,0,1280,68),Color("#33291e"))
+    draw_rect(Rect2(0,0,1280,800),Color("#171915"))
+    draw_rect(Rect2(0,0,1280,68),Color("#25231c"))
+    for i in range(6):
+        draw_line(Vector2(0,65+i),Vector2(1280,65+i),Color(0.8,0.62,0.32,0.16-float(i)*0.018),1.0)
     draw_line(Vector2(12,69),Vector2(1268,69),GOLD,1.0)
     for panel in [Rect2(12,77,207,552),Rect2(1038,77,234,552),Rect2(12,630,1260,160)]:
-        draw_rect(panel,Color("#30271e"))
-        draw_rect(panel,Color("#796044"),false,1.2)
+        _frame(panel)
     if sim==null: return
-    draw_rect(MAP.grow(5),Color("#816447"))
-    draw_rect(MAP,PAPER)
+    draw_rect(MAP.grow(6),Color("#49341e"))
+    draw_texture_rect(PARCHMENT,MAP,false)
+    draw_rect(MAP.grow(2),Color("#d0af70"),false,1.5)
+    _scroll_rod(MAP.position.x-3.0)
+    _scroll_rod(MAP.end.x+3.0)
     for band in range(10):
         draw_rect(MAP.grow(-float(band)*2.4),Color(0.32,0.20,0.08,0.028),false,3.0)
     for i in range(6):
@@ -261,18 +276,20 @@ func _draw()->void:
         draw_line(Vector2(fold_x,MAP.position.y),Vector2(fold_x+1,MAP.end.y),Color(0.38,0.27,0.14,0.045),1.0)
     var rng:=RandomNumberGenerator.new()
     rng.seed=41+sim.scenario_id
-    for i in range(1100):
+    for i in range(100):
         var p:Vector2=MAP.position+Vector2(rng.randf()*MAP.size.x,rng.randf()*MAP.size.y)
         draw_line(p,p+Vector2(rng.randf_range(1,5),rng.randf_range(-1,1)),Color(0.30,0.22,0.10,rng.randf_range(0.025,0.11)),1)
     for lane in range(3):
         var line:=PackedVector2Array()
         for x in range(0,int(sim.field_size.x)+1,35): line.append(_point(Vector2(x,sim.road_y(float(x),lane))))
-        draw_polyline(line,Color("#a48a61"),3.1,true)
-        draw_polyline(line,Color("#eee0b9"),1.0,true)
+        draw_polyline(line,Color("#8e7654"),4.8,true)
+        draw_polyline(line,Color("#e8d6ab"),2.6,true)
+        draw_polyline(line,Color("#ac9165"),0.8,true)
     var river:=PackedVector2Array()
     for y in range(0,int(sim.field_size.y)+1,16): river.append(_point(Vector2(sim.river_x(float(y)),float(y))))
-    draw_polyline(river,Color("#6c8c8c"),17,true)
-    draw_polyline(river,Color("#a8b7ad"),9,true)
+    draw_polyline(river,Color("#596d63"),19,true)
+    draw_polyline(river,Color("#8ba49a"),14,true)
+    draw_polyline(river,Color("#c4c8a9"),3,true)
     for y in [390.0,850.0,1300.0]:
         var p:Vector2=_point(Vector2(sim.river_x(y),y))
         draw_rect(Rect2(p-Vector2(13,8),Vector2(26,16)),Color("#a88a57"))
@@ -287,11 +304,10 @@ func _draw()->void:
             var rough:float=0.76+rng.randf()*0.24
             outline.append(center+Vector2(cos(angle)*radius.x,sin(angle)*radius.y)*rough)
         draw_colored_polygon(outline,Color(0.34,0.38,0.20,0.15))
-        for i in range(34):
+        for i in range(5):
             var p:Vector2=_point(area.position+Vector2(rng.randf()*area.size.x,rng.randf()*area.size.y))
-            var h:float=rng.randf_range(5,11)
-            draw_polyline(PackedVector2Array([p+Vector2(-h*0.5,0),p+Vector2(0,-h),p+Vector2(h*0.5,0),p+Vector2(-h*0.5,0)]),Color("#626d49"),1.2,true)
-            draw_line(p,p+Vector2(0,3),INK,1)
+            var h:float=rng.randf_range(37,70)
+            _art(1,Rect2(p-Vector2(h*0.5,h*0.65),Vector2(h,h)),Color(1,1,1,0.92))
     var hill:Rect2=sim.hill
     for ring in range(3):
         var contour:=PackedVector2Array()
@@ -301,16 +317,15 @@ func _draw()->void:
             var angle:float=TAU*float(j)/24.0
             contour.append(hcenter+Vector2(cos(angle)*hsize.x,sin(angle)*hsize.y)*(0.86+0.13*sin(angle*3.0)))
         draw_polyline(contour,Color(0.42,0.32,0.19,0.26),1.0,true)
-    for i in range(10):
-        var p:Vector2=_point(hill.position+Vector2(rng.randf()*hill.size.x,rng.randf()*hill.size.y))
-        draw_polyline(PackedVector2Array([p+Vector2(-15,7),p+Vector2(-6,-6),p+Vector2(1,-17),p+Vector2(10,-1),p+Vector2(18,7)]),Color("#817055"),1.7,true)
-        draw_line(p+Vector2(1,-17),p+Vector2(1,6),Color("#a48c66"),1)
+    var hc:Vector2=_point(hill.get_center())
+    _art(0,Rect2(hc-Vector2(90,92),Vector2(180,142)),Color(1,1,1,0.96))
     draw_rect(Rect2(MAP.position,Vector2(MAP.size.x*0.30,MAP.size.y)),Color(0.20,0.35,0.45,0.05))
     for site in sim.outposts:
         var p:Vector2=_point(site["pos"])
-        draw_circle(p,7,Color("#b79553"))
-        draw_circle(p,7,INK,false,1.5,true)
-        _ink(str(site["name"]),p+Vector2(-25,-12),13,INK)
+        _art(2,Rect2(p-Vector2(32,56),Vector2(64,64)))
+        draw_circle(p,4,Color("#b79553"))
+        draw_circle(p,5,INK,false,1.2,true)
+        _plate(str(site["name"]),p+Vector2(0,15),12,Color("#dbc58d"))
     for b in sim.bases:
         if int(b["side"])!=0 and game.fog_enabled and not sim.player_can_see(b["pos"]): continue
         var p:Vector2=_point(b["pos"])
@@ -340,6 +355,14 @@ func _draw()->void:
     _ink("北",MAP.position+Vector2(775,30),17,INK)
     draw_line(MAP.position+Vector2(783,40),MAP.position+Vector2(783,64),INK,2)
     _ink("한중 방면  /  군사지도",MAP.position+Vector2(14,25),14,INK)
+    var u:Dictionary=sim.find_unit(selected_id)
+    if not u.is_empty():
+        var portrait:AtlasTexture=_portrait(str(u["name"]))
+        if portrait!=null:
+            draw_texture_rect(portrait,Rect2(1047,125,59,79),false)
+        else:
+            _art(3,Rect2(1042,125,69,79))
+    _plate("이동 경로  ·  협동 대상",Vector2(337,582),12,Color("#dbc58d"))
 
 func _ink(t:String,p:Vector2,fs:int,c:Color)->void:
     if font!=null: draw_string(font,p,t,HORIZONTAL_ALIGNMENT_LEFT,-1,fs,c)
@@ -357,12 +380,56 @@ func _dashed(a:Vector2,b:Vector2,c:Color)->void:
 
 func _piece(u:Dictionary,p:Vector2,selected:bool)->void:
     var c:Color=BLUE if int(u["side"])==0 else RED
-    draw_circle(p+Vector2(2,4),16,Color(0.2,0.12,0.06,0.24))
-    draw_circle(p,15,Color("#9a7951"))
-    draw_circle(p,12,c)
-    draw_circle(p,15,Color("#f0d89d") if selected else INK,false,2.5,true)
-    draw_line(p+Vector2(-4,0),p+Vector2(-4,-24),INK,2)
-    draw_colored_polygon(PackedVector2Array([p+Vector2(-3,-24),p+Vector2(14,-21),p+Vector2(11,-9),p+Vector2(-3,-12)]),c)
-    _ink("蜀" if int(u["side"])==0 else "魏",p+Vector2(0,-13),10,Color("#f2e6c7"))
-    var t:String=str(u["name"])
-    _ink(t,p+Vector2(-15,29),14,INK)
+    if selected:
+        draw_circle(p,19,Color(0.98,0.75,0.22,0.18))
+        draw_arc(p,19,0,TAU,40,Color("#edc56b"),2.2,true)
+    _art(3+int(u["side"]),Rect2(p-Vector2(25,43),Vector2(50,50)))
+    _plate(str(u["name"]),p+Vector2(0,12),13,Color("#f0ce84") if selected else Color("#ded2b0"))
+
+func _art(tile:int,rect:Rect2,tint:Color=Color.WHITE)->void:
+    draw_texture_rect_region(ART,rect,Rect2(float(tile%4)*256.0,float(floori(float(tile)/4.0))*256.0,256,256),tint)
+
+func _portrait(name:String)->AtlasTexture:
+    var names:Array[String]=["왕평","마속","위연","장합"]
+    var idx:int=names.find(name)
+    if idx<0: return null
+    var tex:=AtlasTexture.new()
+    tex.atlas=PORTRAITS
+    var tile:int=8+idx
+    tex.region=Rect2((tile%8)*128,floori(float(tile)/8.0)*128,128,128)
+    return tex
+
+func _panel_style(bg:String,border:String)->StyleBoxFlat:
+    var style:=StyleBoxFlat.new()
+    style.bg_color=Color(bg)
+    style.border_color=Color(border)
+    style.set_border_width_all(1)
+    style.corner_radius_top_left=3
+    style.corner_radius_top_right=3
+    style.corner_radius_bottom_left=3
+    style.corner_radius_bottom_right=3
+    style.content_margin_left=7
+    style.content_margin_right=7
+    return style
+
+func _frame(rect:Rect2)->void:
+    draw_rect(rect,Color("#22231e"))
+    draw_rect(rect,Color("#a38a53"),false,1.4)
+    draw_rect(rect.grow(-4),Color("#594a30"),false,1.0)
+    for corner in [rect.position,Vector2(rect.end.x,rect.position.y),rect.end,Vector2(rect.position.x,rect.end.y)]:
+        var d:Vector2=Vector2(1 if corner.x==rect.position.x else -1,1 if corner.y==rect.position.y else -1)
+        draw_polyline(PackedVector2Array([corner+Vector2(d.x*19,0),corner+Vector2(d.x*5,d.y*5),corner+Vector2(0,d.y*19)]),Color("#d0b371"),1.8,true)
+
+func _scroll_rod(x:float)->void:
+    for i in range(7):
+        draw_line(Vector2(x-3+i,MAP.position.y-4),Vector2(x-3+i,MAP.end.y+4),Color("#4e3520").lerp(Color("#d7b179"),sin(float(i)/6.0*PI)),1.0)
+    for y in [MAP.position.y-5,MAP.end.y+5]:
+        draw_circle(Vector2(x,y),6,Color("#7b5b35"))
+        draw_arc(Vector2(x,y),5,0,TAU,24,Color("#d7b179"),1.4,true)
+
+func _plate(t:String,p:Vector2,fs:int,c:Color)->void:
+    var width:float=font.get_string_size(t,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+14.0
+    var rect:=Rect2(p-Vector2(width/2.0,9),Vector2(width,18))
+    draw_rect(rect,Color("#342b20"))
+    draw_rect(rect,Color("#b09561"),false,1.0)
+    _ink(t,p+Vector2(-width/2.0+7,5),fs,c)
