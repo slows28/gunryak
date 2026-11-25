@@ -154,6 +154,15 @@ func _run() -> void:
     var bank:=Vector2(rx-29.0,650.0)
     var blocked:Vector2=route_sim._land_motion(traveler,bank,Vector2(rx-24.0,650.0))
     check(route_sim.terrain_at(blocked)!="하천" and bank.distance_to(blocked)<=5.01,"frontline pressure cannot displace army into river or teleport")
+    traveler["pos"]=bank
+    traveler["formation"]="학익진"
+    traveler["facing"]=Vector2.DOWN
+    var slots_dry:bool=true
+    for spot in route_sim.army_slots(traveler,40,10.0):
+        slots_dry=slots_dry and route_sim.terrain_at(spot)!="하천"
+    for spot in route_sim.formation_slots(traveler):
+        slots_dry=slots_dry and route_sim.terrain_at(spot)!="하천"
+    check(slots_dry,"both combat and displayed ranks remain on land")
     check(route_sim._river_separates(Vector2(rx-35.0,650.0),Vector2(rx+35.0,650.0)),"unbridged channel separates melee")
     check(not route_sim.issue_map_order(2,"지역 사수",Vector2(rx,650.0),-1),"reject destination in river")
     var committed_flank:=WarSim.new()
