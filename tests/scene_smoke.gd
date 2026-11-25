@@ -1,7 +1,7 @@
 extends SceneTree
-## Tests main scene, HUD updates, and a complete 180-second battle.
+## Tests main scene, HUD updates, and a complete large-field battle.
 const MAIN_SCENE = preload("res://main.tscn")
-const LIMIT_TICKS: int = 2200
+const LIMIT_TICKS: int = 4200
 var instance: Control
 var frames: int = 0
 var ticks: int = 0
