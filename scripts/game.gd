@@ -146,6 +146,8 @@ var outcome_cards: VBoxContainer
 var outcome_heading: Label
 var outcome_comparison: Control
 var terrain_cache: ImageTexture
+var forest_instances: Array[Dictionary]=[]
+var forest_textures: Array[ImageTexture]=[]
 var terrain_scenario: int = -1
 var terrain_variants: Dictionary = {}
 var campaign_active: bool = false
@@ -1216,6 +1218,8 @@ func _draw_map(_canvas: Control) -> void:
     if sim.wide_field and camera_zoom >= 0.60:
         for crossing in [390.0,850.0,1300.0]:
             _draw_bridge(Vector2(sim.river_x(crossing),crossing))
+    if camera_zoom<0.65:
+        for tree in _visible_trees(): _draw_tree(tree,false,[])
     if fog_enabled and sim.started and not sim.finished and visibility_texture != null:
         map_layer.draw_texture_rect(visibility_texture,map_rect,false)
     if sim.wide_field:
@@ -1369,8 +1373,7 @@ func _draw_map(_canvas: Control) -> void:
     _draw_contact_fronts(visible_units,field_view)
     if camera_zoom>=0.65:
         var soldiers: Array[Dictionary]=_visible_soldier_batch(visible_units,field_view)
-        for item in soldiers:
-            _draw_soldier(item["point"],item["unit"],item["accent"],int(item["index"]),item["target"])
+        _draw_depth_scene(soldiers,_visible_trees(),visible_units)
     for unit in visible_units:
         if field_view.has_point(unit["pos"]): _draw_unit(unit)
     _draw_combat_effects()
@@ -1393,6 +1396,48 @@ func _draw_map(_canvas: Control) -> void:
 # occlude a rear rank even when they belong to different armies.
 # Pressure lines are based on real current melee contact pairs. No overlay for
 # artillery-range arrows or invisible enemies; render behind soldiers.
+# Trees and soldiers share a foot-position sort. A unit behind a tree is
+# partially hidden instead of being painted on top of the tree canopy.
+func _visible_trees() -> Array[Dictionary]:
+    var view:=Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom).grow(75.0)
+    var result: Array[Dictionary]=[]
+    for tree in forest_instances:
+        if view.has_point(tree["pos"]): result.append(tree)
+    return result
+
+func _draw_tree(tree: Dictionary,detail: bool,visible_units: Array) -> void:
+    var index:int=int(tree["tile"])
+    if index<0 or index>=forest_textures.size(): return
+    var texture:ImageTexture=forest_textures[index]
+    var p:Vector2=tree["pos"]
+    var size:Vector2=texture.get_size()
+    var shade:=Color.WHITE
+    if detail:
+        # Fade only near known friendly or observed enemy formations; do not
+        # leak hidden enemy location through changing forest opacity.
+        for u in visible_units:
+            var center:Vector2=u["pos"]
+            if center.distance_squared_to(p)<3600.0:
+                shade.a=0.62
+                break
+        if fog_enabled and sim.started and not sim.finished and not sim.player_can_see(p):
+            shade=Color(0.62,0.68,0.66,1.0)
+    map_layer.draw_texture_rect(texture,Rect2(p-Vector2(size.x*0.5,size.y*0.70),size),false,shade)
+
+func _draw_depth_scene(soldiers:Array[Dictionary],trees:Array[Dictionary],visible_units:Array[Dictionary])->void:
+    # Both arrays have already been depth-sorted. Linear merge, no per-frame
+    # sort of all scenery and actors together.
+    var si:int=0
+    var ti:int=0
+    while si<soldiers.size() or ti<trees.size():
+        if ti<trees.size() and (si>=soldiers.size() or float(trees[ti]["pos"].y)<=float(soldiers[si]["point"].y)):
+            _draw_tree(trees[ti],true,visible_units)
+            ti+=1
+        else:
+            var item:Dictionary=soldiers[si]
+            _draw_soldier(item["point"],item["unit"],item["accent"],int(item["index"]),item["target"])
+            si+=1
+
 func _draw_contact_fronts(visible_units: Array[Dictionary],field_view: Rect2) -> void:
     if not sim.started or sim.finished: return
     var known: Dictionary={}
@@ -2592,8 +2637,13 @@ func _rebuild_terrain() -> void:
     var key: String="%s/%d" % [str(sim.field_size),sim.scenario_id]
     if not terrain_variants.has(key):
         if terrain_variants.size()>=2: terrain_variants.erase(terrain_variants.keys()[0])
-        terrain_variants[key]=TerrainArt.battlefield(sim.field_size,sim.forests,sim.hill,sim.scenario_id,sim.layout_scale)
-    terrain_cache=terrain_variants[key]
+        var layers: Dictionary={"separate_trees":true}
+        var ground: ImageTexture=TerrainArt.battlefield(sim.field_size,sim.forests,sim.hill,sim.scenario_id,sim.layout_scale,layers)
+        terrain_variants[key]={"ground":ground,"trees":layers["trees"],"textures":layers["textures"]}
+    var variant: Dictionary=terrain_variants[key]
+    terrain_cache=variant["ground"]
+    forest_instances=variant["trees"]
+    forest_textures=variant["textures"]
     terrain_scenario = sim.scenario_id
 
 func _blend_land(target: Image, source: Image, area: Rect2, feather: float, kind: int) -> void:
