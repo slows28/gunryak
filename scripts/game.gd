@@ -501,10 +501,25 @@ func _field_action(u: Dictionary) -> String:
         if float(u.get("motion_speed",0.0))>2.0 and float(u.get("bridge_y",-1.0))>=0.0: return "도하 기동"
     return str(u["action"])
 
+# A combat camera must also inspect the friendly commander actually involved,
+# rather than leaving an unrelated general's information on screen.
+func _select_friendly_combatant(fx:Dictionary) -> void:
+    var ids:Array[int]=sim.command_ids(0)
+    for key in ["attacker_id","defender_id"]:
+        var id:int=int(fx.get(key,-1))
+        if not ids.has(id): continue
+        selected_id=id
+        _show_friendly_roster()
+        unit_list.select(ids.find(id))
+        _select_unit()
+        _refresh_hud()
+        return
+
 func _focus_combat() -> void:
     for i in range(sim.visual_effects.size()-1,-1,-1):
         var fx: Dictionary=sim.visual_effects[i]
         if fog_enabled and not sim.player_can_see(fx["from"]) and not sim.player_can_see(fx["to"]): continue
+        _select_friendly_combatant(fx)
         camera_center=(fx["from"] as Vector2).lerp(fx["to"],0.5)
         camera_zoom=1.45
         _clamp_camera()
@@ -804,7 +819,11 @@ func _refresh_hud() -> void:
         details_label.modulate=_mood_color(str(psyche.get("mood","준비")))
         decision_label.text = "판단: "+str(unit["reason"])
         var suggestion: String=str(psyche.get("proposal",""))
-        if not suggestion.is_empty(): decision_label.text+="\n건의: "+suggestion
+        var target:Dictionary=sim.find_unit(int(unit.get("contact_target_id",-1)))
+        if not target.is_empty() and _visible_unit(target):
+            decision_label.text+="\n교전: "+str(target["name"])+" · 손실 "+_number_text(roundi(float(corps["casualties_taken"])))
+        elif not suggestion.is_empty(): decision_label.text+="\n건의: "+suggestion
+        else: decision_label.text+="\n우려: "+str(psyche.get("concern",""))
         decision_label.tooltip_text=str(unit["reason"])+"\n"+str(psyche.get("observed",""))+"\n우려: "+str(psyche.get("concern",""))+"\n최근 명령: "+str(psyche.get("last_order",""))
     if not unit.is_empty():
         details_label.tooltip_text = "%s\n사기 %d · 응집 %d · 피로 %d\n식량 %d · 화살 %d\n%s" % [str(unit["name"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"]),str(unit["reason"])]
@@ -876,6 +895,13 @@ func _select_general_card(index: int) -> void:
     _select_unit()
     _focus_selected()
 
+func _fit_card_line(value:String,width:float) -> String:
+    if korean_font.get_string_size(value,HORIZONTAL_ALIGNMENT_LEFT,-1,12).x<=width: return value
+    var shortened:String=value
+    while shortened.length()>1 and korean_font.get_string_size(shortened+"…",HORIZONTAL_ALIGNMENT_LEFT,-1,12).x>width:
+        shortened=shortened.substr(0,shortened.length()-1)
+    return shortened+"…"
+
 func _refresh_general_cards() -> void:
     var ids: Array[int]=sim.command_ids(0)
     for i in range(general_cards.size()):
@@ -888,9 +914,11 @@ func _refresh_general_cards() -> void:
         var mind: Dictionary=u.get("mind",{})
         var mood: String=str(mind.get("mood","준비"))
         var reason: String=str(mind.get("reason","초기 배치"))
-        var brief: String=reason if reason.length()<=14 else reason.substr(0,13)+"…"
-        brief=reason if reason.length()<=8 else reason.substr(0,7)+"…"
-        card.text="%s · %s\n%s / %s" % [str(u["name"]),mood,_field_action(u),brief]
+        var brief:String=reason
+        var suggestion:String=str(mind.get("proposal",""))
+        var first:String="%s · %s" % [str(u["name"]),_field_action(u)]
+        var second:String=mood+" · "+("건의 "+suggestion if not suggestion.is_empty() else brief)
+        card.text=_fit_card_line(first,138.0)+"\n"+_fit_card_line(second,138.0)
         if card.icon==null or str(card.get_meta("general_name",""))!=str(u["name"]):
             card.icon=_commander_icon(str(u["name"]),0)
             card.set_meta("general_name",str(u["name"]))
@@ -1417,9 +1445,12 @@ func _draw_tree(tree: Dictionary,detail: bool,visible_units: Array) -> void:
         # leak hidden enemy location through changing forest opacity.
         for u in visible_units:
             var center:Vector2=u["pos"]
-            if center.distance_squared_to(p)<3600.0:
-                shade.a=0.62
-                break
+            var distance:float=center.distance_to(p)
+            var engaged:bool=int(u.get("contact_target_id",-1))>=0
+            if engaged and distance<115.0:
+                shade.a=minf(shade.a,lerpf(0.12,0.45,smoothstep(45.0,115.0,distance)))
+            elif distance<70.0:
+                shade.a=minf(shade.a,lerpf(0.35,0.78,smoothstep(20.0,70.0,distance)))
         if fog_enabled and sim.started and not sim.finished and not sim.player_can_see(p):
             shade=Color(0.62,0.68,0.66,1.0)
     map_layer.draw_texture_rect(texture,Rect2(p-Vector2(size.x*0.5,size.y*0.70),size),false,shade)
