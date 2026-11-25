@@ -179,6 +179,32 @@ func _process(_dt: float) -> bool:
             push_error("GUNRYAK_SCENE_FAIL: siege gate not integrated with adjacent walls")
             quit(1)
             return false
+        # The road, bridge and actual land classification share the same geometry.
+        for scenario in range(5):
+            geography.set_scenario(scenario)
+            for lane in range(3):
+                var cross: float=[390.0,850.0,1300.0][lane]
+                var bridge_x: float=geography.river_x(cross)
+                if absf(geography.road_y(bridge_x,lane)-cross)>0.01 or geography.terrain_at(Vector2(bridge_x,cross))!="교량":
+                    push_error("GUNRYAK_SCENE_FAIL: disconnected road and bridge")
+                    quit(1)
+                    return false
+        print("ROAD_BRIDGE_ALIGNMENT_PASS")
+        var visual_unit: Dictionary=model.find_unit(0)
+        var before: float=float(visual_unit["troops"])
+        instance.call("_record_fallen",visual_unit,32)
+        if instance.fallen_marks.size()!=0:
+            push_error("GUNRYAK_SCENE_FAIL: casualty marks fabricated before threshold")
+            quit(1)
+            return false
+        instance.call("_record_fallen",visual_unit,33)
+        if instance.fallen_marks.size()!=1 or float(visual_unit["troops"])!=before:
+            push_error("GUNRYAK_SCENE_FAIL: casualty presentation modified simulation")
+            quit(1)
+            return false
+        instance.fallen_marks.clear()
+        instance.loss_carry.clear()
+        print("CASUALTY_PRESENTATION_PASS")
         print("OBJECTIVE_GEOGRAPHY_PASS")
         print("FRONT_OVERHAUL_PASS: real anchors, reconciled sectors, distinct maps and fixed-step highlights")
         print("COMMAND_OUTCOME_PASS")
