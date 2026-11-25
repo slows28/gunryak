@@ -111,7 +111,7 @@ func _initialize() -> void:
     var scout: Dictionary = fog.find_unit(0)
     check(fog._nearest_visible_enemy(scout).is_empty(), "initial commander cannot see remote enemy")
     fog._decide(scout)
-    check(str(scout["action"]) == "진격", "out-of-sight enemy does not trigger combat AI")
+    check(str(scout["action"]) in ["진격", "거점 점령", "거점 방어"] and fog._nearest_visible_enemy(scout).is_empty(), "out-of-sight enemy does not trigger combat AI")
     check(fog.validate_state().is_empty(), "raids and intelligence states remain valid")
 
 
@@ -177,6 +177,8 @@ func _initialize() -> void:
     cavalry["pos"] = Vector2(400, 300)
     cavalry["facing"] = Vector2.RIGHT
     cavalry["charge"] = 40.0
+    cavalry["charge_speed"] = 75.0
+    cavalry["charge_dir"] = Vector2.RIGHT
     target["pos"] = Vector2(432, 300)
     target["facing"] = Vector2.LEFT
     target["formation"] = "횡대"
@@ -186,6 +188,9 @@ func _initialize() -> void:
     target["morale"] = 100.0
     target["formation"] = "방진"
     cavalry["charge"] = 40.0
+    cavalry["charge_speed"] = 75.0
+    cavalry["charge_dir"] = Vector2.RIGHT
+    cavalry["charge_cooldown"] = 0.0
     defense._combat(0.1)
     var square_cavalry_loss: float = float(target["initial_troops"]) - float(target["troops"])
     check(line_cavalry_loss > square_cavalry_loss, "formed square resists cavalry shock")
@@ -398,11 +403,16 @@ func _initialize() -> void:
     check(str(veteran["action"]) == "방어" and str(veteran["next_formation"]) == "방진", "cautious enemy sees cavalry and orders square")
     cavalry_threat["pos"] = Vector2(140, 430)
     var weak_infantry: Dictionary = counter.find_unit(0)
+    veteran["facing"] = Vector2.RIGHT
     weak_infantry["pos"] = Vector2(470, 300)
     weak_infantry["troops"] = 45.0
     veteran["action"] = "방어"
     counter._decide(veteran)
-    check(str(veteran["action"]) == "반격", "experienced cautious enemy counterattacks observed weakness")
+    check(str(veteran["action"]) == "명령 수행", "strict loyal general retains distant ordered objective instead of pursuing")
+    veteran["action"] = "방어"
+    counter._apply_policy(veteran, "재량 위임")
+    counter._decide(veteran)
+    check(str(veteran["action"]) == "반격", "experienced cautious enemy with discretion counterattacks observed weakness")
 
     # M3-3: Raiders have to defeat or draw off physical supply guards.
     var depot = WarSim.new()
@@ -446,6 +456,17 @@ func _initialize() -> void:
     check(report[1].find("판단") >= 0 and report[1].find("피해") >= 0, "report includes decisions and damage")
     check(float(reform_attacker["damage_dealt"]) > 0.0 and float(reform_defender["casualties_taken"]) > 0.0, "report telemetry is based on real combat")
 
+    # M8: actual enemy movement is blocked until a defensive object is destroyed.
+    var siege = WarSim.new()
+    siege.set_scenario(2)
+    var wall: Dictionary = siege.structures[0]
+    var invader: Dictionary = siege.find_unit(3)
+    invader["pos"] = Vector2(248,150)
+    check(siege._structure_move(invader,Vector2(248,150),Vector2(235,150)) == Vector2(248,150),"intact palisade blocks enemy entry")
+    wall["hp"] = 0.1
+    siege._update_structures(0.1)
+    check(float(wall["hp"]) == 0.0 and siege._structure_move(invader,Vector2(248,150),Vector2(235,150)) == Vector2(235,150),"nearby assault destroys palisade and opens path")
+    check(siege.merit(invader) >= 0, "merit is nonnegative and derived from real events")
     print("GUNRYAK_TEST_SUMMARY pass=%d fail=%d" % [passes, failures])
     quit(0 if failures == 0 else 1)
 

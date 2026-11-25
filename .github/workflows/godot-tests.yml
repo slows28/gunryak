@@ -26,6 +26,7 @@ jobs:
         run: |
           python3 tools_run_engine_tests.py --godot /tmp/godot_bin/Godot_v4.7.2-stable_linux.x86_64 --project .
       - name: Capture actual game frames with virtual display
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -47,7 +48,7 @@ jobs:
           python3 - <<'PY'
           import pathlib, struct
           folder = pathlib.Path("test_results/screenshots")
-          for name in ("before_battle.png", "battle_12s.png", "battle_28s.png", "battle_60s.png", "battle_result.png"):
+          for name in ("title.png", "before_battle.png", "battle_12s.png", "battle_28s.png", "battle_60s.png", "battle_result.png"):
               file = folder/name
               if not file.exists():
                   raise SystemExit(f"Screenshot missing: {file}")
