@@ -49,7 +49,7 @@ def resolve_godot(given: str | None) -> str | None:
 def run(cmd: list[str], cwd: Path, timeout: int) -> dict:
     start = time.monotonic()
     try:
-        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, errors="replace", timeout=timeout)
+        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
         return {
             "exit_code": proc.returncode,
             "output": proc.stdout + proc.stderr,
@@ -59,13 +59,15 @@ def run(cmd: list[str], cwd: Path, timeout: int) -> dict:
     except subprocess.TimeoutExpired as exc:
         return {
             "exit_code": -1,
-            "output": str(exc.stdout or b"") + str(exc.stderr or b"") + "\nTIMEOUT",
+            "output": (exc.stdout.decode("utf-8", "replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")) + (exc.stderr.decode("utf-8", "replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")) + "\nTIMEOUT",
             "duration_s": round(time.monotonic() - start, 2),
             "timed_out": True,
         }
 
 
 def main() -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser()
     ap.add_argument("--godot", default=None, help="Path to Godot 4.7.2 executable")
     ap.add_argument("--project", type=Path, default=ROOT)
@@ -103,7 +105,10 @@ def main() -> int:
 
     for name, template, expected_marker in TESTS:
         cmd = [binary] + [arg.replace("{project}", str(project)) for arg in template]
-        result = run(cmd, project, args.timeout)
+        # Full five-scenario simulation has exceeded 150s on shared Windows runners.
+        # Keep the same assertions and require the same success marker.
+        budget = max(args.timeout, 300) if name == "six_armies" and os.name == "nt" else args.timeout
+        result = run(cmd, project, budget)
         output = result.pop("output")
         (out_dir / f"{name}.log").write_text(output, encoding="utf-8")
         check_ok = result["exit_code"] == 0 and not result["timed_out"]
