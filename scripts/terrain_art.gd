@@ -1,9 +1,10 @@
 extends RefCounted
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
+const PAINTED_GROUND = preload("res://assets/art/painted_atlas.webp")
 ## Deterministic, continuous terrain art. Gameplay coordinates remain unchanged.
 static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, scenario: int, scale: float = 1.0) -> ImageTexture:
     # Bake higher-resolution wide terrain; retain true world coordinates.
-    var bake: float = 0.75 if scale > 1.0 else 1.0
+    var bake: float = 0.5 if scale > 1.0 else 1.0
     var w: int = int(extent.x*bake)
     var h: int = int(extent.y*bake)
     var image := Image.create_empty(w,h,false,Image.FORMAT_RGBA8)
@@ -21,24 +22,49 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
     var path := Color("#b99a66")
     var shade := Color("#324437")
     var crest := Color("#aaa583")
+    # Use the existing hand-painted resource as material detail, rather than
+    # tiling a screenshot or inventing roads that do not exist in the sim.
+    var source: Image=PAINTED_GROUND.get_image()
+    if source.is_compressed(): source.decompress()
+    if source.get_format()!=Image.FORMAT_RGBA8: source.convert(Image.FORMAT_RGBA8)
+    var grass_art: Image=source.get_region(Rect2i(8,520,112,112))
+    var dirt_art: Image=source.get_region(Rect2i(136,520,112,112))
+    var forest_art: Image=source.get_region(Rect2i(264,520,112,112))
+    var hill_art: Image=source.get_region(Rect2i(392,520,112,112))
+    var roads: Array[PackedFloat32Array]=[]
+    var rivers:=PackedFloat32Array()
+    rivers.resize(h)
+    for yy in range(h):
+        var wy:float=float(yy)/bake
+        rivers[yy]=1120.0+sin(wy/225.0)*100.0+sin(wy/89.0)*34.0
+    for lane in range(3):
+        var row:=PackedFloat32Array()
+        row.resize(w)
+        for xx in range(w):
+            var wx:float=float(xx)/bake
+            row[xx]=[131.0,282.0,435.0][lane]*scale
+            if scale>1.0: row[xx]+=sin(wx/220.0+float(lane)*1.6)*48.0+sin(wx/94.0+float(lane))*19.0
+        roads.append(row)
     for y in range(h):
         for x in range(w):
             var p := Vector2(x,y)/bake
             var v: float = noise.get_noise_2d(p.x,p.y)*0.5+0.5
             var g: float = grain.get_noise_2d(p.x,p.y)
             var ground: Color = dark.lerp(middle,smoothstep(0.1,0.48,v)).lerp(light,smoothstep(0.50,0.90,v))
-            var slope: float = (noise.get_noise_2d(p.x+13.0,p.y+13.0)-noise.get_noise_2d(p.x-13.0,p.y-13.0))*0.60
-            ground=ground.lightened(maxf(0.0,-slope)*0.5).darkened(maxf(0.0,slope)*0.7)
+            var uv:=Vector2i(_mirror_sample(x+roundi(v*20.0),112),_mirror_sample(y+roundi(v*14.0),112))
+            var painted:Color=grass_art.get_pixelv(uv)
+            ground=ground.lerp(painted,0.73)
+            ground=ground.darkened(maxf(0.0,0.47-v)*0.38).lightened(maxf(0.0,v-0.53)*0.17)
             var micro: float = grain.get_noise_2d(p.x*2.1+49.0,p.y*2.1-33.0)
             ground = ground.lightened(maxf(0.0,g)*0.19+maxf(0.0,micro)*0.11).darkened(maxf(0.0,-g)*0.16+maxf(0.0,-micro)*0.08)
             # Road centers match the simulation; edges are worn, not tiled.
             var d: float = INF
             for lane in range(3):
-                var cy: float = [131.0,282.0,435.0][lane]*scale
-                if scale > 1.0: cy += sin(p.x/220.0+float(lane)*1.6)*48.0+sin(p.x/94.0+float(lane))*19.0
-                d = minf(d,absf(p.y-cy))
+                d = minf(d,absf(p.y-roads[lane][x]))
             var wear: float = 1.0-smoothstep(6.0,22.0 if scale > 1.0 else 15.0,d+g*5.0)
-            ground = ground.lerp(path.lightened(g*0.14).darkened(maxf(0.0,-micro)*0.16),wear*0.94)
+            if wear>0.0:
+                var dirt:Color=path.lerp(dirt_art.get_pixelv(uv),0.80)
+                ground = ground.lerp(dirt.lightened(g*0.09),wear*0.98)
             if d > 25.0 and micro > 0.44:
                 ground = ground.lerp(Color("#9aa96a"),(micro-0.44)*0.24)
             if d < 9.0:
@@ -49,18 +75,20 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                 var n: Vector2 = (p-forest.get_center())/(forest.size*0.5+Vector2(9,9))
                 var edge: float = maxf(absf(n.x),absf(n.y))+g*0.09
                 var cover: float = 1.0-smoothstep(0.72,1.08,edge)
-                ground = ground.lerp(shade.lightened(v*0.12),cover*0.76)
+                if cover>0.0:
+                    var forest_color:Color=shade.lerp(forest_art.get_pixelv(uv),0.72)
+                    ground = ground.lerp(forest_color,cover*0.82*(1.0-wear))
             var hp: Vector2 = (p-hill.get_center())/(hill.size*0.5+Vector2(16,16))
             var r: float = hp.length()+g*0.05
             var elevation: float = pow(maxf(0.0,1.0-r),0.7)
             if elevation > 0.0:
                 var hill_shade: float = clampf(0.48-hp.x*0.24-hp.y*0.31+g*0.10,0.0,1.0)
-                var rock: Color = shade.lerp(crest,hill_shade)
-                ground = ground.lerp(rock,smoothstep(0.0,0.30,elevation)*0.90)
+                var rock: Color = shade.lerp(crest,hill_shade).lerp(hill_art.get_pixelv(uv),0.72)
+                ground = ground.lerp(rock,smoothstep(0.0,0.30,elevation)*0.90*(1.0-wear))
                 var band: float = absf(fmod(elevation*8.0,1.0)-0.5)
                 if band < 0.045: ground = ground.darkened(0.12)
             if scale > 1.0:
-                var rx: float = 1120.0+sin(p.y/225.0)*100.0+sin(p.y/89.0)*34.0
+                var rx: float = rivers[y]
                 var bank: float = absf(p.x-rx)
                 var bridge: bool = absf(p.y-390.0)<=38.0 or absf(p.y-850.0)<=38.0 or absf(p.y-1300.0)<=38.0
                 if bank < 41.0:
@@ -101,7 +129,7 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
     if atlas.is_compressed(): atlas.decompress()
     if atlas.get_format()!=Image.FORMAT_RGBA8: atlas.convert(Image.FORMAT_RGBA8)
     for i in range(5):
-        var tree: Image=atlas.get_region(Rect2i(256,256,256,256))
+        var tree: Image=_painted_tree(forest_art,i)
         var size: int=roundi((45.0+float(i)*5.0)*bake)
         tree.resize(size,size,Image.INTERPOLATE_LANCZOS)
         if i%2==1: tree.flip_x()
@@ -227,3 +255,30 @@ static func dust_cloud() -> ImageTexture:
             c.a=a
             img.set_pixel(x,y,c)
     return ImageTexture.create_from_image(img)
+
+static func _mirror_sample(value:int,size:int)->int:
+    var i:int=posmod(value,size*2)
+    return i if i<size else size*2-1-i
+
+# Irregular silhouettes and leaf material instead of smooth spheres.
+static func _painted_tree(leaf:Image,index:int)->Image:
+    var image:=Image.create_empty(64,64,false,Image.FORMAT_RGBA8)
+    var noise:=FastNoiseLite.new()
+    noise.seed=832+index*29
+    noise.frequency=0.12
+    for y in range(64):
+        for x in range(64):
+            var p:=Vector2(x,y)
+            var shade:float=1.0-smoothstep(0.70,1.0,((p-Vector2(36,41))/Vector2(28,16)).length())
+            var d:float=((p-Vector2(28,28))/Vector2(24,23)).length()
+            var n:float=noise.get_noise_2d(x,y)
+            var crown:float=1.0-smoothstep(0.80,1.0,d+n*0.27)
+            var c:=Color(0.06,0.09,0.045,shade*0.42)
+            if crown>0.0:
+                var material:Color=leaf.get_pixel(_mirror_sample(x*2+index*13,112),_mirror_sample(y*2+index*17,112))
+                var light:float=clampf(0.77-float(x+y)/120.0+n*0.22,0.0,1.0)
+                var foliage:Color=Color("#243b28").lerp(Color("#a1aa69"),light).lerp(material,0.48)
+                foliage.a=crown
+                c=c.blend(foliage)
+            image.set_pixel(x,y,c)
+    return image
