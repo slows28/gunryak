@@ -1019,14 +1019,17 @@ func formation_contacts(attacker: Dictionary, defender: Dictionary, weapon_reach
 func _combat(dt: float) -> void:
     # Precompute strikes before taking losses. Both sides resolve simultaneously.
     var damage_entries: Array[Dictionary] = []
+    var targets: Dictionary = {}
     for unit in units:
         unit["contact_troops"] = 0
+        if six_armies and float(unit["troops"])>0.0 and not bool(unit["routed"]):
+            targets[int(unit["id"])]=_combat_target(unit)
     for unit in units:
         if float(unit["troops"]) <= 0.0:
             continue
         if bool(unit["routed"]):
             continue
-        var enemy: Dictionary = _combat_target(unit)
+        var enemy: Dictionary = targets.get(int(unit["id"]),{}) if six_armies else _combat_target(unit)
         if enemy.is_empty():
             continue
         var pos: Vector2 = unit["pos"]
@@ -1113,7 +1116,7 @@ func _combat(dt: float) -> void:
         attack *= (1.0 - 0.30 * float(unit["fatigue"]) / 100.0) * (0.55 + 0.45 * float(unit["cohesion"]) / 100.0)
         unit["fatigue"] = minf(100.0, float(unit["fatigue"]) + dt * 0.60)
         var counter: float = tactical_matchup(unit,enemy,flank or rear) if six_armies else 1.0
-        var link: bool = six_armies and _has_combined_arms(unit,enemy)
+        var link: bool = six_armies and _has_combined_arms(unit,enemy,targets)
         attack *= counter*(1.15 if link else 1.0)
         var damage: float = attack * (float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"]))) * (float(unit["morale"]) / 100.0) * exposure * supply_factor * dt
         if wide_field:
@@ -1446,6 +1449,8 @@ func _update_battle_condition(dt: float) -> void:
 
 func _combat_target(unit: Dictionary) -> Dictionary:
     var nearest: Dictionary = _nearest_visible_enemy(unit)
+    if six_armies and not nearest.is_empty():
+        return _tactical_target(unit,nearest)
     if nearest.is_empty() or str(unit["type"]) != "궁병" or _effective_stat(unit, "intelligence") < 70.0:
         return nearest
     var p: Vector2 = unit["pos"]
@@ -2490,12 +2495,16 @@ func tactical_matchup(attacker: Dictionary,defender: Dictionary,side_attack: boo
     if df=="봉시진" and a=="보병" and af=="방진" and not side_attack: factor*=1.12
     return factor
 
-func _has_combined_arms(unit: Dictionary,enemy: Dictionary) -> bool:
+func _has_combined_arms(unit: Dictionary,enemy: Dictionary,targets: Dictionary = {}) -> bool:
     var p: Vector2=unit["pos"]
     var ep: Vector2=enemy["pos"]
     for ally in units:
         if int(ally["side"])!=int(unit["side"]) or int(ally["id"])==int(unit["id"]) or bool(ally["routed"]) or float(ally["troops"])<600.0 or float(ally["cohesion"])<35.0: continue
         if str(ally["type"])==str(unit["type"]) or p.distance_to(ally["pos"])>245.0: continue
+        if str(ally["type"])=="궁병" and float(ally["ammo"])<=0.0: continue
+        if not targets.is_empty():
+            var assigned: Dictionary=targets.get(int(ally["id"]),{})
+            if assigned.is_empty() or int(assigned["id"])!=int(enemy["id"]): continue
         var ally_reach: float=173.0 if str(ally["type"])=="궁병" else 30.0
         if formation_contacts(ally,enemy,ally_reach)<=0: continue
         var a: Vector2=(p-ep).normalized()
@@ -2520,7 +2529,9 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
         var score: float=p.distance_to(friend["pos"])-float(friend["front_pressure"])*180.0
         if mission=="구원 지원": score-=maxf(0.0,70.0-float(friend["morale"]))*3.0
         if int(friend["id"])==int(unit["link_id"]): score-=65.0
-        if score<best: best=score; ally=friend
+        if score<best:
+            best=score
+            ally=friend
     if ally.is_empty(): return original
     unit["link_id"]=ally["id"]
     var ap: Vector2=ally["pos"]
@@ -2549,3 +2560,28 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
     if int(unit["flank_phase"])==1:
         return {"action":"돌파","reason":str(ally["name"])+"군 정면 압박에 맞춰 측후방 공격","goal":ep}
     return {"action":"협동 우회","reason":str(ally["name"])+"군과 협동 측면 기동","goal":unit["flank_goal"]}
+
+func _tactical_target(unit: Dictionary,nearest: Dictionary) -> Dictionary:
+    var p: Vector2=unit["pos"]
+    var reach: float=173.0 if str(unit["type"])=="궁병" else 30.0
+    var best: Dictionary=nearest
+    var score_best: float=-INF
+    for enemy in units:
+        if int(enemy["side"])==int(unit["side"]) or float(enemy["troops"])<=0.0: continue
+        var ep: Vector2=enemy["pos"]
+        var d: float=p.distance_to(ep)
+        var vision: float=AI_VISION_RANGE*(0.85+_effective_stat(unit,"intelligence")*0.002)
+        if _in_forest(ep):
+            vision*=0.68
+            if float(enemy["ambush_ready"])>=3.0: vision*=0.48
+        if terrain_at(p)=="고지": vision*=1.15
+        if d>minf(vision,reach+100.0): continue
+        var direction: Vector2=(p-ep).normalized()
+        var flank: bool=direction.dot(enemy["facing"])<0.3
+        var score: float=110.0-d*0.6+45.0*(tactical_matchup(unit,enemy,flank)-1.0)
+        if str(enemy["next_formation"])!="": score+=12.0
+        if score<=score_best: continue
+        if formation_contacts(unit,enemy,reach)<=0: continue
+        score_best=score
+        best=enemy
+    return best
