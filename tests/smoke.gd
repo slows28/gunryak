@@ -408,7 +408,11 @@ func _initialize() -> void:
     weak_infantry["troops"] = 45.0
     veteran["action"] = "방어"
     counter._decide(veteran)
-    check(str(veteran["action"]) == "반격", "experienced cautious enemy counterattacks observed weakness")
+    check(str(veteran["action"]) == "명령 수행", "strict loyal general retains distant ordered objective instead of pursuing")
+    veteran["action"] = "방어"
+    counter._apply_policy(veteran, "재량 위임")
+    counter._decide(veteran)
+    check(str(veteran["action"]) == "반격", "experienced cautious enemy with discretion counterattacks observed weakness")
 
     # M3-3: Raiders have to defeat or draw off physical supply guards.
     var depot = WarSim.new()
