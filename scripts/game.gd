@@ -7,6 +7,7 @@ const CampaignView = preload("res://scripts/campaign_view.gd")
 const OrderMap = preload("res://scripts/order_map.gd")
 const PAINTED_ART = preload("res://assets/art/painted_atlas.webp")
 const SOLDIER_ART = preload("res://assets/art/soldier_sprites.svg")
+const SOLDIER_MOTION = preload("res://assets/art/soldier_motion.svg")
 const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const PAINTED_FX = preload("res://assets/art/painted_fx.webp")
@@ -1304,6 +1305,31 @@ func _soldier_region(unit: Dictionary) -> Rect2:
         column=1 if direction.y>0.0 else 2
     return Rect2(column*96,(int(unit["side"])*3+kind)*96,96,96)
 
+# Read-only pose selection. Attack frames follow the actual emitted combat event.
+# The sim clock freezes in pause; marching phase is scaled to operation time.
+func _soldier_pose(unit: Dictionary, index: int, now: float) -> int:
+    if not sim.started or sim.finished: return -1
+    var kind: String = str(unit["type"])
+    var moving: bool = float(unit.get("motion_speed",0.0))>2.0
+    var routed: bool = bool(unit.get("routed",false))
+    if not routed and now-float(unit.get("last_hit",-100.0))<0.09 and index%7==0:
+        return 5
+    var age: float = maxf(0.0,now-float(unit.get("last_visual",-100.0)))
+    var interval: float = 0.9 if kind=="궁병" else 0.55
+    var engaged: bool = int(unit.get("contact_troops",0))>0
+    if kind=="궁병" and float(unit.get("ammo",0.0))<=0.0: engaged=false
+    if not routed and age<0.27:
+        return 3 if age<0.11 else 4
+    if not routed and engaged and age>=interval-0.19 and age<=interval+0.1:
+        return 2
+    if moving:
+        var cadence: float = 7.0 if kind=="기병" else (4.8 if routed else 3.6)
+        return posmod(floori(now*sim.operation_scale()*cadence+float(index%5)*0.23),2)
+    return -1
+
+func _soldier_motion_region(base: Rect2,pose: int) -> Rect2:
+    return Rect2(base.position+Vector2(pose*288,0),base.size)
+
 func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> void:
     var direction: Vector2 = unit["facing"]
     var moving: bool = float(unit.get("motion_speed",0.0)) > 2.0 and sim.started and not sim.finished
@@ -1311,13 +1337,13 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> v
     # The atlas uses a shared foot anchor. Taller silhouettes, compact lateral footprint.
     var extent: Vector2 = Vector2(19,24) if kind==2 else Vector2(15,20)
     if not sim.six_armies: extent*=1.25
-    var phase: float = render_clock*(17.0 if kind==2 else 10.0)+index*1.7
-    var attacking: bool = int(unit.get("contact_troops",0))>0 and not bool(unit["routed"])
+    var pose: int = _soldier_pose(unit,index,render_clock)
+    var phase: float = render_clock*sim.operation_scale()*(13.0 if kind==2 else 9.0)+index*1.7
     var hit: bool = sim.battle_time-float(unit.get("last_hit",-100.0))<0.16 and index%4==0
     if moving:
         p+=direction*sin(phase)*(2.0 if kind==2 else 1.0)
         p.y+=sin(phase)*0.9
-    if attacking: p+=direction*maxf(0.0,sin(phase))*2.5
+    if pose==3 and kind!=1: p+=direction*(2.5 if kind==2 else 1.4)
     if hit: p-=direction*1.0
     var shade: Color = Color(1.0,0.78,0.70,accent.a) if hit else Color(1,1,1,accent.a)
     var map_offset: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
@@ -1327,7 +1353,9 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> v
     var region: Rect2 = _soldier_region(unit)
     var mirror: float = -1.0 if region.position.x==0.0 and direction.x<0.0 else 1.0
     map_layer.draw_set_transform(map_offset+p*camera_zoom,0.0,Vector2(mirror,1.0)*camera_zoom)
-    map_layer.draw_texture_rect_region(SOLDIER_ART,Rect2(Vector2(-extent.x*0.5,-extent.y*0.90),extent),region,shade)
+    var art: Texture2D = SOLDIER_MOTION if pose>=0 else SOLDIER_ART
+    var source: Rect2 = _soldier_motion_region(region,pose) if pose>=0 else region
+    map_layer.draw_texture_rect_region(art,Rect2(Vector2(-extent.x*0.5,-extent.y*0.90),extent),source,shade)
     map_layer.draw_set_transform(map_offset,0.0,Vector2.ONE*camera_zoom)
 
 func _draw_combat_effects() -> void:
