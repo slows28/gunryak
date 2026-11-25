@@ -218,9 +218,7 @@ func _build_interface() -> void:
     apply_btn.hide()
     live_order_button=_button("작전 지도 열기",Vector2(950,460),Vector2(306,42),_open_order_map)
     _primary_button(live_order_button)
-    _label("책사 위치",Vector2(956,503),Vector2(267,25),15,COL_GOLD)
-    _button("전선 접근",Vector2(950,525),Vector2(149,35),_commander_forward)
-    _button("본진 복귀",Vector2(1107,525),Vector2(149,35),_commander_back)
+    _label("03  장수의 현장 판단",Vector2(956,520),Vector2(267,25),15,COL_GOLD)
     selected_label = _label("",Vector2(1034,565),Vector2(220,27),14,COL_GOLD)
     details_label = _label("",Vector2(1034,590),Vector2(221,86),12,COL_TEXT)
     details_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -234,7 +232,9 @@ func _build_interface() -> void:
     _button("전투 분석",Vector2(27,761),Vector2(112,26),_open_analysis)
     _button("도움말",Vector2(443,74),Vector2(73,26),_open_demo_help)
     _button("철수",Vector2(521,74),Vector2(60,26),_ask_retreat)
-    situation_btn = _button("긴급 보고",Vector2(585,74),Vector2(75,26),_open_situations)
+    situation_btn = _button("긴급 보고",Vector2(585,74),Vector2(75,26),func():
+        _open_order_map()
+        _open_situations())
     warning_label = _label("",Vector2(26,669),Vector2(892,17),12,COL_GOLD)
     warning_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
@@ -365,6 +365,9 @@ func _reset() -> void:
     _select_unit()
     _refresh_hud()
     queue_redraw()
+    if is_instance_valid(title_screen) and not title_screen.visible:
+        if order_view.visible: order_view.hide()
+        _open_order_map()
 
 func _commander_forward() -> void:
     sim.reposition_commander(true)
@@ -904,13 +907,12 @@ func _build_planning_dialog() -> void:
     plan_priority.item_selected.connect(_change_priority)
     var map_row := HBoxContainer.new()
     root.add_child(map_row)
-    _plan_button(map_row,"초기 배치",func(): _set_map_mode("배치"))
-    _plan_button(map_row,"경유점 추가",func(): _set_map_mode("경유점"))
-    _plan_button(map_row,"방어선 지정",func(): _set_map_mode("방어선"))
     _plan_button(map_row,"계획 삭제",_clear_route)
     var mode_row := HBoxContainer.new()
     root.add_child(mode_row)
-    _plan_button(mode_row,"지도 선택 모드",func(): _set_map_mode("선택"))
+    _plan_button(mode_row,"작전 지도",func():
+        planning_dialog.hide()
+        _open_order_map())
     plan_fog = CheckButton.new()
     plan_fog.text = "책사 시야 제한"
     plan_fog.button_pressed = fog_enabled
