@@ -2928,7 +2928,7 @@ func _committed_bridge_route(unit:Dictionary,p:Vector2,goal:Vector2)->Vector2:
             chosen=-1.0
         elif distance<38.0 or target_bank==exit_bank:
             var rx:float=river_x(chosen)
-            if absf(p.y-chosen)>10.0 and distance>=35.0:
+            if bank!=exit_bank and absf(p.y-chosen)>10.0 and distance>=35.0:
                 return Vector2(rx-exit_bank*64.0,chosen)
             return Vector2(rx+exit_bank*64.0,chosen)
         else:
@@ -2955,7 +2955,7 @@ func _committed_bridge_route(unit:Dictionary,p:Vector2,goal:Vector2)->Vector2:
     return Vector2(rx+bank*64.0,chosen) if absf(p.y-chosen)>10.0 else Vector2(rx+target_bank*64.0,chosen)
 
 func _land_motion(unit:Dictionary,old:Vector2,proposed:Vector2)->Vector2:
-    if terrain_at(proposed)!="하천": return proposed
+    if terrain_at(proposed)!="하천" and not _river_separates(old,proposed): return proposed
     # A unit already displaced into water can escape, but cannot advance deeper.
     if terrain_at(old)=="하천" and absf(proposed.x-river_x(proposed.y))>absf(old.x-river_x(old.y)):
         return proposed
@@ -2963,15 +2963,23 @@ func _land_motion(unit:Dictionary,old:Vector2,proposed:Vector2)->Vector2:
     var bank:float=1.0 if old.x>=river_x(old.y) else -1.0
     var slide:Vector2=_field_point(Vector2(river_x(proposed.y)+bank*maxf(28.0,absf(old.x-river_x(old.y))),proposed.y))
     var bounded:Vector2=old.move_toward(slide,old.distance_to(proposed))
-    return bounded if terrain_at(bounded)!="하천" else old
+    return bounded if terrain_at(bounded)!="하천" and not _river_separates(old,bounded) else old
 
 # Opposing ground units cannot trade melee strikes over an unbridged channel.
 func _river_separates(a:Vector2,b:Vector2)->bool:
     var bank_a:float=a.x-river_x(a.y)
     var bank_b:float=b.x-river_x(b.y)
     if bank_a*bank_b>=0.0: return false
-    var middle:Vector2=a.lerp(b,0.5)
-    return not near_crossing(middle.y)
+    # Use the approximate intersection with the curving river, not just
+    # the midpoint: unequal distances to the bank can bias the midpoint.
+    var low:float=0.0
+    var high:float=1.0
+    for i in range(6):
+        var t:float=(low+high)*0.5
+        var mid:Vector2=a.lerp(b,t)
+        if (mid.x-river_x(mid.y))*bank_a>0.0: low=t
+        else: high=t
+    return not near_crossing(a.lerp(b,(low+high)*0.5).y)
 
 # Measure damage actually borne by an infantry screen, separately from
 # hypothetical damage mitigation. Avoid counting any unrelated melee.
