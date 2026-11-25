@@ -76,6 +76,8 @@ var mind_dialog: AcceptDialog
 var mind_report: RichTextLabel
 var mind_button: Button
 var thought_feed: Label
+var feed_toggle: Button
+var show_general_feed: bool=true
 var battle_samples: Dictionary = {}
 var recent_losses: Dictionary = {}
 var sample_time: float = -100.0
@@ -280,7 +282,8 @@ func _build_interface() -> void:
     decision_label=_label("",Vector2(1034,629),Vector2(221,44),12,COL_TEXT)
     decision_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     decision_label.clip_text=true
-    _label("전황 기록",Vector2(27,692),Vector2(125,26),17,COL_GOLD)
+    feed_toggle=_button("장수 판단",Vector2(27,692),Vector2(112,28),_toggle_feed)
+    feed_toggle.tooltip_text="장수의 판단·심리 변화와 일반 전황 기록을 전환"
     event_label = _label("",Vector2(153,692),Vector2(578,102),13,COL_TEXT)
     event_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     notice_label = _label("",Vector2(950,697),Vector2(306,61),13,COL_MUTED)
@@ -735,6 +738,12 @@ func _refresh_hud() -> void:
     if runtime_notice != "":
         notice_label.text = runtime_notice
 
+func _toggle_feed() -> void:
+    show_general_feed=not show_general_feed
+    thought_feed.visible=show_general_feed
+    event_label.visible=not show_general_feed
+    feed_toggle.text="장수 판단" if show_general_feed else "전황 기록"
+
 func _mood_color(mood: String) -> Color:
     if mood in ["공황","위기감","지휘 불능","압박"]: return COL_RED
     if mood in ["불안","초조","동요","긴장","지침"]: return COL_GOLD
@@ -760,7 +769,7 @@ func _latest_general_reports() -> String:
 
 func _build_mind_report() -> void:
     mind_dialog=AcceptDialog.new()
-    mind_dialog.title="장수 보고실 · 실시간 심리 및 판단"
+    mind_dialog.title="장수 보고실 · 실시간 심리 및 판단 (전투 계속 진행)"
     mind_dialog.ok_button_text="전장으로"
     add_child(mind_dialog)
     mind_report=RichTextLabel.new()
@@ -776,7 +785,7 @@ func _open_mind_report() -> void:
     mind_dialog.popup_centered(Vector2i(870,650))
 
 func _refresh_mind_report() -> void:
-    var lines: Array[String]=["[color=#d7bd85]장수 개인의 심리 추정 모델 · 병사 사기와 별개 · 실제 AI 판단 근거 기록[/color]"]
+    var lines: Array[String]=["[color=#d7bd85]장수 개인의 심리 추정 모델 · 병사 사기와 별개 · 실제 AI 판단 근거 기록[/color]","[color=#a6b6b4]현재 심리는 표시용 모델이며 AI의 추가 전투 보정에는 아직 사용하지 않습니다.[/color]"]
     for id in sim.command_ids(0):
         var u: Dictionary=sim.find_unit(id)
         var m: Dictionary=u.get("mind",{})
@@ -787,7 +796,12 @@ func _refresh_mind_report() -> void:
         lines.append("자신감 %d   긴장 %d   명령 신뢰 %d   병사 사기 %d   |   판단 %.1f초 전" % [roundi(float(m["confidence"])),roundi(float(m["stress"])),roundi(float(m["trust"])),roundi(float(u["morale"])),age])
         lines.append("판단: %s  →  %s" % [str(m["action"]),str(m["reason"])])
         lines.append("관측: %s   |   우려: %s" % [str(m["observed"]),str(m["concern"])])
-        lines.append("최근 명령: %s" % str(m["last_order"]))
+        var pending: String=""
+        for courier in sim.couriers:
+            if int(courier["unit_id"])==id:
+                pending="  |  전령 이동 중: "+str(courier.get("tactical_order",courier.get("mission","승계")))
+                break
+        lines.append("최근 명령: %s%s" % [str(m["last_order"]),pending])
         if id==selected_id:
             var h: Array=m["history"]
             for j in range(maxi(0,h.size()-3),h.size()):
