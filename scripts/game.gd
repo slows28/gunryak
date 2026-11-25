@@ -1155,10 +1155,15 @@ func _toggle_map_detail() -> void:
     map_detail_button.text = "전술 표시 · 상세" if detailed_map else "전술 표시 · 간결"
     map_layer.queue_redraw()
 
-func _site_art_index(name: String) -> int:
-    if "고지" in name: return 3
-    if "감시" in name or "교량" in name: return 1
-    return 0
+# Capture objectives are areas of terrain, not structures. Only sim.structures
+# represents actual walls/gates; no building art is drawn for outposts.
+func _draw_control_marker(p: Vector2,color: Color,active: bool) -> void:
+    var k: float=1.0/camera_zoom
+    var radius: float=7.0*k
+    map_layer.draw_colored_polygon(PackedVector2Array([p+Vector2(0,-radius),p+Vector2(radius,0),p+Vector2(0,radius),p+Vector2(-radius,0)]),Color("#17231f"))
+    map_layer.draw_polyline(PackedVector2Array([p+Vector2(0,-radius),p+Vector2(radius,0),p+Vector2(0,radius),p+Vector2(-radius,0),p+Vector2(0,-radius)]),color,1.4*k,true)
+    if active:
+        map_layer.draw_circle(p,2.8*k,color)
 
 func _draw_field_site(kind: int,p: Vector2,scale_factor: float) -> void:
     # Visual footprint aligned with the old marker; no new collision geometry.
@@ -1202,12 +1207,9 @@ func _draw_map(_canvas: Control) -> void:
         if detailed_map or (known and int(site["challenger"])>=0):
             map_layer.draw_arc(site_pos, WarSim.OUTPOST_RADIUS, 0.0, TAU, 44, Color(color.r,color.g,color.b,0.20),1.2,true)
         var marker_scale: float = maxf(1.0,0.75/camera_zoom)
-        var site_kind: int=_site_art_index(str(site["name"]))
-        _draw_field_site(site_kind,site_pos,marker_scale)
-        _paint_tile(40 if owner < 0 else 38+owner,Rect2(site_pos+Vector2(10,-25)*marker_scale,Vector2(24,30)*marker_scale))
-        map_layer.draw_circle(site_pos+Vector2(10,-6),3.5,color)
-        var state: String = ("중립" if owner < 0 else ("아군" if owner == 0 else "적군")) if known else "미확인"
-        _map_plate(str(site["name"])+" · "+state,site_pos+Vector2(0,-45)*marker_scale,color,maxi(11,roundi(11.0/camera_zoom)))
+        _draw_control_marker(site_pos,color,known and owner>=0)
+        var state: String = ("미확보" if owner < 0 else ("아군 확보" if owner == 0 else "적군 확보")) if known else "미확인"
+        _map_plate(str(site["name"])+" · "+state,site_pos+Vector2(0,-18)*marker_scale,color,maxi(11,roundi(11.0/camera_zoom)))
         if known and int(site["challenger"]) >= 0:
             var progress: float = clampf(float(site["progress"]) / sim.capture_duration(), 0.0, 1.0)
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60, 4)), Color("#243138"))
