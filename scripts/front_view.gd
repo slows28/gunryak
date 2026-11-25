@@ -5,6 +5,11 @@ extends RefCounted
 static func sector_for(p: Vector2, extent: Vector2) -> int:
     return clampi(floori(p.y/maxf(1.0,extent.y/3.0)),0,2)
 
+static func observes_unit(sim, unit: Dictionary, limited: bool) -> bool:
+    if int(unit["side"]) == 0 or not limited or sim.finished: return true
+    var concealed: bool=sim.terrain_at(unit["pos"])=="숲" or float(unit.get("ambush_ready",0.0))>=3.0
+    return sim.player_can_see(unit["pos"],concealed)
+
 static func summarize(sim,limited: bool) -> Array[Dictionary]:
     var sectors: Array[Dictionary]=[]
     for index in range(3):
@@ -12,7 +17,7 @@ static func summarize(sim,limited: bool) -> Array[Dictionary]:
     for u in sim.units:
         if float(u["troops"])<=0.0: continue
         var own: bool=int(u["side"])==0
-        if not own and limited and not sim.player_can_see(u["pos"]): continue
+        if not observes_unit(sim,u,limited): continue
         var sector: Dictionary=sectors[sector_for(u["pos"],sim.field_size)]
         var people: int=roundi(float(u["troops"]))
         if own:
@@ -24,7 +29,7 @@ static func summarize(sim,limited: bool) -> Array[Dictionary]:
             sector["enemy_count"]+=1
         if int(u.get("contact_target_id",-1))>=0:
             var target: Dictionary=sim.find_unit(int(u["contact_target_id"]))
-            if not target.is_empty() and (not limited or int(target["side"])==0 or sim.player_can_see(target["pos"])):
+            if not target.is_empty() and observes_unit(sim,target,limited):
                 sector["contacts"]+=1
                 sector["sum"]+=(u["pos"] as Vector2).lerp(target["pos"],0.5)*3.0
                 sector["weight"]+=3
@@ -75,20 +80,20 @@ static func milestones(sim,limited: bool) -> Dictionary:
         var id: int=int(u["id"])
         var p: Vector2=u["pos"]
         if bool(u["routed"]):
-            found["rout:"+str(id)]={"label":str(u["name"])+" 군단 패주","point":p}
+            found["rout:"+str(id)]={"label":str(u["name"])+" 군단 패주","point":p,"unit_id":id}
         if float(u["troops"])<=0.0:
-            found["loss:"+str(id)]={"label":str(u["name"])+" 군단 전멸","point":p}
+            found["loss:"+str(id)]={"label":str(u["name"])+" 군단 전멸","point":p,"unit_id":id}
         if str(u["general_state"])!="건재":
-            found["officer:"+str(id)+":"+str(u["general_state"])]={"label":str(u["name"])+" 장수 "+str(u["general_state"]),"point":p}
+            found["officer:"+str(id)+":"+str(u["general_state"])]={"label":str(u["name"])+" 장수 "+str(u["general_state"]),"point":p,"unit_id":id}
         var target: Dictionary=sim.find_unit(int(u.get("contact_target_id",-1)))
-        if float(u["troops"])>0.0 and not target.is_empty() and (not limited or sim.player_can_see(target["pos"])):
+        if float(u["troops"])>0.0 and not target.is_empty() and observes_unit(sim,target,limited):
             var contact_key: String="contact:%d:%d" % [id,int(target["id"])]
-            found[contact_key]={"label":"%s · %s 교전 개시" % [str(u["name"]),str(target["name"])],"point":p.lerp(target["pos"],0.5)}
+            found[contact_key]={"label":"%s · %s 교전 개시" % [str(u["name"]),str(target["name"])],"point":p.lerp(target["pos"],0.5),"unit_id":id}
     for site in sim.outposts:
         if limited and not sim.player_can_see(site["pos"]): continue
         var owner: int=int(site["owner"])
         if owner>=0:
             found["site:"+str(site["name"])+":"+str(owner)]={"label":str(site["name"])+" · "+("아군 확보" if owner==0 else "적군 확보"),"point":site["pos"]}
     for report in sim.open_situations():
-        found["report:"+str(report["id"])]={"label":str(report["title"]),"point":report["pos"]}
+        found["report:"+str(report["id"])]={"label":str(report["title"]),"point":report["pos"],"unit_id":int(report["unit_id"])}
     return found

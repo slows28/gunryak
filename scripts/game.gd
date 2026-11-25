@@ -45,6 +45,7 @@ var objective_label: Label
 var commander_card: Control
 var selected_label: Label
 var details_label: Label
+var readiness_label: Label
 var decision_label: Label
 var event_label: Label
 var notice_label: Label
@@ -90,6 +91,12 @@ var sector_snapshot: Array[Dictionary]=[]
 var sector_selection: int=-1
 var contact_cache: Dictionary={}
 var contact_cache_step: int=-1
+var formation_render_cache: Dictionary={}
+var journal_button: Button
+var journal_dialog: AcceptDialog
+var journal_list: ItemList
+var journal_events: Array[Dictionary]=[]
+var journal_keys: Dictionary={}
 var highlight_button: Button
 var highlight_active: bool=false
 var highlight_seen: Dictionary={}
@@ -156,6 +163,7 @@ var strategy_view: Control
 var order_view: Control
 var order_pause_before: bool = false
 var live_order_label: Label
+var order_status_label: Label
 var live_order_button: Button
 var battle_recorded: bool = false
 var chapter: int = 0
@@ -286,9 +294,11 @@ func _build_interface() -> void:
     mission_choice.size.x = 306
     mission_choice.item_selected.connect(_on_choices_changed)
     mission_choice.hide()
-    live_order_label = _label("",Vector2(956,389),Vector2(292,65),14,COL_TEXT)
+    live_order_label = _label("",Vector2(956,386),Vector2(292,44),13,COL_TEXT)
     live_order_label.clip_text=true
     live_order_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    order_status_label = _label("",Vector2(956,432),Vector2(292,24),13,COL_GOLD)
+    order_status_label.clip_text=true
     policy_choice = _options(Vector2(950,420),["현장 판단","명령 엄수","재량 위임","횡대 유지","종대 유지","방진 유지","어린진 유지","학익진 유지","봉시진 유지","안행진 유지"])
     policy_choice.size.x = 306
     policy_choice.item_selected.connect(_on_choices_changed)
@@ -301,9 +311,8 @@ func _build_interface() -> void:
     mind_button=_button("장수 보고",Vector2(1151,520),Vector2(105,28),_open_mind_report)
     mind_button.tooltip_text="전체 장수의 실시간 판단, 심리, 명령 반응 · G"
     selected_label = _label("",Vector2(1034,565),Vector2(220,27),14,COL_GOLD)
-    details_label = _label("",Vector2(1034,590),Vector2(221,38),12,COL_TEXT)
-    details_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    details_label.clip_text=true
+    details_label = _label("",Vector2(1034,589),Vector2(221,19),12,COL_TEXT)
+    readiness_label = _label("",Vector2(1034,607),Vector2(221,19),12,COL_TEXT)
     decision_label=_label("",Vector2(950,625),Vector2(306,48),13,COL_TEXT)
     decision_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     decision_label.clip_text=true
@@ -314,9 +323,22 @@ func _build_interface() -> void:
     notice_label = _label("",Vector2(950,692),Vector2(306,37),11,COL_MUTED)
     notice_label.clip_text=true
     notice_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    highlight_button=_button("다음 주요 상황 ▶",Vector2(950,731),Vector2(306,27),_advance_highlight)
+    highlight_button=_button("다음 주요 상황 ▶",Vector2(950,731),Vector2(203,27),_advance_highlight)
     _primary_button(highlight_button)
     highlight_button.tooltip_text="실제 시뮬레이션을 최대 16배로 진행하여 새 교전·위기·거점 변화·긴급 보고에서 자동 정지합니다."
+    journal_button=_button("상황 기록",Vector2(1158,731),Vector2(98,27),_open_journal)
+    journal_button.tooltip_text="관측한 교전·위기의 당시 위치를 확인 · J / 시야 모드를 바꾸면 기록 초기화"
+    journal_dialog=AcceptDialog.new()
+    journal_dialog.title="작전 상황 기록 · 항목 더블클릭으로 위치 확인"
+    journal_dialog.ok_button_text="닫기"
+    journal_dialog.theme=_command_dialog_theme()
+    add_child(journal_dialog)
+    journal_list=ItemList.new()
+    journal_list.custom_minimum_size=Vector2(575,305)
+    journal_list.add_theme_font_size_override("font_size",15)
+    journal_list.add_theme_constant_override("v_separation",9)
+    journal_list.item_activated.connect(_visit_journal_event)
+    journal_dialog.add_child(journal_list)
     map_detail_button = _button("전술 표시 · 간결",Vector2(950,761),Vector2(306,28),_toggle_map_detail)
     map_detail_button.tooltip_text = "군단 진형과 전술 이동 경로 표시 전환"
     _build_planning_dialog()
@@ -575,7 +597,10 @@ func _start() -> void:
     if highlight_active: _stop_highlight("출전 준비",false)
     if is_instance_valid(title_screen):
         title_screen.hide()
-    if is_instance_valid(order_view): order_view.hide()
+    if is_instance_valid(order_view):
+        order_view.drafts.clear()
+        order_view.draft_dirty=false
+        order_view.hide()
     battle_samples.clear()
     recent_losses.clear()
     fallen_marks.clear()
@@ -583,7 +608,9 @@ func _start() -> void:
     battle_warning=""
     previous_centers.clear()
     contact_cache.clear()
+    formation_render_cache.clear()
     contact_cache_step=-1
+    _clear_journal()
     sector_selection=-1
     sample_time=-100.0
     _show_friendly_roster()
@@ -623,9 +650,7 @@ func _poll_highlight() -> void:
     for key in current:
         if highlight_seen.has(key): continue
         var event: Dictionary=current[key]
-        camera_center=event["point"]
-        camera_zoom=1.4
-        _clamp_camera()
+        _frame_milestone(event)
         _stop_highlight(str(event["label"]),true)
         return
     if sim.battle_time>=highlight_deadline:
@@ -680,7 +705,9 @@ func _reset() -> void:
     battle_warning=""
     previous_centers.clear()
     contact_cache.clear()
+    formation_render_cache.clear()
     contact_cache_step=-1
+    _clear_journal()
     sector_selection=-1
     sample_time=-100.0
     _show_friendly_roster()
@@ -803,7 +830,8 @@ func _refresh_hud() -> void:
     pause_btn.text = "재개" if sim.paused else "일시정지"
     if is_instance_valid(highlight_button):
         highlight_button.disabled=not sim.started or sim.finished
-        highlight_button.text="주요 상황 탐색 중 · 중지" if highlight_active else "다음 주요 상황 ▶"
+        highlight_button.text="탐색 중 · 중지" if highlight_active else "다음 주요 상황 ▶"
+    _collect_journal()
     apply_btn.disabled = sim.started and (sim.turn < 6 or sim.finished)
     apply_btn.text = "초기 작전 설정" if not sim.started else "전령 보내기 (6턴~)"
     start_btn.visible=not sim.started
@@ -813,13 +841,21 @@ func _refresh_hud() -> void:
     var unit: Dictionary = sim.find_unit(selected_id)
     if not unit.is_empty():
         var ally: Dictionary=sim.find_unit(int(unit.get("assigned_link",-1)))
-        live_order_label.text="%s → %s\n현재: %s\n연계: %s" % [str(unit["mission"]),_goal_name(unit["goal"]),_field_action(unit),str(ally["name"]) if not ally.is_empty() else "자동 / 없음"]
+        var dispatch: String=dispatch_line(selected_id)
+        var third_line: String=dispatch if not dispatch.is_empty() else "연계: "+(str(ally["name"]) if not ally.is_empty() else "자동 / 없음")
+        live_order_label.text="%s → %s\n현재: %s" % [str(unit["mission"]),_goal_name(unit["goal"]),_field_action(unit)]
+        order_status_label.text=third_line
+        order_status_label.tooltip_text=dispatch
         var leader_state: String = "부장 지휘" if bool(unit["active_deputy"]) else str(unit["general_state"])
         var corps: Dictionary = sim.corps_report(selected_id)
         selected_label.text = "%s · %s · %s명" % [str(unit["name"]),leader_state,_number_text(roundi(corps["troops"]))]
         var ammo_text: String = " · 화살 %d" % int(unit.get("ammo", 100.0)) if str(unit["type"]) == "궁병" else ""
         var psyche: Dictionary=unit.get("mind",{})
-        details_label.text = "%s · %s\n자신감 %d / 긴장 %d" % [str(psyche.get("mood","준비")),str(unit["formation"]),roundi(float(psyche.get("confidence",0.0))),roundi(float(psyche.get("stress",0.0)))]
+        var readiness: String="사기 %d · 응집 %d" % [int(unit["morale"]),int(unit["cohesion"])]
+        if int(unit["rations"])<35: readiness="군량 %d · %s" % [int(unit["rations"]),readiness]
+        elif str(unit["type"])=="궁병" and int(unit["ammo"])<35: readiness="화살 %d · %s" % [int(unit["ammo"]),readiness]
+        details_label.text = "%s · %s" % [str(psyche.get("mood","준비")),str(unit["formation"])]
+        readiness_label.text=readiness
         details_label.modulate=_mood_color(str(psyche.get("mood","준비")))
         decision_label.text = "판단: "+str(unit["reason"])
         var suggestion: String=str(psyche.get("proposal",""))
@@ -839,12 +875,18 @@ func _refresh_hud() -> void:
                 var stages: Array[String] = ["측면 기동","정면 접촉 대기","협동 공격"]
                 details_label.tooltip_text += "\n"+stages[clampi(int(unit["flank_phase"]),0,2)]+" · 완료 %d · 공격 %d · 중단 %d" % [int(unit["flank_completed"]),int(unit["flank_commits"]),int(unit["flank_aborts"])]
     if observing_enemy:
+        order_status_label.text=""
+        order_status_label.tooltip_text=""
+        readiness_label.text=""
         details_label.modulate=Color.WHITE
         var enemy: Dictionary=sim.find_unit(observed_enemy_id)
         if not enemy.is_empty() and _visible_unit(enemy):
-            live_order_label.text="적군 관측 · %s\n%s / %s / %s명\n사기 %d · 응집 %d" % [str(enemy["name"]),str(enemy["type"]),_field_action(enemy),_number_text(roundi(float(enemy["troops"]))),roundi(float(enemy["morale"])),roundi(float(enemy["cohesion"]))]
+            live_order_label.text="적군 관측 · %s\n%s / %s / %s명" % [str(enemy["name"]),str(enemy["type"]),_field_action(enemy),_number_text(roundi(float(enemy["troops"])))]
+            order_status_label.text="사기 %d · 응집 %d" % [roundi(float(enemy["morale"])),roundi(float(enemy["cohesion"]))]
             selected_label.text="적장 · "+str(enemy["name"])
-            details_label.text="%s · %s\n가한 피해 %s / 손실 %s" % [_field_action(enemy),str(enemy["formation"]),_number_text(roundi(float(enemy["damage_dealt"]))),_number_text(roundi(float(enemy["casualties_taken"])))] if not fog_enabled else "%s · %s" % [_field_action(enemy),str(enemy["formation"])]
+            details_label.text="%s · %s" % [_field_action(enemy),str(enemy["formation"])]
+            if not fog_enabled:
+                readiness_label.text="가한 피해 %s / 손실 %s" % [_number_text(roundi(float(enemy["damage_dealt"]))),_number_text(roundi(float(enemy["casualties_taken"])))]
             decision_label.text="적군 관측 · 명령 불가"
             details_label.tooltip_text=details_label.text
             decision_label.tooltip_text=decision_label.text
@@ -890,6 +932,59 @@ func _toggle_feed() -> void:
     event_label.visible=not show_general_feed
     feed_toggle.text="장수 판단" if show_general_feed else "전황 기록"
 
+func dispatch_line(id: int) -> String:
+    var dispatch: Dictionary=sim.map_dispatches.get(id,{})
+    if dispatch.is_empty(): return ""
+    var status: String=dispatch["status"]
+    if status=="이동 중" and sim.finished: status="종료 전 미도착"
+    if status=="이동 중": return "전령 이동 · "+str(dispatch["mission"])
+    return "전령 %s · %s %s" % [status,dispatch["mission"],_operation_clock(float(dispatch["time"]))]
+
+func _collect_journal() -> void:
+    if not sim.started or not is_instance_valid(journal_list): return
+    var current: Dictionary=FrontView.milestones(sim,fog_enabled)
+    for key in current:
+        if journal_keys.has(key): continue
+        journal_keys[key]=true
+        var event: Dictionary=current[key]
+        event["time"]=sim.operation_elapsed()
+        journal_events.push_front(event)
+        if journal_events.size()>16: journal_events.pop_back()
+        journal_button.text="상황 기록 %d" % journal_events.size()
+
+func _clear_journal() -> void:
+    journal_events.clear()
+    journal_keys.clear()
+    if is_instance_valid(journal_button): journal_button.text="상황 기록"
+    if is_instance_valid(journal_dialog): journal_dialog.hide()
+
+func _open_journal() -> void:
+    if order_view.visible or title_screen.visible: return
+    journal_list.clear()
+    for event in journal_events:
+        journal_list.add_item("%s  ·  %s" % [_operation_clock(float(event["time"])),event["label"]])
+        journal_list.set_item_metadata(journal_list.item_count-1,event)
+    if journal_events.is_empty(): journal_list.add_item("관측한 주요 상황이 없습니다.")
+    journal_dialog.popup_centered()
+
+func _visit_journal_event(index: int) -> void:
+    var event = journal_list.get_item_metadata(index)
+    if not event is Dictionary: return
+    journal_dialog.hide()
+    _frame_milestone(event)
+
+func _frame_milestone(event: Dictionary) -> void:
+    var id: int=int(event.get("unit_id",-1))
+    var row: int=sim.command_ids(0).find(id)
+    if row>=0:
+        unit_list.select(row)
+        _on_unit_selected(row)
+    camera_center=event["point"]
+    camera_zoom=1.4
+    _clamp_camera()
+    map_layer.queue_redraw()
+    queue_redraw()
+
 func _select_general_card(index: int) -> void:
     var ids: Array[int]=sim.command_ids(0)
     if index>=ids.size(): return
@@ -920,7 +1015,10 @@ func _refresh_general_cards() -> void:
         var reason: String=str(mind.get("reason","초기 배치"))
         var brief:String=reason
         var suggestion:String=str(mind.get("proposal",""))
-        var first:String="%s · %s" % [str(u["name"]),_field_action(u)]
+        var urgency: String=""
+        if not suggestion.is_empty(): urgency="! "
+        elif sim.map_dispatches.get(ids[i],{}).get("status","")=="이동 중" and not sim.finished: urgency="전령 "
+        var first:String="%s%s · %s" % [urgency,str(u["name"]),_field_action(u)]
         var second:String=mood+" · "+("건의 "+suggestion if not suggestion.is_empty() else brief)
         card.text=_fit_card_line(first,138.0)+"\n"+_fit_card_line(second,138.0)
         if card.icon==null or str(card.get_meta("general_name",""))!=str(u["name"]):
@@ -1001,11 +1099,8 @@ func _latest_general_reports() -> String:
     if lines.is_empty(): return "장수의 판단과 명령 반응이 이곳에 실시간 기록됩니다."
     return "\n".join(lines)
 
-func _build_mind_report() -> void:
-    mind_dialog=AcceptDialog.new()
-    mind_dialog.title="장수 보고실 · 실시간 심리 및 판단 (전투 계속 진행)"
+func _command_dialog_theme() -> Theme:
     var report_theme: Theme=theme.duplicate()
-    mind_dialog.theme=report_theme
     var window_style:=StyleBoxFlat.new()
     window_style.bg_color=Color("#14211f")
     window_style.border_color=Color("#8c7951")
@@ -1017,6 +1112,12 @@ func _build_mind_report() -> void:
     report_theme.set_stylebox("panel","AcceptDialog",window_style)
     report_theme.set_stylebox("embedded_border","Window",window_style)
     report_theme.set_stylebox("embedded_unfocused_border","Window",window_style)
+    return report_theme
+
+func _build_mind_report() -> void:
+    mind_dialog=AcceptDialog.new()
+    mind_dialog.title="장수 보고실 · 실시간 심리 및 판단 (전투 계속 진행)"
+    mind_dialog.theme=_command_dialog_theme()
     mind_dialog.ok_button_text="전장으로"
     add_child(mind_dialog)
     mind_report=RichTextLabel.new()
@@ -1339,8 +1440,12 @@ func _draw_map(_canvas: Control) -> void:
         if fog_enabled and not sim.finished and int(letter["side"]) != 0 and not sim.player_can_see(letter["pos"]):
             continue
         var p: Vector2 = _screen(letter["pos"])
-        map_layer.draw_circle(p, 5.0, COL_GOLD)
-        _draw_string("전령", p + Vector2(-14, -11), 12, COL_GOLD)
+        var selected_courier: bool=int(letter["side"])==0 and not observing_enemy and int(letter["unit_id"])==selected_id
+        var courier_radius: float=(6.0 if selected_courier else 4.0)/camera_zoom
+        map_layer.draw_circle(p,courier_radius+1.5/camera_zoom,Color("#292316"))
+        map_layer.draw_circle(p,courier_radius,COL_GOLD)
+        if selected_courier:
+            _map_plate("전령 → "+str(sim.find_unit(selected_id).get("name","")),p+Vector2(0,-15)/camera_zoom,COL_GOLD,11)
     # Draw real maneuver waypoints so an aggressive flanking decision is visible.
     for unit in sim.units:
         if not _visible_unit(unit):
@@ -1449,7 +1554,9 @@ func _draw_tree(tree: Dictionary,detail: bool,visible_units: Array) -> void:
         # leak hidden enemy location through changing forest opacity.
         for u in visible_units:
             var center:Vector2=u["pos"]
-            var distance:float=center.distance_to(p)
+            var distance_squared: float=center.distance_squared_to(p)
+            if distance_squared>=115.0*115.0: continue
+            var distance:float=sqrt(distance_squared)
             var engaged:bool=int(u.get("contact_target_id",-1))>=0
             if engaged and distance<115.0:
                 shade.a=minf(shade.a,lerpf(0.12,0.45,smoothstep(45.0,115.0,distance)))
@@ -1483,7 +1590,7 @@ func _draw_contact_fronts(visible_units: Array[Dictionary],field_view: Rect2) ->
         if target.is_empty() or str(u["type"])=="궁병" or str(target["type"])=="궁병": continue
         var a: int=int(u["id"])
         var b: int=int(target["id"])
-        var key: String="%d:%d" % [mini(a,b),maxi(a,b)]
+        var key:=Vector2i(mini(a,b),maxi(a,b))
         if drawn.has(key): continue
         drawn[key]=true
         var center: Vector2=(u["pos"] as Vector2).lerp(target["pos"],0.5)
@@ -1491,47 +1598,62 @@ func _draw_contact_fronts(visible_units: Array[Dictionary],field_view: Rect2) ->
         var normal: Vector2=((target["pos"] as Vector2)-(u["pos"] as Vector2)).normalized()
         if normal.length_squared()<0.1: continue
         var lateral: Vector2=normal.orthogonal()
-        var pressure: float=float(u.get("front_pressure",0.0))-float(target.get("front_pressure",0.0))
+        var shift: Dictionary=sim.front_shifts.get(key,{})
+        var pressure: float=float(shift.get("pressure",0.0))
+        var pressed: Dictionary=u if int(shift.get("loser",-1))==a else target
         var color: Color=COL_GOLD
-        if absf(pressure)>0.12:
-            var winning: int=int(target["side"]) if pressure>0.0 else int(u["side"])
-            color=COL_BLUE if winning==0 else COL_RED
+        if pressure>0.12:
+            color=COL_RED if int(pressed["side"])==0 else COL_BLUE
         var span: float=clampf(float(u.get("contact_troops",0))*3.0,16.0,60.0)
         for i in range(5):
             var p: Vector2=center+lateral*(float(i)-2.0)*span/2.0
-            if sim.terrain_at(p)=="하천": continue
+            if sim.in_open_water(p): continue
             map_layer.draw_line(p-lateral*span*0.16,p+lateral*span*0.16,Color(color,0.48),2.0/camera_zoom,true)
-            if absf(pressure)>0.12:
-                var d: Vector2=-normal if pressure>0.0 else normal
-                map_layer.draw_line(p-d*5,p+d*7,Color(color,0.64),1.6/camera_zoom,true)
+            if pressure>0.12:
+                var d: Vector2=shift["direction"]
+                var reach: float=clampf(pressure*18.0,5.0,15.0)/camera_zoom
+                var tip: Vector2=p+d*reach
+                var wing: Vector2=lateral*reach*0.48
+                map_layer.draw_polyline(PackedVector2Array([p+wing,tip,p-wing]),Color(color,0.78),1.8/camera_zoom,true)
         if camera_zoom>=0.85 and detailed_map:
-            _map_plate("전열 압박" if absf(pressure)>0.12 else "접전",center+Vector2(0,20),color,11)
+            var front_text: String="접전"
+            if pressure>0.12:
+                front_text=str(pressed["name"])+" 전열 밀림"
+            _map_plate(front_text,center+Vector2(0,20),color,11)
 
 func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) -> Array[Dictionary]:
     var batch: Array[Dictionary]=[]
     if contact_cache_step!=sim.step_count:
         contact_cache.clear()
+        formation_render_cache.clear()
         contact_cache_step=sim.step_count
     for unit in visible_units:
         if not field_view.has_point(unit["pos"]): continue
         var accent: Color=COL_BLUE if int(unit["side"])==0 else COL_RED
         if bool(unit["routed"]): accent=Color(accent,0.48)
         elif float(unit["ambush_ready"])>=3.0: accent=Color(accent,0.64)
-        var slots: Array[Vector2]=_visual_slots(unit)
         var id: int=int(unit["id"])
+        var cacheable: bool=sim.started and not sim.paused and not sim.finished
+        if not cacheable or not formation_render_cache.has(id):
+            formation_render_cache[id]=_visual_slots(unit)
+        var slots: Array[Vector2]=formation_render_cache[id]
         var target_id: int=int(unit.get("contact_target_id",-1))
         var target: Dictionary=sim.find_unit(target_id)
         var can_contact: bool=sim.started and not sim.finished and not bool(unit["routed"]) and target_id>=0 and not target.is_empty() and _visible_unit(target)
         var targets: Array[Vector2]=[]
         if can_contact:
-            if not contact_cache.has(id):
+            if not cacheable or not contact_cache.has(id):
                 var anchors: Array[Vector2]=sim.formation_slots(target)
                 var aim: Array[Vector2]=[]
                 var reach: float=173.0 if str(unit["type"])=="궁병" else 34.0
                 for point in slots: aim.append(FrontView.local_target(point,anchors,reach))
                 contact_cache[id]=aim
             targets=contact_cache[id]
+        # True frontage anchors come first; at medium zoom only thin out
+        # representative soldiers layered around those anchors.
+        var core: int=clampi(ceili(float(unit["troops"])/180.0),1,24)
         for index in range(slots.size()):
+            if sim.six_armies and camera_zoom<1.10 and index>=core and (index-core)%2==1: continue
             var point: Vector2=slots[index]
             var center: Vector2=unit["pos"]
             var local_target: Vector2=targets[index] if index<targets.size() else Vector2.INF
@@ -1544,7 +1666,7 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             var event_age: float=render_clock-float(unit.get("last_visual",-100.0))-float(index%5)*0.026
             if local_target!=Vector2.INF and event_age>=0.0 and event_age<=0.30:
                 point=FrontView.advance_toward_contact(point,local_target,sin(clampf(event_age/0.30,0.0,1.0)*PI),str(unit["type"]))
-            if sim.wide_field and sim.terrain_at(point)=="하천": point=slots[index]
+            if sim.in_open_water(point): point=slots[index]
             point=Vector2(clampf(point.x,0.0,sim.field_size.x),clampf(point.y,0.0,sim.field_size.y))
             batch.append({"point":point,"unit":unit,"accent":accent,"index":index,"target":local_target})
     batch.sort_custom(func(a:Dictionary,b:Dictionary)->bool: return (a["point"] as Vector2).y<(b["point"] as Vector2).y)
@@ -1731,7 +1853,7 @@ func _draw_string(value: String, where: Vector2, font_size: int, shade: Color) -
 
 
 func _visible_unit(unit: Dictionary) -> bool:
-    return int(unit["side"]) == 0 or not fog_enabled or sim.finished or sim.player_can_see(unit["pos"], sim.terrain_at(unit["pos"]) == "숲" or float(unit["ambush_ready"]) >= 3.0)
+    return FrontView.observes_unit(sim,unit,fog_enabled)
 
 func _build_planning_dialog() -> void:
     planning_dialog = AcceptDialog.new()
@@ -1854,7 +1976,9 @@ func _change_scenario(index: int) -> void:
         battle_warning=""
         previous_centers.clear()
         contact_cache.clear()
+        formation_render_cache.clear()
         contact_cache_step=-1
+        _clear_journal()
         sector_selection=-1
         sample_time=-100.0
         _show_friendly_roster()
@@ -1919,7 +2043,10 @@ func _open_timeline() -> void:
     timeline_dialog.popup_centered()
 
 func _toggle_fog(value: bool) -> void:
+    if fog_enabled!=value:
+        _clear_journal()
     fog_enabled = value
+    if highlight_active: highlight_seen=FrontView.milestones(sim,fog_enabled)
     if is_instance_valid(plan_fog): plan_fog.set_pressed_no_signal(value)
     if value and sim.started: _refresh_visibility()
     _refresh_hud()
@@ -2175,8 +2302,9 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     var shade: Color = Color(1.0,0.78,0.70,accent.a) if hit else Color(variation,variation,variation,accent.a)
     var map_offset: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
     # Shadow is separated from the art, so feet stay grounded and faction colors stay clear.
-    map_layer.draw_set_transform(map_offset+(p+Vector2(2.5,1.0))*camera_zoom,0.0,Vector2(1.0,0.45)*camera_zoom)
-    map_layer.draw_circle(Vector2.ZERO,7.0 if kind==2 else 4.8,Color(0.04,0.05,0.035,0.30))
+    if camera_zoom>=1.10:
+        map_layer.draw_set_transform(map_offset+(p+Vector2(2.5,1.0))*camera_zoom,0.0,Vector2(1.0,0.45)*camera_zoom)
+        map_layer.draw_circle(Vector2.ZERO,7.0 if kind==2 else 4.8,Color(0.04,0.05,0.035,0.30))
     var column: int=0
     if absf(direction.y)>absf(direction.x)*1.10: column=1 if direction.y>0.0 else 2
     var region: Rect2=Rect2(column*96,(int(unit["side"])*3+kind)*96,96,96)
@@ -2385,6 +2513,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
             KEY_F: _focus_selected()
             KEY_C: _focus_combat()
             KEY_G: _open_mind_report()
+            KEY_J: _open_journal()
             KEY_V: _toggle_fog(not fog_enabled)
             KEY_HOME: _reset_camera()
             KEY_B: _open_briefing()
@@ -2655,6 +2784,7 @@ func _begin_campaign() -> void:
     if is_instance_valid(order_view): order_view.hide()
     campaign.reset()
     campaign_active = true
+    _clear_journal()
     fallen_marks.clear()
     loss_carry.clear()
     battle_warning=""

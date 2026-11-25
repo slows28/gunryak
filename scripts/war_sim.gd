@@ -59,6 +59,7 @@ var forests: Array[Rect2] = []
 var hill: Rect2 = Rect2(400, 213, 108, 89)
 var timeline: Array[Dictionary] = []
 var visual_effects: Array[Dictionary] = []
+var front_shifts: Dictionary = {}
 var dust_effects: Array[Dictionary] = []
 const DUST_LIFE: float = 1.8
 const DUST_LIMIT: int = 180
@@ -79,6 +80,7 @@ var reinforcements_used: Array[int] = [0, 0]
 var step_count: int = 0
 var intercepted_orders: int = 0
 var delivered_orders: int = 0
+var map_dispatches: Dictionary = {}
 
 func _init() -> void:
     reset()
@@ -87,6 +89,7 @@ func reset() -> void:
     timeline.clear()
     structures.clear()
     visual_effects.clear()
+    front_shifts.clear()
     dust_effects.clear()
     troop_history.clear()
     sample_at = 0.0
@@ -96,6 +99,7 @@ func reset() -> void:
     bases.clear()
     commanders.clear()
     couriers.clear()
+    map_dispatches.clear()
     events.clear()
     outposts.clear()
     scouts.clear()
@@ -330,6 +334,7 @@ func _update_couriers(dt: float) -> void:
         var letter: Dictionary = couriers[i]
         var target: Dictionary = find_unit(int(letter["unit_id"]))
         if target.is_empty() or float(target["troops"]) <= 0.0:
+            _resolve_map_dispatch(letter,"수신 부대 상실")
             _response_delivery(letter,"수신 부대 상실")
             couriers.remove_at(i)
             continue
@@ -339,6 +344,7 @@ func _update_couriers(dt: float) -> void:
         letter["pos"] = p.move_toward(route_goal, 140.0 * dt)
         if _courier_intercepted(letter):
             intercepted_orders += 1
+            _resolve_map_dispatch(letter,"차단")
             _response_delivery(letter,"전령 차단")
             _log("%s에게 가던 전령이 적에 의해 차단됨" % str(target["name"]))
             couriers.remove_at(i)
@@ -368,6 +374,7 @@ func _update_couriers(dt: float) -> void:
             target["destination_reached"]=false
             target["ai_cooldown"] = 0.0
             GeneralMind.order(target,"수령: "+str(letter["mission"]),battle_time)
+            _resolve_map_dispatch(letter,"도착")
             _log("%s: 전령 도착 / 새 명령 '%s'" % [str(target["name"]), str(letter["mission"])])
             couriers.remove_at(i)
 
@@ -947,6 +954,7 @@ func _frontline_power(unit: Dictionary, enemy: Dictionary, direction: Vector2) -
     return maxf(1.0, float(unit["troops"]) * (0.25 + 0.75 * float(unit["morale"]) / 100.0) * factor * (0.55 + 0.45 * float(unit["cohesion"]) / 100.0) * (1.0 - 0.25 * float(unit["fatigue"]) / 100.0))
 
 func _resolve_frontline(dt: float) -> void:
+    front_shifts.clear()
     for unit in units:
         unit["front_pressure"] = 0.0
     for i in range(units.size()):
@@ -990,6 +998,13 @@ func _resolve_frontline(dt: float) -> void:
             a["pos"]=_land_motion(a,current_a,pushed_a) if long_operation else pushed_a
             b["pos"]=_land_motion(b,current_b,pushed_b) if long_operation else pushed_b
             var losing_unit: Dictionary = b if shift > 0.0 else a
+            var prior_position: Vector2 = current_b if shift > 0.0 else current_a
+            var displacement: Vector2 = (losing_unit["pos"] as Vector2)-prior_position
+            if displacement.length_squared()>0.0001:
+                var left_id: int = int(a["id"])
+                var right_id: int = int(b["id"])
+                front_shifts[Vector2i(mini(left_id,right_id),maxi(left_id,right_id))] = {
+                    "loser":int(losing_unit["id"]), "direction":displacement.normalized(), "pressure":absf(advantage)}
             losing_unit["front_pressure"] = maxf(float(losing_unit["front_pressure"]), absf(advantage))
             losing_unit["pushed_distance"] = float(losing_unit["pushed_distance"]) + absf(shift)
             # Gradual cohesion loss rather than an instant attrition dice roll.
@@ -1005,7 +1020,7 @@ func _field_point(p: Vector2) -> Vector2:
 
 # Terrain layout is the same geometry used by game.gd's tactical map.
 func terrain_at(p: Vector2) -> String:
-    if wide_field and absf(p.x-river_x(p.y)) < 27.0:
+    if on_river_channel(p):
         return "교량" if near_crossing(p.y) else "하천"
     if _in_forest(p):
         return "숲"
@@ -1015,6 +1030,16 @@ func terrain_at(p: Vector2) -> String:
         if absf(p.y-road_y(p.x,lane)) <= (16.0 if wide_field else 10.0):
             return "도로"
     return "평지"
+
+func on_river_channel(p: Vector2) -> bool:
+    return wide_field and absf(p.x-river_x(p.y)) < 27.0
+
+func in_open_water(p: Vector2) -> bool:
+    return on_river_channel(p) and not near_crossing(p.y)
+
+func terrain_movement_percent(id: int, position: Vector2) -> int:
+    var unit := find_unit(id)
+    return 100 if unit.is_empty() else roundi(_terrain_movement_multiplier(unit, position)*100.0)
 
 func _terrain_movement_multiplier(unit: Dictionary, p: Vector2) -> float:
     match terrain_at(p):
@@ -1238,8 +1263,8 @@ func _combat(dt: float) -> void:
         var damage: float = attack * (float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"]))) * (float(unit["morale"]) / 100.0) * exposure * supply_factor * dt
         if wide_field:
             damage *= float(unit.get("strength_share",1.0))
-            if terrain_at(pos) == "하천": damage *= 0.68
-            if terrain_at(ep) == "하천": damage *= 1.18
+            if in_open_water(pos): damage *= 0.68
+            if in_open_water(ep): damage *= 1.18
         if six_armies:
             damage *= clampf(float(unit["initial_troops"])/3800.0,0.20,1.5)*ARMY_SCALE
             match str(unit["formation"]):
@@ -2990,12 +3015,30 @@ func _physical_screen(protected: Dictionary,attacker: Dictionary) -> Dictionary:
 # Public map orders contain an intent, location and optional partner. Formation
 # remains under the general's field judgment.
 const MAP_MISSIONS = ["지정 위치 이동","공격","지역 사수","전열 엄호","측후방 기동","구원 지원","예비 대기","철수"]
+
+func map_order_issue(id: int, mission: String, destination: Vector2, partner: int = -1) -> String:
+    if finished: return "전투가 종료되었습니다."
+    if mission not in MAP_MISSIONS: return "행동을 선택하십시오."
+    if not Rect2(Vector2.ZERO,field_size).has_point(destination): return "전장 안의 목적지를 선택하십시오."
+    if long_operation and in_open_water(destination): return "하천에는 지시할 수 없습니다. 교량이나 강둑을 선택하십시오."
+    var unit := find_unit(id)
+    if unit.is_empty() or int(unit["side"])!=0 or float(unit["troops"])<=0.0:
+        return "지시할 수 있는 아군 군단을 선택하십시오."
+    if not _valid_partner(unit,partner): return "현재 협동 대상에 지시를 연결할 수 없습니다."
+    if started and turn < 6: return "6턴부터 전령을 파견할 수 있습니다."
+    if started:
+        for letter in couriers:
+            if int(letter["unit_id"]) == id: return "이 군단에 이미 전령이 이동 중입니다."
+    return ""
+
 func issue_map_order(id: int,mission: String,destination: Vector2,partner: int=-1) -> bool:
-    if mission not in MAP_MISSIONS or finished or not Rect2(Vector2.ZERO,field_size).has_point(destination): return false
-    if long_operation and terrain_at(destination)=="하천": return false
+    if not map_order_issue(id,mission,destination,partner).is_empty(): return false
     var unit: Dictionary=find_unit(id)
-    if unit.is_empty() or int(unit["side"])!=0 or float(unit["troops"])<=0.0 or not _valid_partner(unit,partner): return false
-    if started: return request_order(id,mission,"현장 판단",partner,destination)
+    if started:
+        if not request_order(id,mission,"현장 판단",partner,destination): return false
+        couriers.back()["map_dispatch"] = true
+        map_dispatches[id] = {"mission":mission,"status":"이동 중","destination":destination,"time":operation_elapsed()}
+        return true
     if not select_unit_mission(id,mission,"현장 판단",partner): return false
     unit["has_destination"]=true
     unit["order_destination"]=_field_point(destination)
@@ -3005,6 +3048,28 @@ func issue_map_order(id: int,mission: String,destination: Vector2,partner: int=-
     unit["defense_set"]=false
     GeneralMind.order(unit,"사전 작전: "+mission,battle_time)
     return true
+
+func _resolve_map_dispatch(letter: Dictionary, status: String) -> void:
+    if not bool(letter.get("map_dispatch",false)): return
+    var dispatch: Dictionary = map_dispatches.get(int(letter["unit_id"]),{})
+    if dispatch.is_empty(): return
+    dispatch["status"] = status
+    dispatch["time"] = operation_elapsed()
+
+# A projection for the planning map. Uses the live route choice's geometry
+# and allied traffic, without writing bridge commitments to the unit.
+func map_order_crossing(id: int, destination: Vector2) -> float:
+    if not wide_field or not long_operation or in_open_water(destination): return -1.0
+    var unit := find_unit(id)
+    if unit.is_empty(): return -1.0
+    var p: Vector2 = unit["pos"]
+    var bank: int = 1 if p.x>=river_x(p.y) else -1
+    var target_bank: int = 1 if destination.x>=river_x(destination.y) else -1
+    if bank == target_bank: return -1.0
+    var committed: float = float(unit.get("bridge_y",-1.0))
+    if committed >= 0.0 and int(unit["bridge_bank"]) == target_bank:
+        return committed
+    return _choose_crossing(unit,p,destination)
 
 func _destination_order(unit: Dictionary,enemy: Dictionary,action: String,reason: String,goal: Vector2,distance: float) -> Dictionary:
     var original: Dictionary={"action":action,"reason":reason,"goal":goal}
@@ -3149,9 +3214,17 @@ func _committed_bridge_route(unit:Dictionary,p:Vector2,goal:Vector2)->Vector2:
             unit["bridge_bank"]=0
             chosen=-1.0
     if bank==target_bank:
-        if terrain_at(goal)=="하천": return Vector2(river_x(goal.y)+bank*34.0,goal.y)
+        if in_open_water(goal): return Vector2(river_x(goal.y)+bank*34.0,goal.y)
         return goal
+    chosen=_choose_crossing(unit,p,goal)
+    unit["bridge_y"]=chosen
+    unit["bridge_bank"]=target_bank
+    var rx:float=river_x(chosen)
+    return Vector2(rx+bank*64.0,chosen) if absf(p.y-chosen)>10.0 else Vector2(rx+target_bank*64.0,chosen)
+
+func _choose_crossing(unit: Dictionary, p: Vector2, goal: Vector2) -> float:
     var best:float=INF
+    var chosen:float=850.0
     for y in [390.0,850.0,1300.0]:
         var crossing:=Vector2(river_x(y),y)
         var cost:float=p.distance_to(crossing)+crossing.distance_to(goal)
@@ -3162,21 +3235,18 @@ func _committed_bridge_route(unit:Dictionary,p:Vector2,goal:Vector2)->Vector2:
         if cost<best:
             best=cost
             chosen=y
-    unit["bridge_y"]=chosen
-    unit["bridge_bank"]=target_bank
-    var rx:float=river_x(chosen)
-    return Vector2(rx+bank*64.0,chosen) if absf(p.y-chosen)>10.0 else Vector2(rx+target_bank*64.0,chosen)
+    return chosen
 
 func _land_motion(unit:Dictionary,old:Vector2,proposed:Vector2)->Vector2:
-    if terrain_at(proposed)!="하천" and not _river_separates(old,proposed): return proposed
+    if not in_open_water(proposed) and not _river_separates(old,proposed): return proposed
     # A unit already displaced into water can escape, but cannot advance deeper.
-    if terrain_at(old)=="하천" and absf(proposed.x-river_x(proposed.y))>absf(old.x-river_x(old.y)):
+    if in_open_water(old) and absf(proposed.x-river_x(proposed.y))>absf(old.x-river_x(old.y)):
         return proposed
     unit["blocked_water_steps"]+=1
     var bank:float=1.0 if old.x>=river_x(old.y) else -1.0
     var slide:Vector2=_field_point(Vector2(river_x(proposed.y)+bank*maxf(28.0,absf(old.x-river_x(old.y))),proposed.y))
     var bounded:Vector2=old.move_toward(slide,old.distance_to(proposed))
-    return bounded if terrain_at(bounded)!="하천" and not _river_separates(old,bounded) else old
+    return bounded if not in_open_water(bounded) and not _river_separates(old,bounded) else old
 
 # Opposing ground units cannot trade melee strikes over an unbridged channel.
 func _river_separates(a:Vector2,b:Vector2)->bool:

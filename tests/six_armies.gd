@@ -378,6 +378,10 @@ func _run() -> void:
     game.order_view.call("_select",game.selected_id)
     var map_sim=game.sim
     var dest:=Vector2(790,900)
+    var crossing: float=map_sim.map_order_crossing(1,Vector2(1920,910))
+    check(crossing in [390.0,850.0,1300.0] and float(map_sim.find_unit(1)["bridge_y"])<0.0,"planning forecast uses a real bridge without committing the army")
+    var river:=Vector2(float(map_sim.river_x(600.0)),600.0)
+    check(map_sim.in_open_water(river) and not map_sim.map_order_issue(1,"지역 사수",river,-1).is_empty(),"open water preflight rejects the destination")
     check(map_sim.issue_map_order(1,"전열 엄호",dest,0),"map order accepts destination action and partner")
     var map_unit:Dictionary=map_sim.find_unit(1)
     check(map_unit["policy"]=="현장 판단" and map_unit["order_destination"]==dest and int(map_unit["assigned_link"])==0,"general retains formation judgment")
@@ -393,15 +397,32 @@ func _run() -> void:
     for i in range(40): game.call("_process",0.1)
     check(absf(map_sim.operation_elapsed()-prior-16.0)<0.5,"four times playback clock")
     game.game_speed=1.0
+    game.call("_open_order_map")
+    game.order_view.call("_select",1)
+    game.order_view.destination=Vector2(1000,800)
+    game.order_view.has_destination=true
+    game.order_view.call("_choose_action",2)
+    check(game.order_view.apply.disabled and game.order_view.feedback.text.contains("6턴"),"early draft shows the courier gate before submission")
+    game.order_view.call("_launch")
+    check(not game.order_view.visible and not map_sim.paused,"return to battle without discarding an early draft")
+    game.call("_open_order_map")
+    check(game.order_view.draft_dirty and game.order_view.destination==Vector2(1000,800),"early draft is available after reopening the war room")
+    game.order_view.drafts.clear()
+    game.order_view.draft_dirty=false
+    game.order_view.call("_launch")
     map_sim.turn=6
     game.call("_open_order_map")
     check(game.order_view.visible and map_sim.paused,"midbattle map pauses simulation")
     var next_dest:=Vector2(1000,800)
     check(map_sim.issue_map_order(1,"지역 사수",next_dest,-1),"midbattle destination order dispatched")
+    check(map_sim.map_dispatches[1]["status"]=="이동 중" and map_sim.map_order_issue(1,"지역 사수",next_dest,-1).contains("이미"),"dispatch tracking and duplicate courier preflight")
+    game.call("_refresh_hud")
+    check(game.order_status_label.text.contains("전령 이동"),"live command panel shows the selected general's pending courier")
     check(map_unit["order_destination"]==dest,"order not applied before courier delivery")
     for letter in map_sim.couriers: letter["pos"]=map_unit["pos"]
     map_sim._update_couriers(0.1)
     check(map_unit["order_destination"]==next_dest and map_unit["mission"]=="지역 사수","courier delivers actual map order")
+    check(map_sim.map_dispatches[1]["status"]=="도착","courier status resolves only on actual delivery")
     game.order_view.hide()
     game.call("_return_to_battle")
     check(not map_sim.paused,"return restores battle clock")

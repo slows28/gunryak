@@ -35,6 +35,7 @@ var drag_origin: Vector2
 var drag_position: Vector2
 var dragging: bool=false
 var draft_dirty: bool=false
+var drafts: Dictionary={}
 var in_battle: bool=false
 var background: ImageTexture
 
@@ -86,17 +87,18 @@ func configure(owner_game: Control,used_font: Font) -> void:
     destination_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     _label("③ 협동 대상",Vector2(1048,510),Vector2(216,25),14,GOLD)
     partner_choice=_choice(Vector2(1046,537),Vector2(218,39),[])
-    partner_choice.item_selected.connect(func(_i: int):
-        draft_dirty=true
-        queue_redraw())
+    partner_choice.item_selected.connect(func(_i: int): _mark_draft())
     apply=_button("지시 확정",Vector2(1046,585),Vector2(218,42),_apply)
     _button("미확정 취소",Vector2(1046,633),Vector2(218,31),func():
+        drafts.erase(selected_id)
         draft_dirty=false
-        _select(selected_id))
+        _select(selected_id)
+        feedback.text="이 군단의 미확정 변경을 취소했습니다.")
     feedback=_label("",Vector2(25,690),Vector2(920,31),15,GOLD)
     feedback.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     _button("상세 편성",Vector2(22,733),Vector2(170,44),func(): game.call("_open_planning"))
     _button("메뉴",Vector2(205,733),Vector2(116,44),func():
+        if _review_pending_draft(): return
         hide()
         game.call("_show_title"))
     _label("진형과 교전 방식은 장수에게 위임",Vector2(340,737),Vector2(650,33),13,Color("#b8aa8c"))
@@ -158,6 +160,10 @@ func open(mid_battle:bool=false)->void:
         roster.set_item_metadata(roster.item_count-1,id)
     feedback.text="부대 말을 끌거나 지도에 목적지를 찍고 행동 및 연계 대상을 지정하십시오."
     if mid_battle: feedback.text="전투 중 명령은 6턴부터 전령으로 전달됩니다. 확정 전까지 기존 작전 유지."
+    if not mid_battle: drafts.clear()
+    drag_id=-1
+    drag_origin=Vector2.ZERO
+    dragging=false
     draft_dirty=false
     _select(game.selected_id)
     show()
@@ -168,11 +174,6 @@ func _select(id:int)->void:
     var u:Dictionary=sim.find_unit(id)
     if u.is_empty(): return
     if draft_dirty and selected_id==id: return
-    if draft_dirty and selected_id!=id:
-        feedback.text="현재 부대의 미확정 지시를 먼저 확정하거나 취소하십시오."
-        for i in range(roster.item_count):
-            if int(roster.get_item_metadata(i))==selected_id: roster.select(i)
-        return
     selected_id=id
     game.selected_id=id
     for i in range(roster.item_count):
@@ -180,7 +181,6 @@ func _select(id:int)->void:
     info.text="%s 군단\n%s  ·  %d명\n사기 %d  /  응집 %d\n현재: %s"%[u["name"],u["type"],int(u["troops"]),int(u["morale"]),int(u["cohesion"]),u["mission"]]
     var idx:int=ACTIONS.find(str(u["mission"]))
     action_choice.select(maxi(0,idx))
-    _sync_actions()
     partner_choice.clear()
     partner_choice.add_item("자동 / 없음")
     partner_choice.set_item_metadata(0,-1)
@@ -195,31 +195,83 @@ func _select(id:int)->void:
         if other==assigned: partner_choice.select(partner_choice.item_count-1)
     has_destination=bool(u.get("has_destination",false))
     destination=u.get("order_destination",u["pos"]) if has_destination else u["pos"]
-    draft_dirty=false
+    var draft: Dictionary = drafts.get(id,{})
+    draft_dirty=not draft.is_empty()
+    if draft_dirty:
+        destination=draft["destination"]
+        has_destination=draft["has_destination"]
+        action_choice.select(draft["action"])
+        for row in range(partner_choice.item_count):
+            if int(partner_choice.get_item_metadata(row))==int(draft["partner"]):
+                partner_choice.select(row)
+                break
+    _sync_actions()
     _update_destination()
     queue_redraw()
 
+func _selected_partner() -> int:
+    return -1 if partner_choice.selected<0 else int(partner_choice.get_item_metadata(partner_choice.selected))
+
+func _mark_draft() -> void:
+    draft_dirty=true
+    drafts[selected_id]={"destination":destination,"has_destination":has_destination,"action":action_choice.selected,"partner":_selected_partner()}
+    _update_destination()
+    queue_redraw()
+
+func _refresh_draft_roster() -> void:
+    for row in range(roster.item_count):
+        var id: int=roster.get_item_metadata(row)
+        var unit: Dictionary=sim.find_unit(id)
+        var mark: String="* " if drafts.has(id) else ""
+        roster.set_item_text(row,"%s%s  %s명" % [mark,unit["name"],_troop_text(int(unit["troops"]))])
+
 func _update_destination()->void:
-    destination_label.text="지도에서 목표를 선택" if not has_destination else _destination_text(destination)
-    progress_label.text="목표 지정 완료   ›   행동·연계 선택   ›   지시 확정" if has_destination else "군단 선택   ›   목적지 지정   ›   행동과 연계   ›   지시 확정"
+    destination_label.text=_destination_text(destination) if has_destination else "지도에서 목표를 선택"
+    _refresh_draft_roster()
+    var problem: String = "지도에서 목적지를 먼저 선택하십시오."
+    if has_destination:
+        problem=sim.map_order_issue(selected_id,ACTIONS[action_choice.selected],destination,_selected_partner())
+    apply.disabled=not problem.is_empty()
+    apply.tooltip_text=problem
+    var dispatch: String=game.dispatch_line(selected_id)
+    if not drafts.is_empty():
+        progress_label.text="미확정 %d개 · * 표시 군단" % drafts.size()
+    elif not dispatch.is_empty():
+        progress_label.text=dispatch
+    elif has_destination:
+        progress_label.text="행동과 연계를 검토하고 지시를 확정하십시오."
+    else:
+        progress_label.text="군단 선택   ›   목적지 지정   ›   행동과 연계   ›   지시 확정"
+    if in_battle or draft_dirty:
+        feedback.text=problem if not problem.is_empty() else ("도착 전까지 현재 지시를 유지합니다." if in_battle else "지시를 확정하거나 다른 군단의 계획을 작성할 수 있습니다.")
 
 func _apply()->void:
     if not has_destination:
         feedback.text="먼저 지도에서 목적지를 지정하십시오."
         return
     var action:String=ACTIONS[action_choice.selected]
-    var partner:int=int(partner_choice.get_item_metadata(partner_choice.selected))
+    var partner:int=_selected_partner()
+    var problem: String=sim.map_order_issue(selected_id,action,destination,partner)
+    if not problem.is_empty():
+        feedback.text=problem
+        return
     if sim.issue_map_order(selected_id,action,destination,partner):
-        feedback.text="전령 파견 완료 · 도착까지 기존 지시 유지" if in_battle else "작전 지시 확정 · "+str(sim.find_unit(selected_id)["name"])+" / "+action
+        drafts.erase(selected_id)
         draft_dirty=false
-        progress_label.text="전령 파견 · 도착 대기" if in_battle else "작전 지시 확정 · 전투 개시 가능"
+        _update_destination()
+        feedback.text="전령 파견 완료 · 도착까지 기존 지시 유지" if in_battle else "작전 지시 확정 · "+str(sim.find_unit(selected_id)["name"])+" / "+action
         queue_redraw()
-    else: feedback.text="지시 불가 · 전령 허용 턴, 부대 상태 또는 기존 전령 확인"
+    else:
+        feedback.text="군단 상태가 변경되어 지시를 확정할 수 없습니다."
+
+func _review_pending_draft() -> bool:
+    if drafts.is_empty(): return false
+    if not draft_dirty: _select(int(drafts.keys()[0]))
+    feedback.text="미확정 지시 %d개를 확정하거나 취소한 뒤 진행하십시오." % drafts.size()
+    return true
 
 func _launch()->void:
-    if draft_dirty:
-        feedback.text="미확정 지시가 있습니다. 지시 확정 후 진행하십시오."
-        return
+    if not in_battle and _review_pending_draft(): return
     hide()
     if in_battle: game.call("_return_to_battle")
     else: game.call("_start")
@@ -260,8 +312,7 @@ func _gui_input(event:InputEvent)->void:
                 else:
                     destination=p
                     has_destination=true
-                    draft_dirty=true
-                    _update_destination()
+                    _mark_draft()
             drag_id=-1
             drag_origin=Vector2.ZERO
             dragging=false
@@ -382,7 +433,7 @@ func _draw()->void:
         _ink("군량",p+Vector2(-12,-11),12,INK)
     for u in sim.units:
         if float(u["troops"])<=0: continue
-        if int(u["side"])!=0 and game.fog_enabled and not sim.player_can_see(u["pos"]): continue
+        if not game.call("_visible_unit",u): continue
         var p:Vector2=_point(u["pos"])
         if int(u["side"])==0 and bool(u.get("has_destination",false)) and int(u["id"])!=selected_id:
             _arrow(p,_point(u["order_destination"]),Color(BLUE,0.52),1.5)
@@ -395,16 +446,27 @@ func _draw()->void:
         if not linked.is_empty(): _dashed(_point(selected["pos"]),_point(linked["pos"]),Color("#73537c"))
     if has_destination:
         var u:Dictionary=sim.find_unit(selected_id)
+        var target: Vector2=_point(destination)
+        var ink: Color=RED if sim.long_operation and sim.in_open_water(destination) else Color("#95651e")
         if not u.is_empty():
             var origin:Vector2=_point(u["pos"])
-            var target:Vector2=_point(destination)
-            _arrow(origin,target,Color("#e9d6a5"),5.5)
-            _arrow(origin,target,Color("#95651e"),2.8)
-        draw_circle(_point(destination),12,Color("#ab7625"),false,2,true)
-        draw_circle(_point(destination),3,Color("#ab7625"))
+            var crossing: float=sim.map_order_crossing(selected_id,destination)
+            if crossing>=0.0:
+                var bridge:=_point(Vector2(sim.river_x(crossing),crossing))
+                draw_polyline(PackedVector2Array([origin,bridge,target]),Color("#f0dca9"),6.0,true)
+                draw_line(origin,bridge,ink,2.8,true)
+                _arrow(bridge,target,ink,2.8)
+                draw_circle(bridge,8.0,ink,false,2.0,true)
+            elif ink==RED:
+                _dashed(origin,target,ink)
+            else:
+                _arrow(origin,target,Color("#e9d6a5"),5.5)
+                _arrow(origin,target,ink,2.8)
+        draw_circle(target,12,ink,false,2,true)
+        draw_circle(target,3,ink)
     for u in sim.units:
         if float(u["troops"])<=0: continue
-        if int(u["side"])!=0 and game.fog_enabled and not sim.player_can_see(u["pos"]): continue
+        if not game.call("_visible_unit",u): continue
         _piece(u,_point(u["pos"]),int(u["id"])==selected_id)
     if dragging and drag_id>=0 and MAP.has_point(drag_position):
         var u:Dictionary=sim.find_unit(drag_id)
@@ -499,8 +561,7 @@ func _plate(t:String,p:Vector2,fs:int,c:Color)->void:
 func _choose_action(index:int)->void:
     action_choice.select(index)
     _sync_actions()
-    draft_dirty=true
-    queue_redraw()
+    _mark_draft()
 
 func _sync_actions()->void:
     var descriptions:Array[String]=["지정 위치까지 이동하고 현장 판단","목표 지역의 적을 공격","지정 구역을 확보하고 방어","연계 군단의 전열을 엄호","적의 측후방으로 기동","위기에 처한 연계 군단을 지원","지정 지점에서 투입을 대기","목표 지점으로 철수"]
@@ -511,6 +572,12 @@ func _sync_actions()->void:
 
 func _destination_text(p:Vector2)->String:
     var terrain:String=sim.terrain_at(p)
+    var detail: String="이동 %d%%" % int(sim.terrain_movement_percent(selected_id,p))
+    var crossing: float=sim.map_order_crossing(selected_id,p)
+    if terrain=="하천" and sim.long_operation:
+        detail="목표 지정 불가"
+    elif crossing>=0.0:
+        detail+=" · "+str(game.call("_bridge_name",crossing))+" 예상"
     var nearest:String=""
     var distance:float=220.0
     for site in sim.outposts:
@@ -518,8 +585,8 @@ func _destination_text(p:Vector2)->String:
         if d<distance:
             distance=d
             nearest=str(site["name"])
-    if nearest!="": return nearest+" 인근 · "+terrain
-    return ("서부" if p.x<sim.field_size.x*0.5 else "동부")+" "+("북로" if p.y<sim.field_size.y/3.0 else ("남로" if p.y>sim.field_size.y*2.0/3.0 else "중앙"))+" · "+terrain
+    if nearest!="": return nearest+" 인근 · "+terrain+"\n"+detail
+    return ("서부" if p.x<sim.field_size.x*0.5 else "동부")+" "+("북로" if p.y<sim.field_size.y/3.0 else ("남로" if p.y>sim.field_size.y*2.0/3.0 else "중앙"))+" · "+terrain+"\n"+detail
 
 func _troop_text(n:int)->String:
     var digits:String=str(n)

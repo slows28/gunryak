@@ -61,6 +61,33 @@ func _capture() -> void:
     if not _save_frame("paper_orders.png"):
         quit(1)
         return
+    var orders: Control=game.order_view
+    var east:=Vector2(1920,910)
+    orders.destination=east
+    orders.has_destination=true
+    orders.call("_choose_action",2)
+    orders.call("_select",0)
+    orders.call("_select",1)
+    var crossing: float=game.sim.map_order_crossing(1,east)
+    if orders.destination!=east or orders.action_choice.selected!=2 or crossing<0.0 or not orders.destination_label.text.contains("예상"):
+        push_error("VISUAL_CAPTURE_FAIL: commander draft or bridge projection missing")
+        quit(1)
+        return
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("bridge_order_draft.png"):
+        quit(1)
+        return
+    orders.destination=Vector2(game.sim.river_x(600.0),600.0)
+    orders.call("_mark_draft")
+    if not orders.apply.disabled or not orders.feedback.text.contains("교량이나 강둑"):
+        push_error("VISUAL_CAPTURE_FAIL: river destination accepted by the command UI")
+        quit(1)
+        return
+    orders.drafts.clear()
+    orders.draft_dirty=false
+    orders.call("_select",1)
+    print("ORDER_DRAFT_ROUTE_PASS")
     game.call("_start")
     var own_id: int=game.selected_id
     if game.fog_enabled or game.enemy_list.item_count!=6:
@@ -130,6 +157,30 @@ func _capture() -> void:
     if not _save_frame("battle_112s.png"):
         quit(1)
         return
+    var journal_center: Vector2=game.camera_center
+    var journal_zoom: float=game.camera_zoom
+    var journal_general: int=game.selected_id
+    var journal_time: float=game.sim.battle_time
+    game.journal_button.pressed.emit()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not game.journal_dialog.visible or game.journal_events.is_empty():
+        push_error("VISUAL_CAPTURE_FAIL: observed contact missing from command journal")
+        quit(1)
+        return
+    if not _save_frame("battle_journal.png"):
+        quit(1)
+        return
+    game.journal_list.item_activated.emit(0)
+    if game.journal_dialog.visible or game.camera_zoom!=1.4 or game.sim.battle_time!=journal_time:
+        push_error("VISUAL_CAPTURE_FAIL: journal did not navigate without advancing time")
+        quit(1)
+        return
+    game.camera_center=journal_center
+    game.camera_zoom=journal_zoom
+    game.call("_on_unit_selected",game.sim.command_ids(0).find(journal_general))
+    game.map_layer.queue_redraw()
+    print("BATTLE_JOURNAL_PASS")
     game.call("_open_mind_report")
     await process_frame
     await RenderingServer.frame_post_draw
