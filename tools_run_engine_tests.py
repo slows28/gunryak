@@ -24,6 +24,7 @@ TESTS = [
     ("campaign_demo", ["--headless", "--path", "{project}", "--script", "res://tests/demo_smoke.gd"], "GUNRYAK_DEMO_PASS"),
     ("tactics_playtest", ["--headless", "--path", "{project}", "--script", "res://tests/tactics_playtest.gd"], "GUNRYAK_TACTICS_PASS"),
     ("balance_matrix", ["--headless", "--path", "{project}", "--script", "res://tests/balance_matrix.gd"], "GUNRYAK_BALANCE_PASS"),
+    ("wide_field", ["--headless", "--path", "{project}", "--script", "res://tests/wide_field.gd"], "GUNRYAK_WIDE_PASS"),
     ("scene", ["--headless", "--path", "{project}", "--script", "res://tests/scene_smoke.gd"], "GUNRYAK_SCENE_PASS"),
 ]
 
