@@ -62,7 +62,19 @@ var plan_priority: OptionButton
 var plan_fog: CheckButton
 var plan_takeover: Button
 var map_mode: String = "선택"
-var fog_enabled: bool = true
+var fog_enabled: bool = false # Demo defaults to transparent battlefield; recon rules remain optional.
+var enemy_list: ItemList
+var enemy_tab: Button
+var friendly_tab: Button
+var fog_button: Button
+var observing_enemy: bool = false
+var observed_enemy_id: int = -1
+var contact_button: Button
+var combat_brief: Label
+var battle_samples: Dictionary = {}
+var recent_losses: Dictionary = {}
+var sample_time: float = -100.0
+var previous_centers: Dictionary = {}
 var plan_actions: Array[Button] = []
 var map_layer: Control
 var map_clip: Control
@@ -210,7 +222,10 @@ func _build_interface() -> void:
     status_label = _label("",Vector2(955,9),Vector2(307,64),14,COL_TEXT)
     objective_label = _label("",Vector2(26,77),Vector2(412,22),13,COL_GOLD)
     _label("軍  /  전황 관측",Vector2(956,101),Vector2(270,29),22,COL_GOLD)
-    _label("아군 군단  ·  6개 지휘 부대",Vector2(956,132),Vector2(295,19),12,COL_MUTED)
+    friendly_tab=_button("아군 6",Vector2(950,130),Vector2(94,23),_show_friendly_roster)
+    enemy_tab=_button("적군 6",Vector2(1049,130),Vector2(94,23),_show_enemy_roster)
+    fog_button=_button("전체 시야",Vector2(1148,130),Vector2(108,23),func(): _toggle_fog(not fog_enabled))
+    fog_button.tooltip_text="전체 관전과 정찰 제한 전환 · 장수 AI의 관측 규칙은 변경하지 않음"
     unit_list = ItemList.new()
     unit_list.position = Vector2(950,154)
     unit_list.size = Vector2(306,204)
@@ -224,6 +239,14 @@ func _build_interface() -> void:
     roster_overlay.mouse_filter=Control.MOUSE_FILTER_IGNORE
     roster_overlay.painter=_draw_roster_status
     add_child(roster_overlay)
+    enemy_list=ItemList.new()
+    enemy_list.position=unit_list.position
+    enemy_list.size=unit_list.size
+    enemy_list.add_theme_font_size_override("font_size",13)
+    enemy_list.add_theme_constant_override("v_separation",5)
+    add_child(enemy_list)
+    enemy_list.item_selected.connect(_inspect_enemy_row)
+    enemy_list.hide()
     _label("02  현재 작전",Vector2(956,365),Vector2(267,20),15,COL_GOLD)
     mission_choice = _options(Vector2(950,363),["중앙 진격","북측 확보","남측 우회","본진 방어","전열 엄호","측후방 기동","구원 지원"])
     mission_choice.size.x = 306
@@ -256,7 +279,11 @@ func _build_interface() -> void:
     map_detail_button.tooltip_text = "군단 진형과 전술 이동 경로 표시 전환"
     _build_planning_dialog()
     _button("브리핑",Vector2(27,730),Vector2(112,26),_open_briefing)
-    _button("전투 분석",Vector2(27,761),Vector2(112,26),_open_analysis)
+    contact_button=_button("교전 위치",Vector2(27,761),Vector2(112,26),_focus_combat)
+    contact_button.tooltip_text="최근 실제 교전 위치로 카메라 이동 · C 단축키"
+    combat_brief=_label("",Vector2(153,691),Vector2(578,24),14,COL_GOLD)
+    event_label.position.y=718
+    event_label.size.y=74
     _button("도움말",Vector2(443,74),Vector2(73,26),_open_demo_help)
     _button("철수",Vector2(521,74),Vector2(60,26),_ask_retreat)
     situation_btn = _button("긴급 보고",Vector2(585,74),Vector2(75,26),func():
@@ -331,9 +358,89 @@ func _draw_roster_status(canvas: Control) -> void:
         if index<unit_list.item_count-1:
             canvas.draw_line(Vector2(6,row.end.y+1),Vector2(canvas.size.x-6,row.end.y+1),Color(0.70,0.59,0.40,0.16),1.0)
 
+func _show_friendly_roster() -> void:
+    observing_enemy=false
+    observed_enemy_id=-1
+    unit_list.show()
+    roster_overlay.show()
+    enemy_list.hide()
+    _refresh_hud()
+    map_layer.queue_redraw()
+
+func _show_enemy_roster() -> void:
+    observing_enemy=true
+    unit_list.hide()
+    roster_overlay.hide()
+    enemy_list.show()
+    _refresh_hud()
+    map_layer.queue_redraw()
+
+func _inspect_enemy_row(index: int) -> void:
+    if index<0 or index>=enemy_list.item_count: return
+    var id: int=int(enemy_list.get_item_metadata(index))
+    var u: Dictionary=sim.find_unit(id)
+    if u.is_empty() or not _visible_unit(u): return
+    observed_enemy_id=id
+    camera_center=u["pos"]
+    camera_zoom=maxf(1.0,camera_zoom)
+    _clamp_camera()
+    _refresh_hud()
+    map_layer.queue_redraw()
+
+func _refresh_enemy_roster() -> void:
+    if not is_instance_valid(enemy_list): return
+    enemy_list.clear()
+    var visible_count: int=0
+    for id in sim.command_ids(1):
+        var u: Dictionary=sim.find_unit(id)
+        if u.is_empty(): continue
+        if not _visible_unit(u): continue
+        visible_count+=1
+        enemy_list.add_item("%s   %s   %s명" % [str(u["name"]),_field_action(u),_number_text(roundi(float(u["troops"])))])
+        var row: int=enemy_list.item_count-1
+        enemy_list.set_item_metadata(row,id)
+        enemy_list.set_item_custom_fg_color(row,COL_RED)
+        enemy_list.set_item_tooltip(row,"%s · 사기 %d · 응집 %d" % [str(u["type"]),roundi(float(u["morale"])),roundi(float(u["cohesion"]))])
+        if id==observed_enemy_id: enemy_list.select(row)
+    if fog_enabled and visible_count==0:
+        enemy_list.add_item("관측된 적군 없음")
+        enemy_list.set_item_disabled(0,true)
+        observed_enemy_id=-1
+    enemy_tab.text="적군 %d" % visible_count
+    friendly_tab.modulate=Color.WHITE if observing_enemy else COL_BLUE
+    enemy_tab.modulate=COL_RED if observing_enemy else Color.WHITE
+    fog_button.text="정찰 시야" if fog_enabled else "전체 시야"
+
+# Actual activity takes priority over the strategic mission or inferred intent.
+func _field_action(u: Dictionary) -> String:
+    if float(u["troops"])<=0.0: return "전멸"
+    if bool(u["routed"]): return "패주"
+    if sim.started and not sim.finished:
+        var age: float=sim.battle_time-float(u.get("last_visual",-100.0))
+        if age>=0.0 and age<0.95:
+            if str(u["type"])=="궁병": return "사격 중"
+            return "교전 중"
+        if str(u.get("next_formation",""))!="": return "전열 변경"
+        if float(u.get("motion_speed",0.0))>2.0 and float(u.get("bridge_y",-1.0))>=0.0: return "도하 기동"
+    return str(u["action"])
+
+func _focus_combat() -> void:
+    for i in range(sim.visual_effects.size()-1,-1,-1):
+        var fx: Dictionary=sim.visual_effects[i]
+        if fog_enabled and not sim.player_can_see(fx["from"]) and not sim.player_can_see(fx["to"]): continue
+        camera_center=(fx["from"] as Vector2).lerp(fx["to"],0.5)
+        camera_zoom=1.45
+        _clamp_camera()
+        map_layer.queue_redraw()
+        queue_redraw()
+        return
+    runtime_notice="아직 관측된 교전이 없습니다."
+    _refresh_hud()
+
 func _on_unit_selected(index: int) -> void:
     if index < 0 or index >= unit_list.item_count: return
     selected_id = int(unit_list.get_item_metadata(index))
+    _show_friendly_roster()
     _select_unit()
 
 func _select_unit() -> void:
@@ -372,6 +479,11 @@ func _start() -> void:
     if is_instance_valid(title_screen):
         title_screen.hide()
     if is_instance_valid(order_view): order_view.hide()
+    battle_samples.clear()
+    recent_losses.clear()
+    previous_centers.clear()
+    sample_time=-100.0
+    _show_friendly_roster()
     map_mode = "선택"
     runtime_notice = ""
     sim.start()
@@ -403,6 +515,11 @@ func _reset() -> void:
         _refresh_hud()
         return
     sim.reset()
+    battle_samples.clear()
+    recent_losses.clear()
+    previous_centers.clear()
+    sample_time=-100.0
+    _show_friendly_roster()
     _rebuild_terrain()
     _reset_camera()
     finish_seen = false
@@ -443,6 +560,7 @@ func _process(delta: float) -> void:
         step_buffer += minf(delta, 0.15) * game_speed / sim.operation_scale()
         var ticks: int = 0
         while step_buffer >= 0.1 and ticks < 10:
+            for u in sim.units: previous_centers[int(u["id"])]=u["pos"]
             sim.step(0.1)
             step_buffer -= 0.1
             ticks += 1
@@ -450,6 +568,9 @@ func _process(delta: float) -> void:
                 break
         if ticks == 10:
             step_buffer = minf(step_buffer, 0.4)
+    if sim.started and not sim.paused and not sim.finished:
+        render_clock=sim.battle_time+step_buffer
+        if sim.battle_time-sample_time>=0.8: _sample_battle_losses()
     # UI is updated at a bounded rate rather than issuing draw work every frame.
     ui_clock += minf(delta, 0.15)
     if ui_clock >= 0.2:
@@ -491,12 +612,13 @@ func _refresh_hud() -> void:
         var uid: int = int(unit_list.get_item_metadata(index))
         var leader: Dictionary = sim.find_unit(uid)
         if leader.is_empty(): continue
-        var state: String = "패주" if bool(leader["routed"]) else ("전멸" if float(leader["troops"]) <= 0.0 else str(leader["type"]))
+        var state: String = _field_action(leader)
         unit_list.set_item_text(index,"%d  %s    %s" % [index+1,str(leader["name"]),state])
         unit_list.set_item_tooltip(index,"%s명 · 사기 %d · 응집 %d · 식량 %d" % [_number_text(roundi(sim.corps_report(uid)["troops"])),roundi(leader["morale"]),roundi(leader["cohesion"]),roundi(leader["rations"])])
         unit_list.set_item_custom_fg_color(index,COL_MUTED if float(leader["troops"]) <= 0.0 else (COL_RED if bool(leader["routed"]) else COL_TEXT))
     if is_instance_valid(roster_overlay): roster_overlay.queue_redraw()
-    var enemy_text: String = "미확인" if fog_enabled and not sim.finished else str(sim.total_troops(1))
+    _refresh_enemy_roster()
+    var enemy_text: String = "정찰 제한" if fog_enabled and not sim.finished else _number_text(sim.total_troops(1))
     status_label.text = "%s\n아군 %s  /  적군 %s\n전령 %d 이동 · %d 도착 · %d 차단" % [phase,_number_text(sim.total_troops(0)),enemy_text,sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
     var own_guards: int = sim.commander_guard_count(0)
     status_label.tooltip_text = "책사 보호 반경 내 전투부대 %d개" % own_guards
@@ -522,12 +644,12 @@ func _refresh_hud() -> void:
     var unit: Dictionary = sim.find_unit(selected_id)
     if not unit.is_empty():
         var ally: Dictionary=sim.find_unit(int(unit.get("assigned_link",-1)))
-        live_order_label.text="%s\n목적지: %s\n연계: %s" % [str(unit["mission"]),sim.terrain_at(unit["order_destination"]) if bool(unit.get("has_destination",false)) else "장수 판단",str(ally["name"]) if not ally.is_empty() else "자동 / 없음"]
+        live_order_label.text="%s → %s\n현재: %s\n연계: %s" % [str(unit["mission"]),_goal_name(unit["goal"]),_field_action(unit),str(ally["name"]) if not ally.is_empty() else "자동 / 없음"]
         var leader_state: String = "부장 지휘" if bool(unit["active_deputy"]) else str(unit["general_state"])
         var corps: Dictionary = sim.corps_report(selected_id)
         selected_label.text = "%s · %s · %s명" % [str(unit["name"]),leader_state,_number_text(roundi(corps["troops"]))]
         var ammo_text: String = " · 화살 %d" % int(unit.get("ammo", 100.0)) if str(unit["type"]) == "궁병" else ""
-        details_label.text = "%s · %s\n통솔 %d · 무력 %d · 지력 %d\n응집 %d · 피로 %d · 식량 %d%s" % [str(unit["action"]),str(unit["formation"]),int(unit["leadership"]),int(unit["martial"]),int(unit["intelligence"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),ammo_text]
+        details_label.text = "%s · %s\n가한 피해 %s / 손실 %s\n응집 %d · 식량 %d%s" % [_field_action(unit),str(unit["formation"]),_number_text(roundi(corps["damage_dealt"])),_number_text(roundi(corps["casualties_taken"])),int(unit["cohesion"]),int(unit["rations"]),ammo_text]
         decision_label.text = str(unit["reason"])
         decision_label.tooltip_text=str(unit["reason"])
     if not unit.is_empty():
@@ -539,7 +661,13 @@ func _refresh_hud() -> void:
             if str(unit["mission"])=="측후방 기동":
                 var stages: Array[String] = ["측면 기동","정면 접촉 대기","협동 공격"]
                 details_label.tooltip_text += "\n"+stages[clampi(int(unit["flank_phase"]),0,2)]+" · 완료 %d · 공격 %d · 중단 %d" % [int(unit["flank_completed"]),int(unit["flank_commits"]),int(unit["flank_aborts"])]
-    var start_line: int = maxi(0, sim.events.size() - 4)
+    if observing_enemy:
+        var enemy: Dictionary=sim.find_unit(observed_enemy_id)
+        if not enemy.is_empty() and _visible_unit(enemy):
+            live_order_label.text="적군 관측 · %s\n%s / %s / %s명\n사기 %d · 응집 %d" % [str(enemy["name"]),str(enemy["type"]),_field_action(enemy),_number_text(roundi(float(enemy["troops"]))),roundi(float(enemy["morale"])),roundi(float(enemy["cohesion"]))]
+        else: live_order_label.text="적군 관측\n군단을 선택하여 위치와 활동 확인"
+    if is_instance_valid(combat_brief): combat_brief.text=_battle_brief()
+    var start_line: int = maxi(0, sim.events.size() - 3)
     var lines: String = ""
     for i in range(start_line, sim.events.size()):
         if not fog_enabled or sim.finished or _public_event(sim.events[i]):
@@ -557,6 +685,24 @@ func _refresh_hud() -> void:
         notice_label.text = "장수 선택 후 전령 파견\n실제 전장 이동 중 차단될 수 있습니다."
     if runtime_notice != "":
         notice_label.text = runtime_notice
+
+func _goal_name(p: Vector2) -> String:
+    for site in sim.outposts:
+        if p.distance_to(site["pos"])<135.0: return str(site["name"])
+    if sim.near_crossing(p.y) and absf(p.x-sim.river_x(p.y))<140.0: return _bridge_name(p.y)
+    return ("북측" if p.y<sim.field_size.y/3.0 else ("남측" if p.y>sim.field_size.y*2.0/3.0 else "중앙"))+" "+sim.terrain_at(p)
+
+func _battle_brief() -> String:
+    if not sim.started: return "양 진영 배치 및 작전 확인"
+    var own_loss: float=0.0
+    var own_damage: float=0.0
+    var fighting: int=0
+    for u in sim.units:
+        if int(u["side"])!=0: continue
+        own_loss+=float(u.get("casualties_taken",0.0))
+        own_damage+=float(u.get("damage_dealt",0.0))
+        if _field_action(u) in ["교전 중","사격 중"]: fighting+=1
+    return "교전·사격 %d개 부대  |  가한 피해 %s  ·  아군 손실 %s" % [fighting,_number_text(roundi(own_damage)),_number_text(roundi(own_loss))]
 
 func _gui_input(event: InputEvent) -> void:
     if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and Rect2(760,700,144,91.2).has_point(event.position):
@@ -618,15 +764,21 @@ func _map_select(mouse_pos: Vector2) -> void:
     var nearest_id: int = -1
     var best: float = 47.0/maxf(0.5,camera_zoom)
     var world: Vector2 = _world_mouse(mouse_pos)
-    for i in sim.command_ids(0):
-        var unit: Dictionary = sim.find_unit(i)
-        if float(unit["troops"]) <= 0.0: continue
+    for unit in sim.units:
+        if float(unit["troops"]) <= 0.0 or not _visible_unit(unit) or unit.has("parent_id"): continue
+        var i: int=int(unit["id"])
         var p: Vector2 = unit["pos"]
         var distance: float = world.distance_to(p)
         if distance < best:
             best = distance
             nearest_id = i
     if nearest_id >= 0:
+        var hit: Dictionary=sim.find_unit(nearest_id)
+        if int(hit["side"])==1:
+            observed_enemy_id=nearest_id
+            _show_enemy_roster()
+            accept_event()
+            return
         var row: int = sim.command_ids(0).find(nearest_id)
         if row >= 0 and row < unit_list.item_count:
             unit_list.select(row)
@@ -793,9 +945,10 @@ func _draw_map(_canvas: Control) -> void:
                 var anchor: Vector2 = _screen(selected["defense_anchor"])
                 map_layer.draw_arc(anchor, 28.0,0.0,TAU,32,COL_BLUE,2.0)
                 _draw_string("사수",anchor+Vector2(-12,4),11,COL_BLUE)
-    if detailed_map:
+    if not observing_enemy:
         _draw_cooperation_links()
         _draw_selected_bridge_route()
+    _draw_active_routes()
     _draw_fortifications()
     for report in sim.open_situations():
         var rp: Vector2 = report["pos"]
@@ -828,6 +981,7 @@ func _draw_map(_canvas: Control) -> void:
     for unit in visible_units:
         if field_view.has_point(unit["pos"]): _draw_unit(unit)
     _draw_combat_effects()
+    _draw_loss_markers()
     var label_areas: Array[Rect2] = []
     visible_units.sort_custom(func(a: Dictionary,b: Dictionary) -> bool:
         if int(a["id"]) == selected_id:
@@ -853,6 +1007,10 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         var slots: Array[Vector2]=_visual_slots(unit)
         for index in range(slots.size()):
             var point: Vector2=slots[index]
+            var center: Vector2=unit["pos"]
+            if sim.started and not sim.finished and not sim.paused and previous_centers.has(int(unit["id"])):
+                var previous: Vector2=previous_centers[int(unit["id"])]
+                point+=previous.lerp(center,clampf(step_buffer/0.1,0.0,1.0))-center
             var scatter: float=(100.0-float(unit["cohesion"]))*0.045
             point+=Vector2(sin(float(index)*7.3),cos(float(index)*5.7))*scatter
             if sim.wide_field and sim.terrain_at(point)=="하천": point=slots[index]
@@ -925,11 +1083,39 @@ func _draw_unit(unit: Dictionary) -> void:
     if str(unit["next_formation"]) != "":
         _draw_string("↻", p + Vector2(28, 0), 15, COL_GOLD)
 
+# Real goals only; avoid a misleading direct line across a committed crossing.
+func _draw_active_routes() -> void:
+    if not sim.started or sim.finished: return
+    var k: float=1.0/camera_zoom
+    for u in sim.units:
+        if float(u["troops"])<=0.0 or not _visible_unit(u): continue
+        var own: bool=int(u["side"])==0
+        var chosen: bool=int(u["id"])==(observed_enemy_id if observing_enemy else selected_id)
+        if not own and not chosen: continue
+        if not chosen and not detailed_map and camera_zoom>=0.85: continue
+        if float(u.get("bridge_y",-1.0))>=0.0 and own and chosen: continue
+        if not chosen and float(u.get("motion_speed",0.0))<2.0: continue
+        var p: Vector2=u["pos"]
+        var goal: Vector2=u["goal"]
+        if p.distance_to(goal)<20.0: continue
+        var color: Color=Color(COL_BLUE if own else COL_RED,0.82 if chosen else 0.39)
+        var route: Array[Vector2]=sim.committed_route_preview(u) if float(u.get("bridge_y",-1.0))>=0.0 else [goal]
+        for q in route:
+            var d: Vector2=q-p
+            var length: float=d.length()
+            if length>2.0:
+                var direction: Vector2=d/length
+                for n in range(0,int(length),maxi(1,roundi(20*k))):
+                    map_layer.draw_line(p+direction*n,p+direction*minf(length,n+11*k),color,(2.0 if chosen else 1.2)*k,true)
+                map_layer.draw_colored_polygon(PackedVector2Array([q,q-direction*10*k+direction.orthogonal()*5*k,q-direction*10*k-direction.orthogonal()*5*k]),color)
+            p=q
+        if chosen: _map_plate(_goal_name(goal),goal+Vector2(0,15*k),COL_BLUE if own else COL_RED,12)
+
 func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: Array[Dictionary]) -> void:
     var p: Vector2 = unit["pos"]
     var side: int = int(unit["side"])
     var accent: Color = COL_BLUE if side == 0 else COL_RED
-    var selected: bool = int(unit["id"]) == selected_id
+    var selected: bool = int(unit["id"]) == (observed_enemy_id if observing_enemy else selected_id)
     var inv: float = 1.0/camera_zoom
     var view := Rect2(camera_center-MAP_SIZE*0.5*inv,MAP_SIZE*inv).grow(-4.0*inv)
     if not view.grow(35.0).has_point(p):
@@ -939,12 +1125,12 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     elif bool(unit["surrounded"]): state = "포위"
     elif str(unit["general_state"]) != "건재": state = str(unit["general_state"])
     elif bool(unit["rallying"]): state = "재집결"
-    elif str(unit["action"]) == "매복": state = "매복"
+    else: state = _field_action(unit)
     if unit.has("parent_id") and camera_zoom < 0.8: return
     # Place all unit text in viewport pixels; the camera never scales glyphs.
     var rich: bool = selected or detailed_map
     var label: String = str(unit["name"])
-    if rich: label += "  "+_number_text(roundi(float(unit["troops"])))
+    if rich or camera_zoom>=0.9: label += "  "+_number_text(roundi(float(unit["troops"])))
     if rich and detailed_map: label += " · "+str(unit["formation"])
     if not state.is_empty(): label += " · "+state
     var fs: int = 14 if selected else 12
@@ -1119,6 +1305,11 @@ func _change_scenario(index: int) -> void:
     if campaign_active:
         return
     if sim.set_scenario(index):
+        battle_samples.clear()
+        recent_losses.clear()
+        previous_centers.clear()
+        sample_time=-100.0
+        _show_friendly_roster()
         _rebuild_terrain()
         _reset_camera()
         finish_seen = false
@@ -1181,7 +1372,10 @@ func _open_timeline() -> void:
 
 func _toggle_fog(value: bool) -> void:
     fog_enabled = value
+    if is_instance_valid(plan_fog): plan_fog.set_pressed_no_signal(value)
+    if value and sim.started: _refresh_visibility()
     _refresh_hud()
+    map_layer.queue_redraw()
     queue_redraw()
 
 func _request_takeover() -> void:
@@ -1436,6 +1630,35 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> v
     map_layer.draw_texture_rect_region(art,Rect2(Vector2(-extent.x*0.5,-extent.y*0.90),extent),source,shade)
     map_layer.draw_set_transform(map_offset,0.0,Vector2.ONE*camera_zoom)
 
+# Aggregate real casualties, never invent floating damage from decorative effects.
+func _sample_battle_losses() -> void:
+    sample_time=sim.battle_time
+    for u in sim.units:
+        var id: int=int(u["id"])
+        var total: float=float(u.get("casualties_taken",0.0))
+        var previous: float=float(battle_samples.get(id,total))
+        battle_samples[id]=total
+        var change: int=roundi(maxf(0.0,total-previous))
+        if change>0 and _visible_unit(u):
+            recent_losses[id]={"count":change,"time":sim.battle_time,"pos":u["pos"],"side":u["side"]}
+
+func _draw_loss_markers() -> void:
+    if not sim.started or sim.finished or camera_zoom<0.70: return
+    var offset: Vector2=MAP_SIZE*0.5-camera_center*camera_zoom
+    for id in recent_losses:
+        var item: Dictionary=recent_losses[id]
+        var age: float=maxf(0.0,render_clock-float(item["time"]))
+        if age>0.8: continue
+        var u: Dictionary=sim.find_unit(id)
+        if u.is_empty() or not _visible_unit(u): continue
+        var p: Vector2=offset+(item["pos"] as Vector2)*camera_zoom+Vector2(22,-40-age*18)
+        map_layer.draw_set_transform(p,0.0,Vector2.ONE)
+        var caption: String="-"+_number_text(int(item["count"]))
+        var color: Color=Color(COL_RED if int(item["side"])==0 else COL_GOLD,1.0-age*0.8)
+        _draw_string(caption,Vector2(1,1),14,Color(0.04,0.05,0.04,color.a))
+        _draw_string(caption,Vector2.ZERO,14,color)
+    map_layer.draw_set_transform(offset,0.0,Vector2.ONE*camera_zoom)
+
 func _draw_combat_effects() -> void:
     for fx in sim.visual_effects:
         var age: float = maxf(0.0,render_clock-float(fx["time"]))
@@ -1470,9 +1693,9 @@ func _draw_combat_effects() -> void:
                     map_layer.draw_line(contact+ray*0.6,contact+ray,Color(0.95,0.76,0.42,alpha*0.75),1.1,true)
             _:
                 var impact: Vector2=(p+target)*0.5
-                _paint_fx(4,impact,18.0,alpha*0.65)
-                for k in range(5):
-                    var ray: Vector2=Vector2.from_angle(float(k)*TAU/5.0+float(fx["time"]))*(3.0+age*9.0)
+                _paint_fx(4,impact,26.0,alpha*0.80)
+                for k in range(9):
+                    var ray: Vector2=Vector2.from_angle(float(k)*TAU/9.0+float(fx["time"]))*(4.0+age*15.0)
                     map_layer.draw_line(impact+ray*0.45,impact+ray,Color(1.0,0.86,0.56,alpha*0.76),1.0,true)
 
 func _setup_sound() -> void:
@@ -1547,6 +1770,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
             KEY_PLUS, KEY_EQUAL: _change_zoom(0.25)
             KEY_MINUS: _change_zoom(-0.25)
             KEY_F: _focus_selected()
+            KEY_C: _focus_combat()
+            KEY_V: _toggle_fog(not fog_enabled)
             KEY_HOME: _reset_camera()
             KEY_B: _open_briefing()
             KEY_A: _open_analysis()
@@ -2120,10 +2345,14 @@ func _refresh_visibility() -> void:
 func _visual_slots(unit: Dictionary) -> Array[Vector2]:
     if sim.six_armies:
         # Visual detail uses the same formation geometry; combat still uses authoritative slots.
-        if str(unit["next_formation"])!="": return sim.formation_slots(unit)
         var count: int=clampi(ceili(float(unit["troops"])/65.0),1,72)
         var spacing: float=8.8 if str(unit["type"])=="기병" else 8.0
-        return sim.army_slots(unit,count,spacing)
+        var points: Array[Vector2]=sim.army_slots(unit,count,spacing)
+        if str(unit["next_formation"])!="":
+            var target: Array[Vector2]=sim.army_slots(unit,count,spacing,str(unit["next_formation"]))
+            var blend: float=smoothstep(0.0,1.0,1.0-float(unit["form_remaining"])/maxf(0.1,float(unit["form_duration"])))
+            for j in range(points.size()): points[j]=sim._dry_formation_slot(unit["pos"],points[j].lerp(target[j],blend))
+        return points
     var result: Array[Vector2] = []
     var count: int = clampi(ceili(float(unit["troops"])/3.0),1,64)
     var front: Vector2 = unit["facing"]
