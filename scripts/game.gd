@@ -10,6 +10,12 @@ const OrderMap = preload("res://scripts/order_map.gd")
 const PAINTED_ART = preload("res://assets/art/painted_atlas.webp")
 const SOLDIER_ART = preload("res://assets/art/soldier_sprites.svg")
 const SOLDIER_MOTION = preload("res://assets/art/soldier_motion.svg")
+const BATTLE_ARROW = preload("res://assets/art/battle_arrow.png")
+const VOLLEY_ARROW_DELAYS: Array[float] = [0.0,0.041,0.013,0.056,0.026,0.066,0.034,0.006,0.049,0.020]
+const VOLLEY_ARROW_SPREAD: Array[Vector2] = [
+    Vector2.ZERO,Vector2(-0.72,0.28),Vector2(0.80,-0.64),Vector2(-0.26,0.82),Vector2(0.45,-0.36),
+    Vector2(-0.98,-0.15),Vector2(0.94,0.78),Vector2(0.19,0.43),Vector2(-0.50,-0.81),Vector2(0.65,0.12),
+]
 const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
 const BRIDGE_HQ = preload("res://assets/art/bridge_hq.svg")
 const GENERAL_PORTRAITS=preload("res://assets/art/general_portraits.svg")
@@ -2509,8 +2515,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     if aiming==FrontView.BowPhase.DRAW and column==0 and camera_zoom>=1.35:
         var draw: float=smoothstep(0.08,FrontView.VOLLEY_RELEASE,bow_age)
         var hand:=Vector2(lerpf(0.25,-0.8,draw),-5.9)
-        var tip:=hand+Vector2(4.85,-0.45)
-        map_layer.draw_line(hand,tip,Color("#ead4a2"),0.63,true)
+        map_layer.draw_texture_rect(BATTLE_ARROW,Rect2(hand-Vector2(0.40,0.85),Vector2(5.2,1.30)),false,shade)
     map_layer.draw_set_transform(map_offset,0.0,Vector2.ONE*camera_zoom)
 
 # Aggregate real casualties, never invent floating damage from decorative effects.
@@ -2618,32 +2623,50 @@ func _draw_combat_effects() -> void:
 func _draw_volley(fx: Dictionary, origin: Vector2, target: Vector2, age: float) -> void:
     var lanes: Array[Vector2]=[origin,target]
     if fx.has("arrow_lanes"): lanes=fx["arrow_lanes"]
+    var view_offset: Vector2=MAP_SIZE*0.5-camera_center*camera_zoom
+    var view:=Rect2(Vector2.ZERO,MAP_SIZE).grow(12.0)
+    var arrow_height: float=maxf(1.38,1.0/camera_zoom)
+    var arrow_rect:=Rect2(-3.65,-arrow_height*0.5,5.85,arrow_height)
+    var arrow_count: int=10 if camera_zoom>=1.15 else (6 if camera_zoom>=0.75 else 3)
     for i in range(0,lanes.size(),2):
         var from: Vector2=lanes[i]
         var to: Vector2=lanes[i+1]
         if fog_enabled and not sim.finished and (not sim.player_can_see(from) or not sim.player_can_see(to)): continue
+        var airborne: float=FrontView.arrow_age(age,i>>1)
+        if airborne<0.0: continue
         var direction: Vector2=(to-from).normalized()
         var lateral: Vector2=direction.orthogonal()
         var launch: Vector2=from+direction*2.4+Vector2(0,-6.0)
         var impact: Vector2=to+Vector2(0,-3.4)
-        var range_length: float=launch.distance_to(impact)
-        var flight: float=clampf(range_length/390.0,0.18,0.46)
-        var rise: float=clampf(range_length*0.12,5.0,18.0)
-        var airborne: float=FrontView.arrow_age(age,i>>1)
-        for j in range(3):
-            var elapsed: float=airborne-float(j)*0.032
-            var progress: float=elapsed/flight
+        var separation: float=launch.distance_to(impact)
+        var flight: float=clampf(separation/390.0,0.17,0.45)
+        var rise: float=clampf(separation*0.23,7.0,29.0)
+        # One real volley per lane. Nearby soldiers spread out the drawn arrows.
+        for j in range(arrow_count):
+            var spread: Vector2=VOLLEY_ARROW_SPREAD[j]
+            var progress: float=(airborne-VOLLEY_ARROW_DELAYS[j])/(flight*(1.0+spread.y*0.17))
             if progress<0.0 or progress>=1.0: continue
-            var arrow: Vector2=FrontView.arrow_position(launch,impact,progress,rise)+lateral*(float(j)-1.0)*2.0
-            var tangent: Vector2=(impact-launch+Vector2(0,-4.0*rise*(1.0-2.0*progress))).normalized()
-            var tail: Vector2=arrow-tangent*8.0
-            var alpha: float=lerpf(1.0,0.58,progress)
-            map_layer.draw_line(tail,arrow,Color(Color("#302720"),alpha),2.0,true)
-            map_layer.draw_line(tail,arrow,Color(COL_GOLD,alpha),0.95,true)
-            if camera_zoom>=1.35:
-                map_layer.draw_line(tail,tail+tangent*2.0+lateral*1.3,Color(COL_TEXT,alpha),0.7,true)
-        if airborne>=flight and airborne<=flight+0.16:
-            _paint_fx(1,impact,13.0,(1.0-(airborne-flight)/0.16)*0.52)
+            var path_start: Vector2=launch+lateral*spread.x*5.4
+            var path_end: Vector2=impact+lateral*spread.x*9.6+direction*spread.y*9.0
+            var arc_height: float=rise*(1.0+spread.y*0.28)
+            var point: Vector2=FrontView.arrow_position(path_start,path_end,progress,arc_height)
+            var screen: Vector2=view_offset+point*camera_zoom
+            if not view.has_point(screen): continue
+            var tangent: Vector2=path_end-path_start+Vector2(0,-4.0*arc_height*(1.0-2.0*progress))
+            map_layer.draw_set_transform(screen,tangent.angle(),Vector2.ONE*camera_zoom)
+            map_layer.draw_texture_rect(BATTLE_ARROW,arrow_rect,false)
+        map_layer.draw_set_transform(view_offset,0.0,Vector2.ONE*camera_zoom)
+        var impact_age: float=airborne-flight
+        if impact_age>=0.0 and impact_age<0.085 and camera_zoom>=0.75:
+            _draw_arrow_impact(impact,direction,impact_age/0.085)
+
+func _draw_arrow_impact(point: Vector2, incoming: Vector2, life: float) -> void:
+    var across: Vector2=incoming.orthogonal()
+    var fade: float=(1.0-life)*0.52
+    for i in range(3):
+        var side: float=float(i)-1.0
+        var mote: Vector2=point+across*side*(1.0+life*3.2)-incoming*life*(1.2+absf(side))
+        map_layer.draw_circle(mote,0.44,Color(0.73,0.68,0.54,fade),true,-1.0,true)
 
 func _draw_charge_stop(origin: Vector2, target: Vector2, age: float, alpha: float) -> void:
     var axis: Vector2=(target-origin).normalized()
