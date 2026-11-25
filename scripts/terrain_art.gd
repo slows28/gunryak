@@ -103,7 +103,7 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                 ground = ground.lightened(maxf(0.0,micro)*0.08)
             for forest in forests:
                 var n: Vector2 = (p-forest.get_center())/(forest.size*0.5+Vector2(9,9))
-                var edge: float = pow(pow(absf(n.x),3.0)+pow(absf(n.y),3.0),1.0/3.0)+g*0.12
+                var edge: float = lerpf(maxf(absf(n.x),absf(n.y)),n.length(),0.45)+g*0.12
                 var cover: float = 1.0-smoothstep(0.72,1.08,edge)
                 if cover>0.0:
                     var forest_color:Color=shade.lerp(forest_art.get_pixelv(uv),0.72)
