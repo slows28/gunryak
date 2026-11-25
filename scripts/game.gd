@@ -86,7 +86,12 @@ var sector_snapshot: Array[Dictionary]=[]
 var sector_selection: int=-1
 var contact_cache: Dictionary={}
 var contact_cache_step: int=-1
-var sector_overlay: Control
+var highlight_button: Button
+var highlight_active: bool=false
+var highlight_seen: Dictionary={}
+var highlight_start: float=0.0
+var highlight_deadline: float=0.0
+var highlight_prior_speed: float=1.0
 var feed_toggle: Button
 var show_general_feed: bool=true
 var battle_samples: Dictionary = {}
@@ -298,8 +303,12 @@ func _build_interface() -> void:
     feed_toggle.tooltip_text="장수의 판단·심리 변화와 일반 전황 기록을 전환"
     event_label = _label("",Vector2(153,692),Vector2(578,102),13,COL_TEXT)
     event_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    notice_label = _label("",Vector2(950,697),Vector2(306,61),13,COL_MUTED)
+    notice_label = _label("",Vector2(950,692),Vector2(306,37),11,COL_MUTED)
+    notice_label.clip_text=true
     notice_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    highlight_button=_button("다음 주요 상황 ▶",Vector2(950,731),Vector2(306,27),_advance_highlight)
+    _primary_button(highlight_button)
+    highlight_button.tooltip_text="실제 시뮬레이션을 최대 16배로 진행하여 새 교전·위기·거점 변화·긴급 보고에서 자동 정지합니다."
     map_detail_button = _button("전술 표시 · 간결",Vector2(950,761),Vector2(306,28),_toggle_map_detail)
     map_detail_button.tooltip_text = "군단 진형과 전술 이동 경로 표시 전환"
     _build_planning_dialog()
@@ -535,6 +544,7 @@ func _apply_order() -> void:
     queue_redraw()
 
 func _start() -> void:
+    if highlight_active: _stop_highlight("출전 준비",false)
     if is_instance_valid(title_screen):
         title_screen.hide()
     if is_instance_valid(order_view): order_view.hide()
@@ -554,13 +564,67 @@ func _start() -> void:
     _select_unit()
     _refresh_hud()
 
+# Optional FM-like highlight progression. No time jumps, no skipped fixed steps.
+func _advance_highlight() -> void:
+    if not sim.started or sim.finished: return
+    if highlight_active:
+        _stop_highlight("하이라이트 중지",true)
+        return
+    if order_view.visible or planning_dialog.visible or situation_dialog.visible: return
+    highlight_seen=FrontView.milestones(sim,fog_enabled)
+    highlight_start=sim.battle_time
+    highlight_deadline=sim.battle_time+90.0/sim.operation_scale()
+    highlight_prior_speed=game_speed
+    highlight_active=true
+    game_speed=16.0
+    sim.paused=false
+    runtime_notice="실제 전투 진행 중 · 다음 주요 상황 탐색"
+    speed_btn.text="속도 ×16"
+    _refresh_hud()
+
+func _poll_highlight() -> void:
+    if not highlight_active: return
+    if sim.finished:
+        _stop_highlight("전투 종료",false)
+        return
+    if sim.battle_time-highlight_start<1.0/sim.operation_scale(): return
+    var current: Dictionary=FrontView.milestones(sim,fog_enabled)
+    for key in current:
+        if highlight_seen.has(key): continue
+        var event: Dictionary=current[key]
+        camera_center=event["point"]
+        camera_zoom=1.4
+        _clamp_camera()
+        _stop_highlight(str(event["label"]),true)
+        return
+    if sim.battle_time>=highlight_deadline:
+        _stop_highlight("90초 진행 · 새 주요 사건 없음",true)
+
+func _stop_highlight(message: String,pause_after: bool) -> void:
+    if not highlight_active: return
+    highlight_active=false
+    highlight_seen.clear()
+    game_speed=highlight_prior_speed
+    step_buffer=0.0
+    render_clock=sim.battle_time
+    if pause_after and not sim.finished: sim.paused=true
+    runtime_notice=message
+    speed_btn.text="속도 ×%s" % str(game_speed)
+    _refresh_hud()
+    map_layer.queue_redraw()
+    queue_redraw()
+
 func _pause() -> void:
     if not sim.started or sim.finished:
+        return
+    if highlight_active:
+        _stop_highlight("하이라이트 중지",true)
         return
     sim.paused = not sim.paused
     _refresh_hud()
 
 func _speed() -> void:
+    if highlight_active: _stop_highlight("일반 속도로 복귀",false)
     if game_speed == 0.5:
         game_speed = 1.0
     elif game_speed == 1.0:
@@ -576,6 +640,7 @@ func _reset() -> void:
         runtime_notice = "캠페인 전투 중에는 초기화할 수 없습니다."
         _refresh_hud()
         return
+    if highlight_active: _stop_highlight("초기화",false)
     sim.reset()
     battle_samples.clear()
     recent_losses.clear()
@@ -614,7 +679,7 @@ func _process(delta: float) -> void:
     if sim.started and not sim.paused and not sim.finished:
         render_clock = sim.battle_time + step_buffer
     if is_instance_valid(title_screen) and not title_screen.visible and (not is_instance_valid(strategy_view) or not strategy_view.visible) and not sim.finished:
-        if not planning_dialog.visible and not brief_dialog.visible and not situation_dialog.visible:
+        if not planning_dialog.visible and not brief_dialog.visible and not situation_dialog.visible and not mind_dialog.visible:
             var pan := Vector2(float(Input.is_physical_key_pressed(KEY_RIGHT))-float(Input.is_physical_key_pressed(KEY_LEFT)),float(Input.is_physical_key_pressed(KEY_DOWN))-float(Input.is_physical_key_pressed(KEY_UP)))
             if pan.length_squared() > 0.0:
                 camera_center += pan.normalized()*minf(delta,0.15)*410.0/camera_zoom
@@ -629,7 +694,8 @@ func _process(delta: float) -> void:
             sim.step(0.1)
             step_buffer -= 0.1
             ticks += 1
-            if sim.finished:
+            if highlight_active: _poll_highlight()
+            if sim.finished or sim.paused:
                 break
         if ticks == 10:
             step_buffer = minf(step_buffer, 0.4)
@@ -701,6 +767,9 @@ func _refresh_hud() -> void:
     start_btn.disabled = sim.started or sim.finished
     pause_btn.disabled = not sim.started or sim.finished
     pause_btn.text = "재개" if sim.paused else "일시정지"
+    if is_instance_valid(highlight_button):
+        highlight_button.disabled=not sim.started or sim.finished
+        highlight_button.text="주요 상황 탐색 중 · 중지" if highlight_active else "다음 주요 상황 ▶"
     apply_btn.disabled = sim.started and (sim.turn < 6 or sim.finished)
     apply_btn.text = "초기 작전 설정" if not sim.started else "전령 보내기 (6턴~)"
     start_btn.visible=not sim.started
@@ -803,7 +872,8 @@ func _refresh_general_cards() -> void:
         var mood: String=str(mind.get("mood","준비"))
         var reason: String=str(mind.get("reason","초기 배치"))
         var brief: String=reason if reason.length()<=14 else reason.substr(0,13)+"…"
-        card.text="%s · %s\n%s" % [str(u["name"]),_field_action(u),brief]
+        brief=reason if reason.length()<=8 else reason.substr(0,7)+"…"
+        card.text="%s · %s\n%s / %s" % [str(u["name"]),mood,_field_action(u),brief]
         if card.icon==null or str(card.get_meta("general_name",""))!=str(u["name"]):
             card.icon=_commander_icon(str(u["name"]),0)
             card.set_meta("general_name",str(u["name"]))
@@ -1060,7 +1130,19 @@ func _draw() -> void:
         _bronze_frame(frame)
     draw_line(Vector2(950,550),Vector2(1254,550),Color("#526862"),1.0)
     draw_line(Vector2(950,362),Vector2(1254,362),Color("#706049"),1.0)
+    _draw_force_balance()
     _draw_minimap()
+
+func _draw_force_balance() -> void:
+    # Current manpower share, not win probability; no data in recon mode.
+    var area:=Rect2(960,57,290,5)
+    draw_rect(area,Color("#353f40"))
+    if fog_enabled and not sim.finished: return
+    var own: float=float(sim.total_troops(0))
+    var enemy: float=float(sim.total_troops(1))
+    var ratio: float=own/maxf(1.0,own+enemy)
+    draw_rect(Rect2(area.position,Vector2(area.size.x*ratio,area.size.y)),COL_BLUE)
+    draw_rect(Rect2(area.position+Vector2(area.size.x*ratio,0),Vector2(area.size.x*(1.0-ratio),area.size.y)),COL_RED)
 
 func _command_panel(area: Rect2,ornament: bool) -> void:
     draw_texture_rect_region(COMMAND_SKIN,area,Rect2(0,0,256,256))
@@ -1636,6 +1718,7 @@ func _refresh_plan_status() -> void:
 func _change_scenario(index: int) -> void:
     if campaign_active:
         return
+    if highlight_active: _stop_highlight("전장 변경",false)
     if sim.set_scenario(index):
         battle_samples.clear()
         recent_losses.clear()
@@ -2368,10 +2451,7 @@ func _show_outcome() -> void:
         row.add_theme_constant_override("separation",12)
         card.add_child(row)
         var portrait_image := TextureRect.new()
-        var icon := AtlasTexture.new()
-        icon.atlas = PAINTED_ART
-        icon.region = _art_region(_portrait_tile(str(unit["name"])))
-        portrait_image.texture = icon
+        portrait_image.texture = _commander_icon(str(unit["name"]),0)
         portrait_image.custom_minimum_size = Vector2(61,61)
         portrait_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
         portrait_image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -2493,6 +2573,7 @@ func _outcome_analysis() -> void:
     _open_analysis()
 
 func _launch_campaign_battle(target: int) -> bool:
+    if highlight_active: _stop_highlight("전장 변경",false)
     if not campaign.prepare(target,sim):
         return false
     campaign_active = true
@@ -2851,6 +2932,7 @@ func _change_link(partner: int) -> void:
 func _open_order_map() -> void:
     if not is_instance_valid(order_view) or sim.finished: return
     if order_view.visible: return
+    if highlight_active: _stop_highlight("작전 지시를 위해 중지",true)
     if observing_enemy: _show_friendly_roster()
     order_pause_before=sim.paused
     if sim.started: sim.paused=true
