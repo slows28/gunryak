@@ -238,6 +238,126 @@ func _initialize() -> void:
     capture._check_victory()
     check(capture.finished and capture.result.find("승리") >= 0, "enemy strategist captured after penetration")
 
+
+    # M2 batch: (1) physical body collision; (2) morale and formation pressure.
+    var physics = WarSim.new()
+    var blue_line: Dictionary = physics.find_unit(0)
+    var red_line: Dictionary = physics.find_unit(3)
+    for outsider in physics.units:
+        if int(outsider["id"]) not in [0, 3]:
+            outsider["troops"] = 0.0
+    blue_line["pos"] = Vector2(400, 300)
+    red_line["pos"] = Vector2(400, 300)
+    blue_line["formation"] = "횡대"
+    red_line["formation"] = "횡대"
+    physics._resolve_frontline(0.1)
+    check((blue_line["pos"] as Vector2).distance_to(red_line["pos"]) >= 33.9, "overlapping enemy formations separate physically")
+    var weak = WarSim.new()
+    var strong_line: Dictionary = weak.find_unit(0)
+    var weak_line: Dictionary = weak.find_unit(3)
+    for outsider in weak.units:
+        if int(outsider["id"]) not in [0, 3]:
+            outsider["troops"] = 0.0
+    strong_line["pos"] = Vector2(400, 300)
+    weak_line["pos"] = Vector2(435, 300)
+    strong_line["troops"] = 145.0
+    weak_line["troops"] = 36.0
+    weak_line["morale"] = 60.0
+    var weak_start_x: float = (weak_line["pos"] as Vector2).x
+    weak._resolve_frontline(0.1)
+    check((weak_line["pos"] as Vector2).x > weak_start_x, "weaker formation is pushed away from the stronger front")
+    check(float(weak_line["front_pressure"]) > 0.0, "frontline pressure visible in model")
+    check(weak.validate_state().is_empty(), "frontline collision state remains valid")
+
+    # (3) Personality selects only physically reachable, observed flank maneuvers.
+    var flank = WarSim.new()
+    var horse: Dictionary = flank.find_unit(2)
+    var observed: Dictionary = flank.find_unit(3)
+    horse["pos"] = Vector2(528, 215)
+    observed["pos"] = Vector2(640, 215)
+    observed["troops"] = 70.0
+    observed["facing"] = Vector2.LEFT
+    flank._decide(horse)
+    check(str(horse["action"]) == "측면 우회", "aggressive cavalry plans flank instead of frontal rush")
+    check(absf((horse["goal"] as Vector2).y - (observed["pos"] as Vector2).y) > 70.0, "flank goal is physically to the enemy side")
+    var cautious: Dictionary = flank.find_unit(0)
+    cautious["pos"] = Vector2(528, 215)
+    flank._decide(cautious)
+    check(str(cautious["action"]) != "측면 우회", "cautious commander cannot select aggressive flank")
+
+    # (4) Road speeds movement, forests slow cavalry; hill aids physical archery.
+    var terrain = WarSim.new()
+    var walker: Dictionary = terrain.find_unit(0)
+    walker["formation"] = "횡대"
+    walker["next_formation"] = ""
+    walker["action"] = "진격"
+    check(terrain.terrain_at(Vector2(210, 282)) == "도로", "roads recognized at map coordinates")
+    check(terrain.terrain_at(Vector2(351, 120)) == "숲", "woodland recognized at map coordinates")
+    check(terrain.terrain_at(Vector2(450, 250)) == "고지", "hill recognized at map coordinates")
+    walker["pos"] = Vector2(210, 210)
+    walker["goal"] = Vector2(310, 210)
+    terrain._move_unit(walker, 0.1)
+    var plain_distance: float = (walker["pos"] as Vector2).x - 210.0
+    walker["pos"] = Vector2(210, 282)
+    walker["goal"] = Vector2(310, 282)
+    terrain._move_unit(walker, 0.1)
+    var road_distance: float = (walker["pos"] as Vector2).x - 210.0
+    walker["pos"] = Vector2(351, 120)
+    walker["goal"] = Vector2(440, 120)
+    terrain._move_unit(walker, 0.1)
+    var forest_distance: float = (walker["pos"] as Vector2).x - 351.0
+    check(road_distance > plain_distance and plain_distance > forest_distance, "terrain makes real travel-speed differences")
+
+    var hill = WarSim.new()
+    for outsider in hill.units:
+        if int(outsider["id"]) not in [1, 4]:
+            outsider["troops"] = 0.0
+    var bow: Dictionary = hill.find_unit(1)
+    var enemy_bow: Dictionary = hill.find_unit(4)
+    bow["pos"] = Vector2(439, 250)
+    enemy_bow["pos"] = Vector2(540, 250)
+    hill._combat(0.1)
+    var hill_loss: float = float(enemy_bow["initial_troops"]) - float(enemy_bow["troops"])
+    enemy_bow["troops"] = enemy_bow["initial_troops"]
+    enemy_bow["morale"] = 100.0
+    bow["pos"] = Vector2(439, 330)
+    enemy_bow["pos"] = Vector2(540, 330)
+    hill._combat(0.1)
+    var plain_loss: float = float(enemy_bow["initial_troops"]) - float(enemy_bow["troops"])
+    check(hill_loss > plain_loss, "high ground increases actual archer combat damage")
+
+    # (5) Couriers require a physical route and can be intercepted or escorted.
+    var intercepted = WarSim.new()
+    intercepted.start()
+    intercepted.turn = 6
+    var recipient: Dictionary = intercepted.find_unit(0)
+    recipient["pos"] = Vector2(500, 260)
+    intercepted.commanders[0]["pos"] = Vector2(200, 260)
+    var enemy_interceptor: Dictionary = intercepted.find_unit(3)
+    enemy_interceptor["pos"] = Vector2(214, 260)
+    var old_mission: String = str(recipient["mission"])
+    check(intercepted.request_order(0, "본진 방어", "방진 유지"), "physical courier dispatched")
+    intercepted._update_couriers(0.1)
+    check(intercepted.couriers.is_empty() and intercepted.intercepted_orders == 1, "unescorted courier intercepted on enemy contact")
+    check(str(recipient["mission"]) == old_mission, "interception preserves old orders")
+    var escorted = WarSim.new()
+    escorted.start()
+    escorted.turn = 6
+    var escorted_recipient: Dictionary = escorted.find_unit(0)
+    escorted_recipient["pos"] = Vector2(500, 260)
+    escorted.commanders[0]["pos"] = Vector2(200, 260)
+    escorted.find_unit(3)["pos"] = Vector2(214, 260)
+    escorted.find_unit(1)["pos"] = Vector2(214, 270)
+    check(escorted.request_order(0, "본진 방어", "방진 유지"), "escorted courier dispatched")
+    escorted._update_couriers(0.1)
+    check(escorted.intercepted_orders == 0 and escorted.couriers.size() == 1, "friendly escort protects threatened courier")
+    escorted.find_unit(3)["pos"] = Vector2(760, 170)
+    for j in range(30):
+        escorted._update_couriers(0.1)
+    check(escorted.delivered_orders == 1 and escorted.couriers.is_empty(), "protected courier eventually delivers order")
+    check(str(escorted_recipient["mission"]) == "본진 방어", "delivered courier changes mission")
+    check(escorted.validate_state().is_empty(), "courier interception state remains valid")
+
     print("GUNRYAK_TEST_SUMMARY pass=%d fail=%d" % [passes, failures])
     quit(0 if failures == 0 else 1)
 

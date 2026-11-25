@@ -62,7 +62,7 @@ func _build_interface() -> void:
     pause_btn = _button("일시정지", Vector2(554, 25), Vector2(102, 37), _pause)
     speed_btn = _button("속도 ×1", Vector2(662, 25), Vector2(100, 37), _speed)
     _button("초기화", Vector2(768, 25), Vector2(88, 37), _reset)
-    status_label = _label("", Vector2(948, 24), Vector2(312, 48), 14, COL_GOLD)
+    status_label = _label("", Vector2(948, 15), Vector2(312, 66), 12, COL_GOLD)
     _label("출전 장수", Vector2(958, 106), Vector2(270, 28), 20, COL_TEXT)
     _label("장수 선택 → 임무·진형 방침 설정", Vector2(958, 136), Vector2(291, 22), 12, COL_MUTED)
     unit_list = ItemList.new()
@@ -82,7 +82,7 @@ func _build_interface() -> void:
     _button("전선 접근", Vector2(956, 521), Vector2(142, 36), _commander_forward)
     _button("본진 복귀", Vector2(1107, 521), Vector2(144, 36), _commander_back)
     selected_label = _label("", Vector2(957, 577), Vector2(294, 27), 15, COL_GOLD)
-    details_label = _label("", Vector2(957, 606), Vector2(293, 57), 13, COL_TEXT)
+    details_label = _label("", Vector2(957, 606), Vector2(293, 74), 12, COL_TEXT)
     details_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     _label("최근 전황", Vector2(27, 693), Vector2(170, 27), 17, COL_TEXT)
     event_label = _label("", Vector2(152, 691), Vector2(735, 102), 12, COL_TEXT)
@@ -228,7 +228,7 @@ func _refresh_hud() -> void:
         phase = "일시정지"
     elif sim.started:
         phase = "작전 %d턴  /  %.0f초" % [sim.turn, sim.battle_time]
-    status_label.text = "%s\n아군 %d  :  적군 %d" % [phase, sim.total_troops(0), sim.total_troops(1)]
+    status_label.text = "%s\n아군 %d : 적군 %d\n전령 이동 %d · 도착 %d · 차단 %d" % [phase, sim.total_troops(0), sim.total_troops(1), sim.couriers.size(), sim.delivered_orders, sim.intercepted_orders]
     start_btn.disabled = sim.started or sim.finished
     pause_btn.disabled = not sim.started or sim.finished
     pause_btn.text = "재개" if sim.paused else "일시정지"
@@ -237,7 +237,7 @@ func _refresh_hud() -> void:
     var unit: Dictionary = sim.find_unit(selected_id)
     if not unit.is_empty():
         selected_label.text = "%s   %d명 / 사기 %d" % [str(unit["name"]), int(float(unit["troops"])), int(float(unit["morale"]))]
-        details_label.text = "%s · %s\n%s 진형 / 접촉 %d명 · 보급 %s\n%s" % [str(unit["action"]), str(unit["mission"]), str(unit["formation"]), int(unit.get("contact_troops", 0)), "정상" if bool(unit["supplied"]) else "미보급", str(unit["reason"])]
+        details_label.text = "%s · %s\n진형 %s · 지형 %s · 접촉 %d\n전선 압박 %d%% · 보급 %s\n%s" % [str(unit["action"]), str(unit["mission"]), str(unit["formation"]), sim.terrain_at(unit["pos"]), int(unit.get("contact_troops", 0)), int(round(float(unit.get("front_pressure", 0.0)) * 100.0)), "정상" if bool(unit["supplied"]) else "미보급", str(unit["reason"])]
     var start_line: int = maxi(0, sim.events.size() - 4)
     var lines: String = ""
     for i in range(start_line, sim.events.size()):
@@ -250,7 +250,7 @@ func _refresh_hud() -> void:
     elif sim.turn < 6:
         notice_label.text = "최초 5턴은 사전 명령 수행.\n이후부터 전령 전달이 가능합니다."
     else:
-        notice_label.text = "장수 선택 후 새 작전을 보내면 전령이 실제로 이동합니다."
+        notice_label.text = "장수 선택 후 전령 파견\n실제 전장 이동 중 차단될 수 있습니다."
     if runtime_notice != "":
         notice_label.text = runtime_notice
 
@@ -315,6 +315,13 @@ func _draw() -> void:
         var p: Vector2 = _screen(letter["pos"])
         draw_circle(p, 5.0, COL_GOLD)
         _draw_string("전령", p + Vector2(-14, -11), 12, COL_GOLD)
+    # Draw real maneuver waypoints so an aggressive flanking decision is visible.
+    for unit in sim.units:
+        if float(unit["troops"]) > 0.0 and str(unit["action"]) == "측면 우회":
+            var start_point: Vector2 = _screen(unit["pos"])
+            var flank_waypoint: Vector2 = _screen(unit["goal"])
+            draw_line(start_point, flank_waypoint, Color(COL_GOLD, 0.58), 1.4)
+            draw_arc(flank_waypoint, 8.0, 0.0, TAU, 24, COL_GOLD, 1.3)
     var label_areas: Array[Rect2] = []
     for unit in sim.units:
         if float(unit["troops"]) > 0.0:
@@ -342,6 +349,8 @@ func _draw_unit(unit: Dictionary, label_areas: Array[Rect2]) -> void:
                 draw_circle(point, 1.5, COL_BG)
     if side == 0 and int(unit["id"]) == selected_id:
         draw_arc(p, 39.0, 0.0, TAU, 48, COL_GOLD, 1.8)
+    if float(unit.get("front_pressure", 0.0)) > 0.10:
+        draw_arc(p, 35.0, 0.0, TAU, 32, COL_RED if side == 0 else COL_BLUE, 2.0)
     var contacts: int = int(unit.get("contact_troops", 0))
     if contacts > 0 and unit_type != "궁병":
         draw_arc(p, 30.0, 0.0, TAU, 32, Color(COL_GOLD, 0.58), 1.8)
