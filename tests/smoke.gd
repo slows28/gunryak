@@ -37,7 +37,7 @@ func _initialize() -> void:
 
     # Full battles: deterministic seeds and repeated state validation.
     var signatures: Array[String] = []
-    for scenario in range(6):
+    for scenario in range(36):
         var run = WarSim.new()
         run.rng.seed = 90000 + scenario
         run.start()
@@ -54,6 +54,30 @@ func _initialize() -> void:
         check(run.result != "", "battle has result seed %d" % scenario)
         if scenario == 0:
             signatures.append(_signature(run))
+    # 4 missions × 4 formation policies: every combination exactly once.
+    var mission_options: Array[String] = ["중앙 진격", "북측 확보", "남측 우회", "본진 방어"]
+    var policy_options: Array[String] = ["현장 판단", "횡대 유지", "종대 유지", "방진 유지"]
+    var tried: Dictionary = {}
+    for variant in range(mission_options.size() * policy_options.size()):
+        var alternate = WarSim.new()
+        var mission: String = mission_options[variant % mission_options.size()]
+        var policy: String = policy_options[int(variant / mission_options.size())]
+        var combination: String = mission + " + " + policy
+        check(not tried.has(combination), "new plan-policy combination %d" % variant)
+        tried[combination] = true
+        check(alternate.select_unit_mission(variant % 3, mission, policy), "alternative planning %d" % variant)
+        alternate.rng.seed = 120000 + variant
+        alternate.start()
+        var loop: int = 0
+        while not alternate.finished and loop < 2200:
+            alternate.step(0.1)
+            loop += 1
+            if loop % 90 == 0 and not alternate.validate_state().is_empty():
+                check(false, "alternative plan state %d" % variant)
+                break
+        check(alternate.finished, "alternative plan completes %d" % variant)
+    check(tried.size() == 16, "all 16 distinct plan-policy combinations tested")
+
     var replay = WarSim.new()
     replay.rng.seed = 90000
     replay.start()
@@ -62,6 +86,33 @@ func _initialize() -> void:
         replay.step(0.1)
         t += 1
     check(_signature(replay) == signatures[0], "identical seed replay matches")
+
+    # A supply raid must persist across successive ~2-second AI decisions.
+    var raid = WarSim.new()
+    var raider: Dictionary = raid.find_unit(2)
+    raider["pos"] = Vector2(592, 310)
+    raid._decide(raider)
+    check(str(raider["action"]) == "기지 습격", "raider starts observed supply raid")
+    var first_raid_target: Vector2 = raider["goal"]
+    raid.battle_time = 2.1
+    raid._decide(raider)
+    check(str(raider["action"]) == "기지 습격", "raid persists beyond first AI tick")
+    check((raider["goal"] as Vector2).distance_to(first_raid_target) < 1.0, "raid target stays stable")
+    raid.battle_time = 4.2
+    raid._decide(raider)
+    check(str(raider["action"]) == "기지 습격", "raid survives second AI tick")
+    raid.bases[1]["alive"] = false
+    raid._decide(raider)
+    check(str(raider["action"]) != "기지 습격", "destroyed base cancels raid")
+    check(not bool(raider["raid_active"]), "canceled raid releases active state")
+
+    # Distant enemies cannot be observed or trigger contact combat AI.
+    var fog = WarSim.new()
+    var scout: Dictionary = fog.find_unit(0)
+    check(fog._nearest_visible_enemy(scout).is_empty(), "initial commander cannot see remote enemy")
+    fog._decide(scout)
+    check(str(scout["action"]) == "진격", "out-of-sight enemy does not trigger combat AI")
+    check(fog.validate_state().is_empty(), "raids and intelligence states remain valid")
 
     # Re-formation must take time, not change instantaneously.
     var forma = WarSim.new()

@@ -1,0 +1,2 @@
+v0.5.1 — AI raid persistence, 36 battle seeds, 16 distinct mission-policy combinations, Windows headless CI
+Validation: pending GitHub Actions

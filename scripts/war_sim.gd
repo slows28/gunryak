@@ -68,7 +68,8 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "form_remaining": 0.0, "troops": people, "initial_troops": people,
         "morale": 100.0, "out_supply": 0.0, "supplied": true,
         "action": "대기", "reason": "초기 배치", "ai_cooldown": 0.0,
-        "charge": 0.0, "last_raid": -999.0
+        "charge": 0.0, "last_raid": -999.0,
+        "raid_active": false, "raid_target": Vector2.ZERO, "raid_until": 0.0
     }
     if unit_type == "기병":
         unit["formation"] = "종대"
@@ -361,17 +362,29 @@ func _decide(unit: Dictionary) -> void:
         action = "교전"
         reason = "전선 접촉: 적 병력과 교전"
         goal = nearest["pos"]
-    # Raiders require real battlefield observation of an enemy supply base.
-    if action not in ["후퇴", "방어"] and personality == "공격" and ability > 60.0:
-        for base in bases:
-            if int(base["side"]) != side and _can_see_base(unit, base) and battle_time - float(unit["last_raid"]) > 10.0:
-                action = "기지 습격"
-                reason = "적 보급기지를 발견하여 우회 공격"
-                goal = base["pos"]
-                unit["last_raid"] = battle_time
-                break
+    # Raids persist for a bounded mission window. Prior logic issued a raid,
+    # then abandoned it at the very next ~2 s AI tick due to its cooldown.
+    # The destination is the last OBSERVED base position, not omniscient tracking.
+    var enemy_base: Dictionary = bases[1 - side]
+    var raid_allowed: bool = personality == "공격" and ability > 60.0 and action != "후퇴"
+    if raid_allowed and bool(unit["raid_active"]) and battle_time < float(unit["raid_until"]) and bool(enemy_base["alive"]):
+        if _can_see_base(unit, enemy_base):
+            unit["raid_target"] = enemy_base["pos"]
+        action = "기지 습격"
+        reason = "보급기지 습격 지속: 마지막 관측 지점을 추적"
+        goal = unit["raid_target"]
+    elif raid_allowed and _can_see_base(unit, enemy_base) and battle_time - float(unit["last_raid"]) > 12.0:
+        unit["raid_active"] = true
+        unit["last_raid"] = battle_time
+        unit["raid_until"] = battle_time + 10.0
+        unit["raid_target"] = enemy_base["pos"]
+        action = "기지 습격"
+        reason = "적 보급기지를 발견하여 우회 공격"
+        goal = unit["raid_target"]
+    else:
+        unit["raid_active"] = false
     # Skill affects tactical execution via choices rather than raw troop strength.
-    if enemy_distance < 150.0 and ability < 65.0 and rng.randf() < 0.13:
+    if enemy_distance < 150.0 and ability < 65.0 and not bool(unit["raid_active"]) and rng.randf() < 0.13:
         action = "진격" if personality != "신중" else "방어"
         reason = "불확실한 전황 판단으로 대응이 지연됨"
         goal = _mission_point(side, str(unit["mission"])) if action == "진격" else pos
@@ -416,7 +429,7 @@ func _formation_transition(unit: Dictionary, dt: float) -> void:
 func _move_unit(unit: Dictionary, dt: float) -> void:
     var pos: Vector2 = unit["pos"]
     var goal: Vector2 = unit["goal"]
-    var enemy: Dictionary = _nearest_enemy(unit)
+    var enemy: Dictionary = _nearest_visible_enemy(unit)
     if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
@@ -459,7 +472,7 @@ func _combat(dt: float) -> void:
     for unit in units:
         if float(unit["troops"]) <= 0.0:
             continue
-        var enemy: Dictionary = _nearest_enemy(unit)
+        var enemy: Dictionary = _nearest_visible_enemy(unit)
         if enemy.is_empty():
             continue
         var pos: Vector2 = unit["pos"]
@@ -560,6 +573,12 @@ func validate_state() -> Array[String]:
             problems.append("invalid morale: %s" % str(unit["name"]))
         if float(unit["form_remaining"]) < 0.0:
             problems.append("negative formation time: %s" % str(unit["name"]))
+        if bool(unit["raid_active"]):
+            var target: Vector2 = unit["raid_target"]
+            if is_nan(target.x) or is_nan(target.y) or is_inf(target.x) or is_inf(target.y):
+                problems.append("invalid raid target: %s" % str(unit["name"]))
+            if is_nan(float(unit["raid_until"])) or is_inf(float(unit["raid_until"])):
+                problems.append("invalid raid expiration: %s" % str(unit["name"]))
     for base in bases:
         var p: Vector2 = base["pos"]
         if is_nan(p.x) or is_nan(p.y) or is_inf(p.x) or is_inf(p.y):
