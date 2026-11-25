@@ -41,6 +41,28 @@ func _process(_dt: float) -> bool:
             push_error("GUNRYAK_SCENE_FAIL: command reaction not recorded")
             quit(1)
             return false
+        var aggressive: Dictionary=model.find_unit(2).duplicate(true)
+        aggressive["mind"]["confidence"]=90.0
+        aggressive["mind"]["stress"]=12.0
+        var confident: float=mind_model.initiative_threshold(aggressive)
+        aggressive["mind"]["confidence"]=25.0
+        aggressive["mind"]["stress"]=90.0
+        var anxious: float=mind_model.initiative_threshold(aggressive)
+        if confident>=anxious or confident<1.12 or anxious>1.55:
+            push_error("GUNRYAK_SCENE_FAIL: psychological initiative threshold incorrect")
+            quit(1)
+            return false
+        if sample["mind"]["proposal"]!="지원":
+            push_error("GUNRYAK_SCENE_FAIL: encircled general did not request support")
+            quit(1)
+            return false
+        var after_refusal: float=float(sample["mind"]["trust"])
+        mind_model.acknowledge(sample,1.2)
+        if float(sample["mind"]["trust"])<=after_refusal:
+            push_error("GUNRYAK_SCENE_FAIL: acknowledgement did not restore trust")
+            quit(1)
+            return false
+        print("GENERAL_PERSONALITY_PASS: bounded initiative, support request, trust response")
         print("GENERAL_MIND_FIXTURE_PASS")
         # Accelerated playback preserves the 25-minute operation clock.
         instance.game_speed=4.0
