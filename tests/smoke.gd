@@ -144,7 +144,7 @@ func _initialize() -> void:
     var blue: Dictionary = frontage.find_unit(0)
     var red: Dictionary = frontage.find_unit(3)
     blue["pos"] = Vector2(400, 300)
-    red["pos"] = Vector2(432, 300)
+    red["pos"] = Vector2(430, 300)
     blue["facing"] = Vector2.RIGHT
     red["facing"] = Vector2.LEFT
     blue["formation"] = "횡대"
