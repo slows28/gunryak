@@ -132,7 +132,7 @@ func reset() -> void:
             units[i]["troops"] = float(manpower[i])
             units[i]["initial_troops"] = float(manpower[i])
             units[i]["formation"] = shapes[i]
-            units[i]["policy"] = shapes[i]+" 유지"
+            units[i]["policy"] = "현장 판단"
     outposts.append({"name":"북측 요충지", "pos":Vector2(435, 148), "owner":-1, "challenger":-1, "progress":0.0, "hold":0.0})
     outposts.append({"name":"남측 관문", "pos":Vector2(470, 423), "owner":-1, "challenger":-1, "progress":0.0, "hold":0.0})
     bases.append(_base(0, Vector2(116, 310)))
@@ -172,7 +172,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
         "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
         "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
-        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0, "screened_damage":0.0, "screen_events":0
+        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "order_destination":Vector2.ZERO, "has_destination":false, "destination_reached":false, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0, "screened_damage":0.0, "screen_events":0
     }
     _set_general_profile(unit)
     if unit_type == "기병":
@@ -209,6 +209,8 @@ func select_unit_mission(unit_id: int, mission: String, policy: String, partner:
         return false
     if not _valid_partner(unit,partner): return false
     unit["mission"] = mission
+    unit["has_destination"]=false
+    unit["destination_reached"]=false
     _reset_cooperation(unit,partner)
     _apply_policy(unit, policy)
     if policy.ends_with(" 유지") and policy.replace(" 유지","") in LARGE_FORMATIONS:
@@ -221,7 +223,7 @@ func find_unit(unit_id: int) -> Dictionary:
             return unit
     return {}
 
-func request_order(unit_id: int, mission: String, policy: String, partner: int = -1) -> bool:
+func request_order(unit_id: int, mission: String, policy: String, partner: int = -1, destination: Vector2 = Vector2(-1,-1)) -> bool:
     if not started or finished or turn < 6:
         return false
     var unit: Dictionary = find_unit(unit_id)
@@ -234,7 +236,7 @@ func request_order(unit_id: int, mission: String, policy: String, partner: int =
             return false
     couriers.append({
         "pos":commanders[0]["pos"], "unit_id":unit_id,
-        "mission":mission, "policy":policy, "side":int(unit["side"]), "partner":partner
+        "mission":mission, "policy":policy, "side":int(unit["side"]), "partner":partner, "destination":destination
     })
     _log("전령 파견 → %s / %s" % [str(unit["name"]), mission])
     return true
@@ -335,6 +337,10 @@ func _update_couriers(dt: float) -> void:
             target["waypoints"].clear()
             target["waypoint_index"] = 0
             target["defense_set"] = false
+            var destination: Vector2=letter.get("destination",Vector2(-1,-1))
+            target["has_destination"]=destination.x>=0.0 and destination.y>=0.0
+            target["order_destination"]=_field_point(destination) if bool(target["has_destination"]) else Vector2.ZERO
+            target["destination_reached"]=false
             target["ai_cooldown"] = 0.0
             _log("%s: 전령 도착 / 새 명령 '%s'" % [str(target["name"]), str(letter["mission"])])
             couriers.remove_at(i)
@@ -714,6 +720,11 @@ func _decide(unit: Dictionary) -> void:
         action=cooperation["action"]
         reason=cooperation["reason"]
         goal=cooperation["goal"]
+    if six_armies:
+        var directed: Dictionary = _destination_order(unit,nearest,action,reason,goal,enemy_distance)
+        action=directed["action"]
+        reason=directed["reason"]
+        goal=directed["goal"]
     var planned: Dictionary = _apply_planned_route(unit, action, reason, goal, enemy_distance)
     action = str(planned["action"])
     reason = str(planned["reason"])
@@ -743,6 +754,7 @@ func _decide(unit: Dictionary) -> void:
         elif str(unit["type"]) == "궁병": wanted = "안행진"
         elif action in ["돌파","반격","교전"]: wanted = "어린진"
         else: wanted = "학익진"
+    if six_armies and action in ["지정 지역 사수","예비 대기"] and str(unit["type"])=="보병": wanted="방진"
     if six_armies and action=="협동 엄호" and str(unit["type"])=="보병": wanted="방진"
     if six_armies and action in ["협동 우회","협동 대기"] and str(unit["type"])=="기병": wanted="봉시진"
     if str(unit["policy"]).ends_with(" 유지") and str(unit["policy"]).replace(" 유지","") in LARGE_FORMATIONS and action != "패주":
@@ -794,7 +806,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var pos: Vector2 = unit["pos"]
     var goal: Vector2 = unit["goal"]
     var enemy: Dictionary = _nearest_visible_enemy(unit)
-    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기"]:
+    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
@@ -2674,3 +2686,40 @@ func _physical_screen(protected: Dictionary,attacker: Dictionary) -> Dictionary:
         if formation_contacts(guard,attacker,30.0)<=0: continue
         return guard
     return {}
+
+# Public map orders contain an intent, location and optional partner. Formation
+# remains under the general's field judgment.
+const MAP_MISSIONS = ["지정 위치 이동","공격","지역 사수","전열 엄호","측후방 기동","구원 지원","예비 대기","철수"]
+func issue_map_order(id: int,mission: String,destination: Vector2,partner: int=-1) -> bool:
+    if mission not in MAP_MISSIONS or finished or not Rect2(Vector2.ZERO,field_size).has_point(destination): return false
+    var unit: Dictionary=find_unit(id)
+    if unit.is_empty() or int(unit["side"])!=0 or float(unit["troops"])<=0.0 or not _valid_partner(unit,partner): return false
+    if started: return request_order(id,mission,"현장 판단",partner,destination)
+    if not select_unit_mission(id,mission,"현장 판단",partner): return false
+    unit["has_destination"]=true
+    unit["order_destination"]=_field_point(destination)
+    unit["destination_reached"]=false
+    unit["waypoints"].clear()
+    unit["waypoint_index"]=0
+    unit["defense_set"]=false
+    return true
+
+func _destination_order(unit: Dictionary,enemy: Dictionary,action: String,reason: String,goal: Vector2,distance: float) -> Dictionary:
+    var original: Dictionary={"action":action,"reason":reason,"goal":goal}
+    if not bool(unit.get("has_destination",false)): return original
+    if action in ["패주","후퇴","재집결","휴식","탄약 보충","보급 복귀"]: return original
+    var p: Vector2=unit["pos"]
+    var dest: Vector2=unit["order_destination"]
+    var mission: String=unit["mission"]
+    if mission=="철수": return {"action":"전술 철수","reason":"책사의 철수 지시","goal":dest}
+    if p.distance_to(dest)<=65.0: unit["destination_reached"]=true
+    if not bool(unit["destination_reached"]):
+        if distance<85.0 and action in ["거리 유지","측면 방어","교전","돌파","방어"]: return original
+        return {"action":"지정 위치 이동","reason":"책사가 지정한 작전 지역으로 이동","goal":dest}
+    if mission in ["지역 사수","예비 대기","지정 위치 이동"]:
+        return {"action":"예비 대기" if mission=="예비 대기" else "지정 지역 사수","reason":"지정 지역 확보 및 현장 판단","goal":dest if p.distance_to(dest)>55.0 else p}
+    if mission=="공격":
+        if not enemy.is_empty() and (enemy["pos"] as Vector2).distance_to(dest)<240.0:
+            return {"action":"돌파" if str(unit["type"])=="기병" else "교전","reason":"지정 지역 적군 공격","goal":enemy["pos"]}
+        return {"action":"지정 지역 사수","reason":"목표 지역 장악","goal":dest if p.distance_to(dest)>55.0 else p}
+    return original
