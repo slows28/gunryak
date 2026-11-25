@@ -68,7 +68,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "form_remaining": 0.0, "troops": people, "initial_troops": people,
         "morale": 100.0, "out_supply": 0.0, "supplied": true,
         "action": "대기", "reason": "초기 배치", "ai_cooldown": 0.0,
-        "charge": 0.0, "last_raid": -999.0,
+        "charge": 0.0, "last_raid": -999.0, "contact_troops": 0,
         "raid_active": false, "raid_target": Vector2.ZERO, "raid_until": 0.0
     }
     if unit_type == "기병":
@@ -474,9 +474,56 @@ func _field_point(p: Vector2) -> Vector2:
 func _in_forest(p: Vector2) -> bool:
     return Rect2(325, 80, 125, 90).has_point(p) or Rect2(450, 360, 130, 125).has_point(p)
 
+
+# A unit is not a single point for contact resolution. These are its actual
+# tactical slots, shared with the renderer. More exposed ranks can join
+# the engagement; a marching column cannot magically attack with six files.
+func formation_slots(unit: Dictionary) -> Array[Vector2]:
+    var slots: Array[Vector2] = []
+    var front: Vector2 = unit["facing"]
+    if front.length_squared() < 0.1:
+        front = Vector2.RIGHT if int(unit["side"]) == 0 else Vector2.LEFT
+    front = front.normalized()
+    var lateral: Vector2 = Vector2(-front.y, front.x)
+    var files: int = 6
+    var ranks: int = 2
+    match str(unit["formation"]):
+        "종대":
+            files = 3
+            ranks = 4
+        "방진":
+            files = 4
+            ranks = 3
+    var count: int = clampi(int(round(float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"])) * 12.0)), 0, 12)
+    var center: Vector2 = unit["pos"]
+    for k in range(count):
+        var file: int = k % files
+        var rank: int = int(floor(float(k) / float(files)))
+        var offset: Vector2 = lateral * ((float(file) - float(files - 1) * 0.5) * 10.0) - front * ((float(rank) - float(ranks - 1) * 0.5) * 10.5)
+        slots.append(center + offset)
+    return slots
+
+# Number of soldiers able to reach the opposing formation from their REAL slots.
+# Broad-phase culling keeps repeated headless regression fast.
+func formation_contacts(attacker: Dictionary, defender: Dictionary, weapon_reach: float) -> int:
+    if (attacker["pos"] as Vector2).distance_to(defender["pos"]) > weapon_reach + 75.0:
+        return 0
+    var attacking_slots: Array[Vector2] = formation_slots(attacker)
+    var defending_slots: Array[Vector2] = formation_slots(defender)
+    var engaged: int = 0
+    var threshold_squared: float = weapon_reach * weapon_reach
+    for soldier in attacking_slots:
+        for opposing_soldier in defending_slots:
+            if soldier.distance_squared_to(opposing_soldier) <= threshold_squared:
+                engaged += 1
+                break
+    return engaged
+
 func _combat(dt: float) -> void:
-    # Resolve on a separate snapshot of actions to avoid ordering advantage.
+    # Precompute strikes before taking losses. Both sides resolve simultaneously.
     var damage_entries: Array[Dictionary] = []
+    for unit in units:
+        unit["contact_troops"] = 0
     for unit in units:
         if float(unit["troops"]) <= 0.0:
             continue
@@ -486,36 +533,55 @@ func _combat(dt: float) -> void:
         var pos: Vector2 = unit["pos"]
         var ep: Vector2 = enemy["pos"]
         var distance: float = pos.distance_to(ep)
-        var reach: float = 173.0 if str(unit["type"]) == "궁병" else 50.0
-        if distance > reach:
+        var unit_type: String = str(unit["type"])
+        var reach: float = 173.0 if unit_type == "궁병" else 30.0
+        var contacts: int = formation_contacts(unit, enemy, reach)
+        if contacts == 0:
             continue
+        unit["contact_troops"] = contacts
         var attack: float = 0.0
-        match str(unit["type"]):
+        match unit_type:
             "보병": attack = 2.4
             "궁병": attack = 1.8
             "기병": attack = 2.6
+
+        if unit_type == "궁병":
+            # Close fighting degrades bow effectiveness; cover blocks some shots.
+            attack *= 0.55 if distance < 56.0 else 1.0
+            if _in_forest(ep):
+                attack *= 0.84
+        else:
+            # Physical contact frontage, not a free formation-specific stat buff.
+            attack *= clampf(float(contacts) / 4.0, 0.45, 1.50)
+
         var direction: Vector2 = (pos - ep).normalized()
         var facing: Vector2 = enemy["facing"]
+        if facing.length_squared() < 0.1:
+            facing = Vector2.LEFT if int(enemy["side"]) == 1 else Vector2.RIGHT
+        facing = facing.normalized()
+        var lateral: Vector2 = Vector2(-facing.y, facing.x)
         var rear: bool = direction.dot(facing) < -0.30
-        var exposure: float = 1.22 if rear else 1.0
+        var flank: bool = absf(direction.dot(lateral)) > 0.70
+        var exposure: float = 1.28 if rear else (1.14 if flank else 1.0)
         if str(enemy["formation"]) == "방진":
-            exposure *= 0.76
-        elif str(enemy["formation"]) == "종대" and rear:
-            exposure *= 1.25
-        if str(unit["formation"]) == "횡대" and str(unit["type"]) == "보병":
-            attack *= 1.08
-        if str(unit["type"]) == "기병" and float(unit["charge"]) > 14.0 and distance < 56.0:
-            attack *= 1.45
+            exposure *= 0.80
+        elif str(enemy["formation"]) == "종대" and (flank or rear):
+            exposure *= 1.30
+        if unit_type == "기병" and float(unit["charge"]) > 14.0 and distance < 70.0:
+            # Formed squares physically resist mounted shock on contact.
+            attack *= 0.68 if str(enemy["formation"]) == "방진" else 1.45
             unit["charge"] = 0.0
+
         var supply_factor: float = 0.76 if float(unit["out_supply"]) >= TURN_SECONDS * 3.0 else 1.0
-        var damage: float = attack * (float(unit["troops"]) / float(unit["initial_troops"])) * (float(unit["morale"]) / 100.0) * exposure * supply_factor * dt
-        damage_entries.append({"target":int(enemy["id"]), "damage":maxf(0.0, damage)})
+        var damage: float = attack * (float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"]))) * (float(unit["morale"]) / 100.0) * exposure * supply_factor * dt
+        damage_entries.append({"target":int(enemy["id"]), "damage":maxf(0.0, damage), "flank":flank or rear})
     for entry in damage_entries:
         var defender: Dictionary = find_unit(int(entry["target"]))
         if defender.is_empty() or float(defender["troops"]) <= 0.0:
             continue
         defender["troops"] = maxf(0.0, float(defender["troops"]) - float(entry["damage"]))
-        defender["morale"] = maxf(0.0, float(defender["morale"]) - float(entry["damage"]) * 0.07)
+        var morale_loss: float = 0.11 if bool(entry["flank"]) else 0.07
+        defender["morale"] = maxf(0.0, float(defender["morale"]) - float(entry["damage"]) * morale_loss)
         if float(defender["troops"]) <= 0.0:
             _log("%s 전멸" % str(defender["name"]))
 

@@ -135,6 +135,62 @@ func _initialize() -> void:
     spacing._decide(archer)
     check(str(archer["action"]) == "진격", "archer resumes assigned mission outside contact range")
 
+
+    # Physical formation footprints must be shared by combat and the renderer.
+    var frontage = WarSim.new()
+    for other in frontage.units:
+        if int(other["id"]) not in [0, 3]:
+            other["troops"] = 0.0
+    var blue: Dictionary = frontage.find_unit(0)
+    var red: Dictionary = frontage.find_unit(3)
+    blue["pos"] = Vector2(400, 300)
+    red["pos"] = Vector2(432, 300)
+    blue["facing"] = Vector2.RIGHT
+    red["facing"] = Vector2.LEFT
+    blue["formation"] = "횡대"
+    red["formation"] = "횡대"
+    check(frontage.formation_slots(blue).size() == 12, "line uses 12 real formation slots")
+    var line_contacts: int = frontage.formation_contacts(blue, red, 30.0)
+    blue["formation"] = "종대"
+    var column_contacts: int = frontage.formation_contacts(blue, red, 30.0)
+    check(line_contacts > column_contacts, "line engages with wider frontage than column")
+    check(column_contacts > 0, "column still physically engages opponents")
+
+    blue["formation"] = "횡대"
+    var before_line: float = float(red["troops"])
+    frontage._combat(0.1)
+    var line_loss: float = before_line - float(red["troops"])
+    check(line_loss > 0.0, "frontline clash removes defender troops")
+    red["troops"] = red["initial_troops"]
+    red["morale"] = 100.0
+    blue["formation"] = "종대"
+    frontage._combat(0.1)
+    var column_loss: float = float(red["initial_troops"]) - float(red["troops"])
+    check(line_loss > column_loss, "physical frontage changes actual casualties")
+
+    var defense = WarSim.new()
+    for other in defense.units:
+        if int(other["id"]) not in [2, 3]:
+            other["troops"] = 0.0
+    var cavalry: Dictionary = defense.find_unit(2)
+    var target: Dictionary = defense.find_unit(3)
+    cavalry["pos"] = Vector2(400, 300)
+    cavalry["facing"] = Vector2.RIGHT
+    cavalry["charge"] = 40.0
+    target["pos"] = Vector2(432, 300)
+    target["facing"] = Vector2.LEFT
+    target["formation"] = "횡대"
+    defense._combat(0.1)
+    var line_cavalry_loss: float = float(target["initial_troops"]) - float(target["troops"])
+    target["troops"] = target["initial_troops"]
+    target["morale"] = 100.0
+    target["formation"] = "방진"
+    cavalry["charge"] = 40.0
+    defense._combat(0.1)
+    var square_cavalry_loss: float = float(target["initial_troops"]) - float(target["troops"])
+    check(line_cavalry_loss > square_cavalry_loss, "formed square resists cavalry shock")
+    check(defense.validate_state().is_empty(), "formation collision preserves world invariants")
+
     # Re-formation must take time, not change instantaneously.
     var forma = WarSim.new()
     var lead: Dictionary = forma.find_unit(0)

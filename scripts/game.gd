@@ -237,7 +237,7 @@ func _refresh_hud() -> void:
     var unit: Dictionary = sim.find_unit(selected_id)
     if not unit.is_empty():
         selected_label.text = "%s   %d명 / 사기 %d" % [str(unit["name"]), int(float(unit["troops"])), int(float(unit["morale"]))]
-        details_label.text = "%s · %s\n진형: %s    보급: %s\n%s" % [str(unit["action"]), str(unit["mission"]), str(unit["formation"]), "정상" if bool(unit["supplied"]) else "미보급", str(unit["reason"])]
+        details_label.text = "%s · %s\n%s 진형 / 접촉 %d명 · 보급 %s\n%s" % [str(unit["action"]), str(unit["mission"]), str(unit["formation"]), int(unit.get("contact_troops", 0)), "정상" if bool(unit["supplied"]) else "미보급", str(unit["reason"])]
     var start_line: int = maxi(0, sim.events.size() - 4)
     var lines: String = ""
     for i in range(start_line, sim.events.size()):
@@ -315,42 +315,62 @@ func _draw() -> void:
         var p: Vector2 = _screen(letter["pos"])
         draw_circle(p, 5.0, COL_GOLD)
         _draw_string("전령", p + Vector2(-14, -11), 12, COL_GOLD)
+    var label_areas: Array[Rect2] = []
     for unit in sim.units:
         if float(unit["troops"]) > 0.0:
-            _draw_unit(unit)
+            _draw_unit(unit, label_areas)
     draw_rect(map_rect, Color(Color("#cad8d7"), 0.42), false, 1.5)
 
-func _draw_unit(unit: Dictionary) -> void:
+
+func _draw_unit(unit: Dictionary, label_areas: Array[Rect2]) -> void:
     var side: int = int(unit["side"])
     var accent: Color = COL_BLUE if side == 0 else COL_RED
     var p: Vector2 = _screen(unit["pos"])
-    var front: Vector2 = unit["facing"]
-    if front.length_squared() < 0.5:
-        front = Vector2.RIGHT if side == 0 else Vector2.LEFT
-    var lateral: Vector2 = Vector2(-front.y, front.x)
-    var formation: String = str(unit["formation"])
-    var columns: int = 6
-    var rows: int = 2
-    if formation == "종대":
-        columns = 3
-        rows = 4
-    elif formation == "방진":
-        columns = 4
-        rows = 3
-    var count: int = clampi(int(round(float(unit["troops"]) / float(unit["initial_troops"]) * 12.0)), 1, 12)
-    for k in range(count):
-        var col: int = k % columns
-        var row: int = int(floor(float(k) / float(columns)))
-        var local_p: Vector2 = lateral * ((float(col) - float(columns - 1) * 0.5) * 10.0) - front * ((float(row) - float(rows - 1) * 0.5) * 10.5)
-        draw_circle(p + local_p, 3.9, accent)
+    var unit_type: String = str(unit["type"])
+    for spot in sim.formation_slots(unit):
+        var point: Vector2 = _screen(spot)
+        match unit_type:
+            "보병":
+                draw_rect(Rect2(point - Vector2(3.4, 3.4), Vector2(6.8, 6.8)), accent)
+            "궁병":
+                draw_colored_polygon(PackedVector2Array([
+                    point + Vector2(0.0, -4.9),
+                    point + Vector2(4.5, 3.2),
+                    point + Vector2(-4.5, 3.2)]), accent)
+            "기병":
+                draw_circle(point, 4.4, accent)
+                draw_circle(point, 1.5, COL_BG)
     if side == 0 and int(unit["id"]) == selected_id:
-        draw_arc(p, 40.0, 0.0, TAU, 48, COL_GOLD, 2.0)
+        draw_arc(p, 39.0, 0.0, TAU, 48, COL_GOLD, 1.8)
+    var contacts: int = int(unit.get("contact_troops", 0))
+    if contacts > 0 and unit_type != "궁병":
+        draw_arc(p, 30.0, 0.0, TAU, 32, Color(COL_GOLD, 0.58), 1.8)
     var ratio: float = clampf(float(unit["troops"]) / float(unit["initial_troops"]), 0.0, 1.0)
-    draw_rect(Rect2(p + Vector2(-25, 24), Vector2(50, 4)), Color("#142630"))
-    draw_rect(Rect2(p + Vector2(-25, 24), Vector2(50.0 * ratio, 4)), accent)
-    _draw_string("%s %d" % [str(unit["name"]), int(float(unit["troops"]))], p + Vector2(-35, -31), 12, COL_TEXT)
+    draw_rect(Rect2(p + Vector2(-24, 25), Vector2(48, 4)), Color("#142630"))
+    draw_rect(Rect2(p + Vector2(-24, 25), Vector2(48.0 * ratio, 4)), accent)
+
+    # Collision-aware name chips; overlapping armies do not stack unreadable labels.
+    var label: String = "%s  %d" % [str(unit["name"]), int(float(unit["troops"]))]
+    var width: float = 110.0
+    var x: float = clampf(p.x - width * 0.5, MAP_TOP_LEFT.x + 3.0, MAP_TOP_LEFT.x + MAP_SIZE.x - width - 3.0)
+    var y: float = p.y - 48.0
+    var bubble: Rect2 = Rect2(Vector2(x, y), Vector2(width, 17.0))
+    for retry in range(12):
+        var collides: bool = false
+        for prior in label_areas:
+            if prior.intersects(bubble.grow(2.0)):
+                collides = true
+                break
+        if not collides:
+            break
+        bubble.position.y -= 19.0
+    bubble.position.y = maxf(MAP_TOP_LEFT.y + 3.0, bubble.position.y)
+    label_areas.append(bubble)
+    draw_rect(bubble, Color("#13262b"))
+    draw_rect(bubble, Color(accent.r, accent.g, accent.b, 0.70), false, 1.0)
+    _draw_string(label, bubble.position + Vector2(4.0, 12.7), 11, COL_TEXT)
     if str(unit["next_formation"]) != "":
-        _draw_string("↻", p + Vector2(30, 1), 15, COL_GOLD)
+        _draw_string("↻", p + Vector2(28, 0), 15, COL_GOLD)
 
 func _screen(p: Vector2) -> Vector2:
     return MAP_TOP_LEFT + p
