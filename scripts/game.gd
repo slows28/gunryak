@@ -412,6 +412,13 @@ func _refresh_hud() -> void:
     elif sim.started:
         phase = "작전 %d턴  /  %.0f초" % [sim.turn, sim.battle_time]
         phase_label.text = "02 자율 교전  |  " + ("긴급 지휘력 %d / 4" % sim.command_points if sim.turn >= 6 else "초기 작전 수행 · 보고 수신")
+    for index in range(unit_list.item_count):
+        var uid: int = int(unit_list.get_item_metadata(index))
+        var leader: Dictionary = sim.find_unit(uid)
+        if leader.is_empty(): continue
+        var state: String = "패주" if bool(leader["routed"]) else ("전멸" if float(leader["troops"]) <= 0.0 else str(leader["type"]))
+        unit_list.set_item_text(index,"%d  %s · %s · %d명" % [index+1,str(leader["name"]),state,roundi(sim.corps_report(uid)["troops"])])
+        unit_list.set_item_custom_fg_color(index,COL_MUTED if float(leader["troops"]) <= 0.0 else (COL_RED if bool(leader["routed"]) else COL_TEXT))
     var enemy_text: String = "미확인" if fog_enabled and not sim.finished else str(sim.total_troops(1))
     status_label.text = "%s\n아군 %d  /  적군 %s\n전령 %d 이동 · %d 도착 · %d 차단" % [phase,sim.total_troops(0),enemy_text,sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
     if is_instance_valid(situation_btn):
@@ -548,15 +555,17 @@ func _draw_map(_canvas: Control) -> void:
             if camera_zoom >= 0.75:
                 map_layer.draw_line(bridge+Vector2(-30,-38),bridge+Vector2(30,-38),Color("#59442f"),3.0,true)
                 map_layer.draw_line(bridge+Vector2(-30,38),bridge+Vector2(30,38),Color("#59442f"),3.0,true)
-            _map_plate("교량",bridge+Vector2(0,-45)*maxf(1.0,0.8/camera_zoom),COL_GOLD,maxi(11,roundi(10.0/camera_zoom)))
+            if camera_zoom >= 0.75:
+                _map_plate("교량",bridge+Vector2(0,-45),COL_GOLD,11)
     if not sim.started:
         map_layer.draw_rect(Rect2(Vector2(35,22),Vector2(270*sim.layout_scale-35,sim.field_size.y-40)),Color(COL_BLUE,0.035))
         for y in range(22,int(sim.field_size.y)-18,36):
             map_layer.draw_line(Vector2(270*sim.layout_scale,y),Vector2(270*sim.layout_scale,y+16),Color(COL_BLUE,0.5),1.5)
     # Static gate art removed: show the actual, potentially relocating supply bases only.
-    _map_text("북로",sim.layout_point(Vector2(440,106)),Color("#d6cfaa"),11)
-    _map_text("중앙 고지",sim.hill.get_center()+Vector2(-29,-22),Color("#e2d9b5"),11)
-    _map_text("남로",sim.layout_point(Vector2(440,466)),Color("#d6cfaa"),11)
+    if camera_zoom >= 0.75:
+        _map_text("북로",sim.layout_point(Vector2(440,106)),Color("#d6cfaa"),11)
+        _map_text("중앙 고지",sim.hill.get_center()+Vector2(-29,-22),Color("#e2d9b5"),11)
+        _map_text("남로",sim.layout_point(Vector2(440,466)),Color("#d6cfaa"),11)
     # Capture sites show control, contested progress and victory holds directly.
     for site in sim.outposts:
         var site_pos: Vector2 = _screen(site["pos"])
@@ -698,6 +707,10 @@ func _draw_unit(unit: Dictionary) -> void:
         var block := Rect2(p-extent*0.5,extent)
         map_layer.draw_rect(block,Color("#192a2d"))
         map_layer.draw_rect(block,accent,false,1.5*k)
+        if int(unit["id"]) == selected_id and side == 0:
+            map_layer.draw_rect(block.grow(4.0*k),COL_GOLD,false,1.5*k)
+        var ratio: float = clampf(float(unit["troops"])/maxf(1.0,float(unit["initial_troops"])),0.0,1.0)
+        map_layer.draw_rect(Rect2(block.position+Vector2(0,extent.y+2*k),Vector2(extent.x*ratio,2*k)),accent)
         if not sub:
             _paint_tile(38+side,Rect2(p-Vector2(14,32)*k,Vector2(28,34)*k),Color(1,1,1,accent.a))
         else:
@@ -1294,6 +1307,13 @@ func _update_audio_and_warning() -> void:
 
 func _unhandled_key_input(event: InputEvent) -> void:
     if event is InputEventKey and event.pressed and not event.echo:
+        if event.keycode >= KEY_1 and event.keycode <= KEY_6 and not title_screen.visible and not strategy_view.visible:
+            var index: int = int(event.keycode-KEY_1)
+            if index < unit_list.item_count:
+                unit_list.select(index)
+                _on_unit_selected(index)
+                _focus_selected()
+            return
         match event.keycode:
             KEY_SPACE: _pause()
             KEY_PLUS, KEY_EQUAL: _change_zoom(0.25)
@@ -1678,7 +1698,7 @@ func _build_demo_help() -> void:
     tutorial_dialog = AcceptDialog.new()
     tutorial_dialog.title = "군략 · 첫 출전 안내"
     tutorial_dialog.ok_button_text = "확인"
-    tutorial_dialog.dialog_text = "1. 전략 지도에서 인접 지역을 선택합니다. 군량 35가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 작전실에서 부대 배치·경유점·방어선을 설정합니다.\n4. 전투 개시 후 장수는 자율적으로 판단합니다. 6턴 이후 전령 파견 가능. 긴급 보고를 열어 지원·사수·재집결·철수 지시를 내릴 수 있습니다.\n5. Space 일시정지, 휠 확대, 가운데 마우스 드래그 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
+    tutorial_dialog.dialog_text = "1. 전략 지도에서 인접 지역을 선택합니다. 군량 55가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 작전실에서 부대 배치·경유점·방어선을 설정합니다.\n4. 전투 개시 후 장수는 자율적으로 판단합니다. 6턴 이후 전령 파견 가능. 긴급 보고를 열어 지원·사수·재집결·철수 지시를 내릴 수 있습니다.\n5. 숫자 1~6 장수 선택, Space 일시정지, 휠 확대, 방향키/가운데 마우스 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
     add_child(tutorial_dialog)
     retreat_dialog = ConfirmationDialog.new()
     retreat_dialog.title = "전투 철수"
