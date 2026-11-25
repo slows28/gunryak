@@ -1,0 +1,244 @@
+extends RefCounted
+# Demo campaign: all strategic effects are carried into actual battle setup.
+const SAVE_PATH = "user://gunryak_demo_v1.json"
+const NODES = [
+    {"name":"한중","pos":[100,300],"links":[1,2],"scenario":0,"story":"촉군의 출발지. 보급을 정비한다."},
+    {"name":"기산 관문","pos":[280,180],"links":[0,3],"scenario":0,"story":"북벌의 첫 관문. 두 길을 동시에 장악한다."},
+    {"name":"진창 고지","pos":[280,410],"links":[0,3,4],"scenario":1,"story":"험한 고지에서 위군의 방어선을 돌파한다."},
+    {"name":"가정","pos":[510,180],"links":[1,2,5],"scenario":2,"story":"위군의 반격에 맞서 군량 기지를 보호한다."},
+    {"name":"보급 회랑","pos":[510,410],"links":[2,5],"scenario":3,"story":"군량 수레를 전선까지 호위한다."},
+    {"name":"천수","pos":[720,295],"links":[3,4],"scenario":4,"story":"적의 핵심 진지를 돌파하는 마지막 작전."}
+]
+const OFFICERS = [
+    {"name":"왕평","personality":"신중","stats":[92,76,72,88,92],"specialty":"방진"},
+    {"name":"마속","personality":"균형","stats":[52,47,89,55,58],"specialty":"정찰"},
+    {"name":"위연","personality":"공격","stats":[84,93,69,81,46],"specialty":"돌격"},
+    {"name":"강유","personality":"균형","stats":[83,79,88,85,80],"specialty":"정찰"},
+    {"name":"관흥","personality":"공격","stats":[74,87,61,72,85],"specialty":"돌격"},
+    {"name":"장익","personality":"신중","stats":[82,72,73,78,90],"specialty":"방진"}
+]
+var state: Dictionary = {}
+var save_path: String = SAVE_PATH
+func _init() -> void:
+    reset()
+
+func reset() -> void:
+    var people: Array = []
+    for i in range(OFFICERS.size()):
+        people.append({"recruited":i<3,"hp":100,"dead":false,"xp":0})
+    state = {"version":1,"turn":1,"gold":220,"food":260,"pool":180,"position":0,"owned":[0],"garrison":[0,100,108,115,102,125],"roster":people,"active":[0,1,2],"troops":[145,108,95],"types":["보병","궁병","기병"],"history":[],"victories":0,"defeats":0,"complete":false,"failed":false,"pending":-1,"difficulty":1}
+
+func available(index: int) -> bool:
+    if index < 0 or index >= NODES.size() or state["complete"] or state["failed"]:
+        return false
+    for owned in state["owned"]:
+        if index in NODES[int(owned)]["links"] and index not in state["owned"]:
+            return true
+    return false
+
+func recruit(index: int) -> bool:
+    if index < 0 or index >= OFFICERS.size() or state["pending"] >= 0:
+        return false
+    var person: Dictionary = state["roster"][index]
+    if person["recruited"] or int(state["gold"]) < 55:
+        return false
+    state["gold"] -= 55
+    person["recruited"] = true
+    return true
+
+func assign(slot: int, index: int) -> bool:
+    if slot < 0 or slot >= 3 or index < 0 or index >= OFFICERS.size() or state["pending"] >= 0:
+        return false
+    var person: Dictionary = state["roster"][index]
+    if not person["recruited"] or person["dead"]:
+        return false
+    var old: int = state["active"].find(index)
+    if old >= 0:
+        state["active"][old] = state["active"][slot]
+    state["active"][slot] = index
+    return true
+
+func replenish(slot: int) -> bool:
+    if slot < 0 or slot >= 3 or int(state["pool"]) < 20 or int(state["gold"]) < 15 or int(state["troops"][slot]) > 200 or state["pending"] >= 0:
+        return false
+    state["pool"] -= 20
+    state["gold"] -= 15
+    state["troops"][slot] += 20
+    return true
+
+func set_type(slot: int, kind: String) -> bool:
+    if slot < 0 or slot >= 3 or kind not in ["보병","궁병","기병"] or state["pending"] >= 0:
+        return false
+    if state["types"][slot] == kind:
+        return true
+    if int(state["gold"]) < 12:
+        return false
+    state["gold"] -= 12
+    state["types"][slot] = kind
+    return true
+
+func rest() -> bool:
+    if int(state["food"]) < 25 or state["pending"] >= 0 or state["complete"] or state["failed"]:
+        return false
+    state["food"] -= 25
+    for person in state["roster"]:
+        if person["recruited"] and not person["dead"]:
+            person["hp"] = mini(100,int(person["hp"])+25)
+    strategic_tick(-1)
+    return true
+
+func resupply() -> bool:
+    if int(state["gold"]) < 25 or state["pending"] >= 0:
+        return false
+    state["gold"] -= 25
+    state["food"] += 45
+    return true
+
+func strategic_tick(target: int) -> void:
+    state["turn"] += 1
+    state["gold"] += 12 + state["owned"].size()*5
+    state["food"] += state["owned"].size()*8
+    state["pool"] += 15
+    for i in range(1,NODES.size()):
+        if i not in state["owned"]:
+            state["garrison"][i] = mini(155,int(state["garrison"][i])+(3 if i == target else 6))
+    # A strategic counterattack can cost an exposed non-capital region.
+    if int(state["turn"])%4 == 0 and state["owned"].size() > 1 and not state["complete"]:
+        var exposed: int = -1
+        for node in state["owned"]:
+            if int(node) == 0 or int(node) == target:
+                continue
+            for neighbor in NODES[int(node)]["links"]:
+                if neighbor not in state["owned"] and int(state["garrison"][neighbor]) >= 125:
+                    exposed = int(node)
+                    break
+        if exposed >= 0:
+            state["owned"].erase(exposed)
+            if int(state["position"]) == exposed:
+                state["position"] = 0
+            state["history"].append(NODES[exposed]["name"]+" — 위군 반격으로 상실")
+
+func prepare(target: int, sim) -> bool:
+    if not available(target) or state["pending"] >= 0 or int(state["food"]) < 35:
+        return false
+    for i in range(3):
+        if int(state["troops"][i]) < 1 or state["roster"][int(state["active"][i])]["dead"]:
+            return false
+    sim.reset()
+    if not sim.set_scenario(int(NODES[target]["scenario"])):
+        return false
+    state["food"] -= 35
+    state["pending"] = target
+    for i in range(3):
+        var u: Dictionary = sim.find_unit(i)
+        var idx: int = int(state["active"][i])
+        var officer: Dictionary = OFFICERS[idx]
+        var person: Dictionary = state["roster"][idx]
+        u["name"] = officer["name"]
+        u["personality"] = officer["personality"]
+        u["type"] = state["types"][i]
+        u["formation"] = "종대" if u["type"] == "기병" else "횡대"
+        u["troops"] = float(state["troops"][i])
+        u["initial_troops"] = u["troops"]
+        u["general_hp"] = float(person["hp"])
+        u["general_risk"] = (100.0-float(person["hp"]))/1.4
+        u["general_state"] = "부상" if int(person["hp"]) < 55 else "건재"
+        var level: int = mini(10,floori(float(person["xp"])/100.0))
+        for j in range(5):
+            var key: String = ["leadership","martial","intelligence","judgment","loyalty"][j]
+            u[key] = minf(100.0,float(officer["stats"][j])+level)
+        u["specialty"] = officer["specialty"]
+        u["rations"] = clampf(70.0+float(state["food"])*0.12,70.0,100.0)
+    var scale: float = float(state["garrison"][target])/100.0 * [0.82,1.0,1.18][int(state["difficulty"])]
+    for unit in sim.units:
+        if int(unit["side"]) == 1:
+            unit["troops"] = roundf(float(unit["troops"])*scale)
+            unit["initial_troops"] = unit["troops"]
+    sim.reserve_limit[0] = mini(2,floori(float(state["pool"])/72.0))
+    sim.bases[0]["stock"] = minf(100.0,float(state["food"]))
+    return true
+
+func conclude(sim) -> bool:
+    var target: int = int(state["pending"])
+    if target < 0 or not sim.finished:
+        return false
+    var won: bool = sim.winning_side == 0
+    for i in range(3):
+        var unit: Dictionary = sim.find_unit(i)
+        var idx: int = int(state["active"][i])
+        var person: Dictionary = state["roster"][idx]
+        person["hp"] = int(unit["general_hp"])
+        person["dead"] = str(unit["general_state"]) == "전사"
+        person["xp"] += sim.merit(unit)
+        state["troops"][i] = maxi(0,int(unit["troops"]))
+    state["pool"] = maxi(0,int(state["pool"])-sim.reinforcements_used[0]*72)
+    if won:
+        if target not in state["owned"]:
+            state["owned"].append(target)
+        state["position"] = target
+        state["gold"] += 70
+        state["food"] += 40
+        state["victories"] += 1
+        state["complete"] = target == 5
+    else:
+        state["defeats"] += 1
+        if int(state["position"]) != 0:
+            state["owned"].erase(state["position"])
+            state["position"] = 0
+        state["gold"] += 20
+        state["failed"] = int(state["defeats"]) >= 3
+    state["history"].append(NODES[target]["name"]+" — "+sim.result)
+    state["pending"] = -1
+    strategic_tick(target)
+    return true
+
+func save() -> bool:
+    if int(state["pending"]) >= 0:
+        return false
+    var file := FileAccess.open(save_path,FileAccess.WRITE)
+    if file == null:
+        return false
+    file.store_string(JSON.stringify(state))
+    return true
+
+func load_save() -> bool:
+    if not FileAccess.file_exists(save_path):
+        return false
+    var file := FileAccess.open(save_path,FileAccess.READ)
+    if file == null:
+        return false
+    var parsed: Variant = JSON.parse_string(file.get_as_text())
+    if not parsed is Dictionary:
+        return false
+    var data: Dictionary = parsed
+    for key in state:
+        if not data.has(key):
+            return false
+    if int(data["version"]) != 1 or data["roster"].size() != 6 or data["active"].size() != 3 or data["troops"].size() != 3 or data["types"].size() != 3 or data["garrison"].size() != 6 or int(data["pending"]) != -1:
+        return false
+    for key in ["gold","food","pool","turn","victories","defeats","position","difficulty"]:
+        if not (data[key] is int or data[key] is float):
+            return false
+        data[key] = int(data[key])
+        if int(data[key]) < 0:
+            return false
+    if int(data["difficulty"]) > 2 or int(data["position"]) >= NODES.size():
+        return false
+    for key in ["owned","active","troops","garrison"]:
+        for i in range(data[key].size()):
+            data[key][i] = int(data[key][i])
+    for person in data["roster"]:
+        person["hp"] = int(person["hp"])
+        person["xp"] = int(person["xp"])
+    for idx in data["active"]:
+        if int(idx) < 0 or int(idx) >= OFFICERS.size():
+            return false
+    for idx in data["owned"]:
+        if int(idx) < 0 or int(idx) >= NODES.size():
+            return false
+    for value in data["troops"]:
+        if int(value) < 0 or int(value) > 220:
+            return false
+    data["pending"] = -1
+    state = data
+    return true
