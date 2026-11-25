@@ -9,6 +9,7 @@ const PAINTED_ART = preload("res://assets/art/painted_atlas.webp")
 const SOLDIER_ART = preload("res://assets/art/soldier_sprites.svg")
 const SOLDIER_MOTION = preload("res://assets/art/soldier_motion.svg")
 const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
+const COMMAND_SKIN = preload("res://assets/art/command_skin.svg")
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const PAINTED_FX = preload("res://assets/art/painted_fx.webp")
 const TITLE_ART = preload("res://assets/art/title_art.webp")
@@ -38,6 +39,7 @@ var objective_label: Label
 var commander_card: Control
 var selected_label: Label
 var details_label: Label
+var decision_label: Label
 var event_label: Label
 var notice_label: Label
 var unit_list: ItemList
@@ -169,16 +171,20 @@ func _install_korean_font() -> void:
             if state == "disabled": style.bg_color = Color("#192628")
             style.border_color = Color("#b79d68") if state in ["hover","pressed","focus"] else Color("#6b6250")
             style.set_border_width_all(1)
-            style.set_corner_radius_all(4)
+            style.set_corner_radius_all(2)
+            style.shadow_color=Color(0,0,0,0.28)
+            style.shadow_size=2
             style.content_margin_left = 8
             style.content_margin_right = 8
             ui_theme.set_stylebox(state,type,style)
     var list_bg := StyleBoxFlat.new()
-    list_bg.bg_color = Color("#211f1b")
+    list_bg.bg_color = Color("#17211d")
+    list_bg.border_color=Color("#756749")
+    list_bg.set_border_width_all(1)
     list_bg.set_corner_radius_all(4)
     ui_theme.set_stylebox("panel","ItemList",list_bg)
     var selected := StyleBoxFlat.new()
-    selected.bg_color = Color("#51432d")
+    selected.bg_color = Color("#4a3b26")
     selected.border_color = COL_GOLD
     selected.border_width_left = 3
     selected.set_corner_radius_all(3)
@@ -200,16 +206,16 @@ func _build_interface() -> void:
     _primary_button(_button("작전 지도",Vector2(746,16),Vector2(182,39),_open_order_map))
     status_label = _label("",Vector2(955,9),Vector2(307,64),14,COL_TEXT)
     objective_label = _label("",Vector2(26,77),Vector2(412,22),13,COL_GOLD)
-    _label("軍  /  전황 관측",Vector2(956,101),Vector2(270,29),21,COL_GOLD)
+    _label("軍  /  전황 관측",Vector2(956,101),Vector2(270,29),22,COL_GOLD)
     _label("아군 군단  ·  6개 지휘 부대",Vector2(956,132),Vector2(295,19),12,COL_MUTED)
     unit_list = ItemList.new()
     unit_list.position = Vector2(950,154)
     unit_list.size = Vector2(306,204)
-    unit_list.add_theme_font_size_override("font_size",13)
+    unit_list.add_theme_font_size_override("font_size",14)
     unit_list.add_theme_constant_override("v_separation",3)
     add_child(unit_list)
     unit_list.item_selected.connect(_on_unit_selected)
-    _label("02  현재 작전",Vector2(956,365),Vector2(267,20),13,COL_GOLD)
+    _label("02  현재 작전",Vector2(956,365),Vector2(267,20),15,COL_GOLD)
     mission_choice = _options(Vector2(950,363),["중앙 진격","북측 확보","남측 우회","본진 방어","전열 엄호","측후방 기동","구원 지원"])
     mission_choice.size.x = 306
     mission_choice.item_selected.connect(_on_choices_changed)
@@ -226,8 +232,12 @@ func _build_interface() -> void:
     _primary_button(live_order_button)
     _label("03  장수의 현장 판단",Vector2(956,520),Vector2(267,25),15,COL_GOLD)
     selected_label = _label("",Vector2(1034,565),Vector2(220,27),14,COL_GOLD)
-    details_label = _label("",Vector2(1034,590),Vector2(221,86),12,COL_TEXT)
+    details_label = _label("",Vector2(1034,590),Vector2(221,50),12,COL_TEXT)
     details_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    details_label.clip_text=true
+    decision_label=_label("",Vector2(1034,641),Vector2(221,33),11,COL_MUTED)
+    decision_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    decision_label.clip_text=true
     _label("전황 기록",Vector2(27,692),Vector2(125,26),17,COL_GOLD)
     event_label = _label("",Vector2(153,692),Vector2(578,102),13,COL_TEXT)
     event_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -453,7 +463,7 @@ func _refresh_hud() -> void:
         unit_list.set_item_text(index,"%d  %s   %s   %s명" % [index+1,str(leader["name"]),str(leader["type"]) if state==str(leader["type"]) else state,_number_text(roundi(sim.corps_report(uid)["troops"]))])
         unit_list.set_item_custom_fg_color(index,COL_MUTED if float(leader["troops"]) <= 0.0 else (COL_RED if bool(leader["routed"]) else COL_TEXT))
     var enemy_text: String = "미확인" if fog_enabled and not sim.finished else str(sim.total_troops(1))
-    status_label.text = "%s\n아군 %d  /  적군 %s\n전령 %d 이동 · %d 도착 · %d 차단" % [phase,sim.total_troops(0),enemy_text,sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
+    status_label.text = "%s\n아군 %s  /  적군 %s\n전령 %d 이동 · %d 도착 · %d 차단" % [phase,_number_text(sim.total_troops(0)),enemy_text,sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
     var own_guards: int = sim.commander_guard_count(0)
     status_label.tooltip_text = "책사 보호 반경 내 전투부대 %d개" % own_guards
     if own_guards == 0 and sim.started and not sim.finished:
@@ -481,9 +491,11 @@ func _refresh_hud() -> void:
         live_order_label.text="%s\n목적지: %s\n연계: %s" % [str(unit["mission"]),sim.terrain_at(unit["order_destination"]) if bool(unit.get("has_destination",false)) else "장수 판단",str(ally["name"]) if not ally.is_empty() else "자동 / 없음"]
         var leader_state: String = "부장 지휘" if bool(unit["active_deputy"]) else str(unit["general_state"])
         var corps: Dictionary = sim.corps_report(selected_id)
-        selected_label.text = "%s · %s · 군단 %d명" % [str(unit["name"]),leader_state,int(corps["troops"])]
+        selected_label.text = "%s · %s · %s명" % [str(unit["name"]),leader_state,_number_text(roundi(corps["troops"]))]
         var ammo_text: String = " · 화살 %d" % int(unit.get("ammo", 100.0)) if str(unit["type"]) == "궁병" else ""
-        details_label.text = "통솔 %d · 무력 %d · 지력 %d · 판단 %d\n%s / %s · 응집 %d · 피로 %d\n식량 %d%s · %s\n%s" % [int(unit["leadership"]), int(unit["martial"]), int(unit["intelligence"]), int(unit["judgment"]), str(unit["action"]), str(unit["formation"]), int(unit["cohesion"]), int(unit["fatigue"]), int(unit["rations"]), ammo_text, "포위" if bool(unit["surrounded"]) else str(unit["obedience"]), str(unit["reason"])]
+        details_label.text = "%s · %s\n통솔 %d · 무력 %d · 지력 %d\n응집 %d · 피로 %d · 식량 %d%s" % [str(unit["action"]),str(unit["formation"]),int(unit["leadership"]),int(unit["martial"]),int(unit["intelligence"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),ammo_text]
+        decision_label.text = str(unit["reason"])
+        decision_label.tooltip_text=str(unit["reason"])
     if not unit.is_empty():
         details_label.tooltip_text = "%s\n사기 %d · 응집 %d · 피로 %d\n식량 %d · 화살 %d\n%s" % [str(unit["name"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"]),str(unit["reason"])]
         if sim.six_armies:
@@ -589,21 +601,28 @@ func _map_select(mouse_pos: Vector2) -> void:
 
 func _draw() -> void:
     draw_rect(Rect2(0,0,1280,800),COL_BG)
-    draw_rect(Rect2(0,0,1280,68),COL_PANEL)
+    _command_panel(Rect2(0,0,1280,68),false)
     draw_line(Vector2(24,68),Vector2(1256,68),Color("#817b5f"),1.0)
     var elapsed:float=clampf(sim.operation_elapsed()/maxf(1.0,sim.operation_limit()),0,1)
     draw_rect(Rect2(448,60,480,4),Color("#453d2d"))
     draw_rect(Rect2(448,60,480*elapsed,4),Color("#cfa85d"))
     for mark in [0.16,0.36,0.64,0.88]:
         draw_line(Vector2(448+480*mark,59),Vector2(448+480*mark,65),Color("#e2c58b"),1.0)
-    draw_rect(Rect2(940,94,324,581),COL_PANEL)
-    draw_rect(Rect2(21,685,907,110),COL_PANEL)
-    draw_rect(Rect2(940,685,324,110),COL_PANEL)
+    for panel in [Rect2(940,94,324,581),Rect2(21,685,907,110),Rect2(940,685,324,110)]:
+        _command_panel(panel,true)
+    draw_rect(Rect2(948,357,308,29),Color(0.57,0.43,0.23,0.12))
+    draw_rect(Rect2(948,516,308,32),Color(0.57,0.43,0.23,0.12))
     for frame in [Rect2(21,98,906,576),Rect2(940,94,324,581),Rect2(21,685,907,110),Rect2(940,685,324,110)]:
         _bronze_frame(frame)
     draw_line(Vector2(950,550),Vector2(1254,550),Color("#526862"),1.0)
     draw_line(Vector2(950,362),Vector2(1254,362),Color("#706049"),1.0)
     _draw_minimap()
+
+func _command_panel(area: Rect2,ornament: bool) -> void:
+    draw_texture_rect_region(COMMAND_SKIN,area,Rect2(0,0,256,256))
+    if ornament:
+        draw_texture_rect_region(COMMAND_SKIN,Rect2(area.position,Vector2(40,40)),Rect2(256,0,128,128),Color(1,1,1,0.62))
+        draw_texture_rect_region(COMMAND_SKIN,Rect2(area.end-Vector2(40,40),Vector2(40,40)),Rect2(256,0,128,128),Color(1,1,1,0.38))
 
 func _toggle_map_detail() -> void:
     detailed_map = not detailed_map
@@ -830,6 +849,11 @@ func _draw_unit(unit: Dictionary) -> void:
         slot_index += 1
     var flag_extent: Vector2 = Vector2(15,22) if unit.has("parent_id") else Vector2(23,32)
     _paint_tile(38+side,Rect2(p-Vector2(flag_extent.x*0.5,flag_extent.y+7),flag_extent),Color(1,1,1,accent.a))
+    if camera_zoom>=1.0 and not unit.has("parent_id"):
+        var sway: float=sin(render_clock*sim.operation_scale()*2.0+float(unit["id"]))*2.0
+        var top: Vector2=p+Vector2(-2,-36)
+        map_layer.draw_line(p+Vector2(-2,-6),top,Color("#a58b58"),1.3,true)
+        map_layer.draw_colored_polygon(PackedVector2Array([top,top+Vector2(15,sway+2),top+Vector2(12,sway+10),top+Vector2(0,9)]),Color(accent,0.87))
     var forward: Vector2 = unit["facing"]
     if detailed_map:
         map_layer.draw_line(p + forward*22.0, p + forward*35.0, Color(accent,0.8), 1.8)
@@ -1335,7 +1359,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> v
     var moving: bool = float(unit.get("motion_speed",0.0)) > 2.0 and sim.started and not sim.finished
     var kind: int = 1 if str(unit["type"])=="궁병" else (2 if str(unit["type"])=="기병" else 0)
     # The atlas uses a shared foot anchor. Taller silhouettes, compact lateral footprint.
-    var extent: Vector2 = Vector2(19,24) if kind==2 else Vector2(15,20)
+    var extent: Vector2 = Vector2(17,22) if kind==2 else Vector2(13,18)
     if not sim.six_armies: extent*=1.25
     var pose: int = _soldier_pose(unit,index,render_clock)
     var phase: float = render_clock*sim.operation_scale()*(13.0 if kind==2 else 9.0)+index*1.7
@@ -1370,29 +1394,32 @@ func _draw_combat_effects() -> void:
         var alpha: float = clampf(1.0-age,0.0,1.0)
         match str(fx["kind"]):
             "화살":
-                var travel: float = clampf(age/0.45,0.0,1.0)
-                var pos: Vector2 = p.lerp(target,travel)
-                var offset: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
-                map_layer.draw_set_transform(offset+pos*camera_zoom,(target-p).angle(),Vector2.ONE*camera_zoom)
-                map_layer.draw_texture_rect_region(PAINTED_FX,Rect2(-18,-10,36,20),_fx_region(0),Color(1,1,1,alpha))
-                map_layer.draw_set_transform(offset,0.0,Vector2.ONE*camera_zoom)
-                var lateral: Vector2 = (target-p).normalized().orthogonal()
-                for k in [-1,1]:
-                    var arrow: Vector2 = p.lerp(target,clampf(travel-float(k)*0.10,0.0,1.0))+lateral*float(k)*6.0
-                    map_layer.draw_line(arrow-(target-p).normalized()*12.0,arrow,Color(1.0,0.89,0.58,alpha*0.8),1.4,true)
-                if travel >= 0.98:
-                    _paint_fx(1,target,38.0,alpha)
+                # One real volley event, several representative arrows; no extra damage.
+                var direction: Vector2=(target-p).normalized()
+                var lateral: Vector2=direction.orthogonal()
+                for k in range(7):
+                    var travel: float=clampf((age-float(k%3)*0.035)/0.48,0.0,1.0)
+                    if age<float(k%3)*0.035 or travel>=1.0: continue
+                    var spread: float=(float(k)-3.0)*3.3
+                    var arrow: Vector2=p.lerp(target,travel)+lateral*spread+Vector2(0,-sin(travel*PI)*16.0)
+                    var tail: Vector2=arrow-direction*9.0
+                    map_layer.draw_line(tail,arrow,Color(0.22,0.18,0.12,alpha*0.8),1.8,true)
+                    map_layer.draw_line(tail,arrow,Color(0.91,0.80,0.56,alpha),0.8,true)
+                    map_layer.draw_line(arrow-direction*2.5+lateral*1.5,arrow,Color(0.95,0.93,0.80,alpha),1.0,true)
+                if age>=0.48:
+                    _paint_fx(1,target,22.0,alpha*0.65)
             "돌격":
-                _paint_fx(3,target,50.0+age*42.0,alpha)
-                map_layer.draw_arc(target,10.0+age*44.0,0.0,TAU,24,Color(1.0,0.73,0.36,alpha*0.72),2.2,true)
-                # Ground dust is emitted only by actual marching on exposed soil.
+                var contact: Vector2=p.lerp(target,0.70)
+                _paint_fx(3,contact,34.0+age*22.0,alpha*0.65)
+                for k in range(6):
+                    var ray: Vector2=Vector2.from_angle(float(k)*TAU/6.0+float(fx["time"]))*(7.0+age*18.0)
+                    map_layer.draw_line(contact+ray*0.6,contact+ray,Color(0.95,0.76,0.42,alpha*0.75),1.1,true)
             _:
-                _paint_fx(4,(p+target)*0.5,35.0,alpha)
-                var impact: Vector2 = (p+target)*0.5
-                for k in range(4):
-                    var ray: Vector2 = Vector2.from_angle(float(k)*TAU/4.0+float(fx["time"]))* (7.0+age*16.0)
-                    map_layer.draw_line(impact+ray*0.45,impact+ray,Color(1.0,0.83,0.44,alpha*0.68),1.6,true)
-                # Melee sparks remain; no generic dust cloud on grass or water.
+                var impact: Vector2=(p+target)*0.5
+                _paint_fx(4,impact,18.0,alpha*0.65)
+                for k in range(5):
+                    var ray: Vector2=Vector2.from_angle(float(k)*TAU/5.0+float(fx["time"]))*(3.0+age*9.0)
+                    map_layer.draw_line(impact+ray*0.45,impact+ray,Color(1.0,0.86,0.56,alpha*0.76),1.0,true)
 
 func _setup_sound() -> void:
     sound_player = AudioStreamPlayer.new()
@@ -2036,8 +2063,9 @@ func _visual_slots(unit: Dictionary) -> Array[Vector2]:
     if sim.six_armies:
         # Visual detail uses the same formation geometry; combat still uses authoritative slots.
         if str(unit["next_formation"])!="": return sim.formation_slots(unit)
-        var count: int=clampi(ceili(float(unit["troops"])/120.0),1,40)
-        return sim.army_slots(unit,count,10.0)
+        var count: int=clampi(ceili(float(unit["troops"])/65.0),1,72)
+        var spacing: float=8.8 if str(unit["type"])=="기병" else 8.0
+        return sim.army_slots(unit,count,spacing)
     var result: Array[Vector2] = []
     var count: int = clampi(ceili(float(unit["troops"])/3.0),1,64)
     var front: Vector2 = unit["facing"]
