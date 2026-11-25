@@ -169,8 +169,9 @@ func conclude(sim) -> bool:
         var person: Dictionary = state["roster"][idx]
         person["hp"] = int(unit["general_hp"])
         person["dead"] = str(unit["general_state"]) == "전사"
-        person["xp"] += sim.merit(unit)
-        state["troops"][i] = maxi(0,int(unit["troops"]))
+        var corps: Dictionary = sim.corps_report(i)
+        person["xp"] += int(corps["merit"])
+        state["troops"][i] = maxi(0,floori(float(corps["troops"])))
     state["pool"] = maxi(0,int(state["pool"])-sim.reinforcements_used[0]*72)
     if won:
         if target not in state["owned"]:
