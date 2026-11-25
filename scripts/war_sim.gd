@@ -26,6 +26,8 @@ var result: String = ""
 var next_id: int = 0
 var reinforcements_used: Array[int] = [0, 0]
 var step_count: int = 0
+var intercepted_orders: int = 0
+var delivered_orders: int = 0
 
 func _init() -> void:
     reset()
@@ -40,6 +42,8 @@ func reset() -> void:
     next_id = 0
     battle_time = 0.0
     step_count = 0
+    intercepted_orders = 0
+    delivered_orders = 0
     turn = 1
     started = false
     paused = false
@@ -124,7 +128,7 @@ func request_order(unit_id: int, mission: String, policy: String) -> bool:
             return false
     couriers.append({
         "pos":commanders[0]["pos"], "unit_id":unit_id,
-        "mission":mission, "policy":policy
+        "mission":mission, "policy":policy, "side":int(unit["side"])
     })
     _log("전령 파견 → %s / %s" % [str(unit["name"]), mission])
     return true
@@ -197,12 +201,39 @@ func _update_couriers(dt: float) -> void:
         var p: Vector2 = letter["pos"]
         var target_pos: Vector2 = target["pos"]
         letter["pos"] = p.move_toward(target_pos, 140.0 * dt)
+        if _courier_intercepted(letter):
+            intercepted_orders += 1
+            _log("%s에게 가던 전령이 적에 의해 차단됨" % str(target["name"]))
+            couriers.remove_at(i)
+            continue
         if (letter["pos"] as Vector2).distance_to(target_pos) < 16.0:
+            delivered_orders += 1
             target["mission"] = str(letter["mission"])
             target["policy"] = str(letter["policy"])
             target["ai_cooldown"] = 0.0
             _log("%s: 전령 도착 / 새 명령 '%s'" % [str(target["name"]), str(letter["mission"])])
             couriers.remove_at(i)
+
+
+# An actual enemy must physically meet a courier. Nearby friendly units can
+# escort it; no global dice roll or telepathic order delivery.
+func _courier_intercepted(letter: Dictionary) -> bool:
+    var p: Vector2 = letter["pos"]
+    var side: int = int(letter["side"])
+    var threatened: bool = false
+    for unit in units:
+        if float(unit["troops"]) <= 0.0:
+            continue
+        if int(unit["side"]) != side and (unit["pos"] as Vector2).distance_to(p) <= 24.0:
+            threatened = true
+            break
+    if not threatened:
+        return false
+    for escort in units:
+        if int(escort["side"]) == side and float(escort["troops"]) > 0.0:
+            if (escort["pos"] as Vector2).distance_to(p) <= 48.0:
+                return false
+    return true
 
 func _supply_logic(dt: float) -> void:
     for base in bases:
@@ -762,6 +793,8 @@ func validate_state() -> Array[String]:
         problems.append("invalid elapsed time")
     if units.size() > 16:
         problems.append("unit pool exceeds bounded demo limit")
+    if intercepted_orders < 0 or delivered_orders < 0:
+        problems.append("invalid courier counters")
     for unit in units:
         var p: Vector2 = unit["pos"]
         if is_nan(p.x) or is_nan(p.y) or is_inf(p.x) or is_inf(p.y):
