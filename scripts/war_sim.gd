@@ -34,6 +34,7 @@ var visual_effects: Array[Dictionary] = []
 var troop_history: Array[Dictionary] = []
 var sample_at: float = 0.0
 var pending_reports: Array[Dictionary] = []
+var structures: Array[Dictionary] = []
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var battle_time: float = 0.0
 var turn: int = 1
@@ -52,6 +53,7 @@ func _init() -> void:
 
 func reset() -> void:
     timeline.clear()
+    structures.clear()
     visual_effects.clear()
     troop_history.clear()
     sample_at = 0.0
@@ -92,6 +94,7 @@ func reset() -> void:
     scouts.append({"side":0, "pos":Vector2(145, 230), "goal":Vector2(375, 120), "leg":0, "alive":true, "report_timer":0.0, "reports":0})
     scouts.append({"side":1, "pos":Vector2(755, 340), "goal":Vector2(525, 440), "leg":0, "alive":true, "report_timer":0.0, "reports":0})
     _configure_scenario()
+    _configure_structures()
     _log("출전 편성 준비: " + scenario_title)
 
 func _add_unit(side: int, title: String, unit_type: String, disposition: String, ability: float, start: Vector2, mission: String, people: float) -> void:
@@ -120,7 +123,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
         "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
         "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
-        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0
+        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0
     }
     _set_general_profile(unit)
     if unit_type == "기병":
@@ -220,6 +223,7 @@ func step(dt: float) -> void:
         if float(unit["troops"]) > 0.0:
             _move_unit(unit, dt)
     _resolve_frontline(dt)
+    _update_structures(dt)
     _update_battle_condition(dt)
     _combat(dt)
     _update_outposts(dt)
@@ -704,7 +708,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var actual_move: Vector2 = Vector2.ZERO
     if pos.distance_to(goal) > 2.0:
         var new_pos: Vector2 = pos.move_toward(goal, rate * dt)
-        unit["pos"] = _field_point(new_pos)
+        unit["pos"] = _structure_move(unit, pos, _field_point(new_pos))
         var moved: Vector2 = (unit["pos"] as Vector2) - pos
         actual_move = moved
         if moved.length_squared() > 0.03:
@@ -975,6 +979,8 @@ func _combat(dt: float) -> void:
         var actual_damage: float = minf(float(defender["troops"]), float(entry["damage"]))
         defender["troops"] = maxf(0.0, float(defender["troops"]) - actual_damage)
         defender["casualties_taken"] = float(defender["casualties_taken"]) + actual_damage
+        if actual_damage > 0.0:
+            defender["last_hit"] = battle_time
         var shock_damage: float = float(entry["shock"])
         if shock_damage > 0.0 or bool(entry["ambush"]):
             defender["morale"] = maxf(0.0, float(defender["morale"]) - shock_damage * 1.1 - (6.0 if bool(entry["ambush"]) else 0.0))
@@ -1061,15 +1067,14 @@ func battle_report() -> Array[String]:
     for unit in units:
         if int(unit["side"]) != 0 or int(unit["id"]) >= 3:
             continue
-        rows.append("%s[%s] | 피해 %d · 손실 %d · 이탈 %d · 돌격 %d · 패주 %d" %
-            [str(unit["name"]), str(unit["general_state"]), int(round(float(unit["damage_dealt"]))),
-            int(round(float(unit["casualties_taken"]))), int(round(float(unit["deserted"]))), int(unit["charges"]), int(unit["rout_count"])])
+        rows.append("%s[%s] | 판단 %d · 피해 %d · 손실 %d · 이탈 %d · 공적 %d" %
+            [str(unit["name"]), str(unit["general_state"]), int(unit["decisions"]), int(round(float(unit["damage_dealt"]))), int(round(float(unit["casualties_taken"]))), int(round(float(unit["deserted"]))), merit(unit)])
     return rows
 
 func _check_victory() -> void:
     var winner: int = _objective_winner()
     if winner >= 0:
-        _finish("작전 목표 확보 — 아군 승리" if winner == 0 else "적 작전 목표 장악 — 패배")
+        _finish(("양측 요충지 확보 — 아군 승리" if winner == 0 else "적 요충지 장악 — 패배") if scenario_id == 0 else ("중앙 고지 확보 — 아군 승리" if winner == 0 else "적 중앙 고지 장악 — 패배"))
         return
 
     for unit in units:
@@ -1753,3 +1758,46 @@ func _record_presentation() -> void:
     if battle_time >= sample_at or finished:
         troop_history.append({"time":battle_time,"blue":total_troops(0),"red":total_troops(1)})
         sample_at = battle_time + 2.0
+
+
+# M8: destructible field fortifications in the supply-defense scenario.
+func _configure_structures() -> void:
+    if scenario_id != 2:
+        return
+    structures.append({"name":"북쪽 목책","side":0,"rect":Rect2(225,96,14,110),"hp":90.0,"max_hp":90.0,"kind":"목책"})
+    structures.append({"name":"중앙 성문","side":0,"rect":Rect2(225,254,20,56),"hp":120.0,"max_hp":120.0,"kind":"성문"})
+    structures.append({"name":"남쪽 목책","side":0,"rect":Rect2(225,366,14,106),"hp":90.0,"max_hp":90.0,"kind":"목책"})
+
+func _structure_move(unit: Dictionary, old: Vector2, proposed: Vector2) -> Vector2:
+    for structure in structures:
+        if float(structure["hp"]) <= 0.0 or int(structure["side"]) == int(unit["side"]):
+            continue
+        var barrier: Rect2 = (structure["rect"] as Rect2).grow(8.0)
+        if barrier.has_point(proposed) and not barrier.has_point(old):
+            return old
+    return proposed
+
+func _update_structures(dt: float) -> void:
+    for structure in structures:
+        if float(structure["hp"]) <= 0.0:
+            continue
+        var center: Vector2 = (structure["rect"] as Rect2).get_center()
+        var bounds: Rect2 = (structure["rect"] as Rect2).grow(26.0)
+        for unit in units:
+            if int(unit["side"]) == int(structure["side"]) or bool(unit["routed"]) or float(unit["troops"]) <= 0.0:
+                continue
+            if not bounds.has_point(unit["pos"]):
+                continue
+            var power: float = 5.0 if str(unit["type"]) == "보병" else (2.0 if str(unit["type"]) == "궁병" else 3.0)
+            var damage: float = minf(float(structure["hp"]),power*dt*float(unit["troops"])/maxf(1.0,float(unit["initial_troops"])))
+            structure["hp"] = maxf(0.0,float(structure["hp"])-damage)
+            unit["structure_damage"] = float(unit["structure_damage"])+damage
+            if battle_time-float(unit["last_visual"]) >= 0.65:
+                unit["last_visual"] = battle_time
+                visual_effects.append({"from":unit["pos"],"to":center,"side":unit["side"],"kind":"근접","time":battle_time})
+            if float(structure["hp"]) <= 0.0:
+                _log(str(structure["name"])+" 파괴: 통행 가능")
+                break
+
+func merit(unit: Dictionary) -> int:
+    return maxi(0,int(round(float(unit["damage_dealt"])*2.0 + float(unit["objective_time"])*0.8 + float(unit["supply_guard_time"])*0.4 + float(unit["structure_damage"]) - float(unit["deserted"]))))
