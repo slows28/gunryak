@@ -1,6 +1,7 @@
 extends Control
 ## 2D tactical screen. Simulation is entirely separate in war_sim.gd.
 const WarSim = preload("res://scripts/war_sim.gd")
+const TACTICAL_ART = preload("res://assets/art/tactical_atlas.svg")
 const MAP_TOP_LEFT: Vector2 = Vector2(24, 101)
 const MAP_SIZE: Vector2 = Vector2(900, 570)
 const COL_BG: Color = Color("#101b23")
@@ -415,11 +416,8 @@ func _draw_map(_canvas: Control) -> void:
         var owner: int = int(site["owner"]) if known else -1
         var color: Color = COL_BLUE if owner == 0 else (COL_RED if owner == 1 else COL_GOLD)
         map_layer.draw_arc(site_pos, WarSim.OUTPOST_RADIUS, 0.0, TAU, 44, Color(color.r, color.g, color.b, 0.24), 1.5)
-        map_layer.draw_colored_polygon(PackedVector2Array([
-            site_pos + Vector2(0, -12),
-            site_pos + Vector2(9, -3),
-            site_pos + Vector2(0, 6),
-            site_pos + Vector2(-9, -3)]), color)
+        map_layer.draw_texture_rect_region(TACTICAL_ART,Rect2(site_pos-Vector2(18,18),Vector2(36,36)),Rect2(128,128,64,64))
+        map_layer.draw_circle(site_pos+Vector2(10,-6),3.5,color)
         var state: String = ("중립" if owner < 0 else ("아군" if owner == 0 else "적군")) if known else "미확인"
         _draw_string(str(site["name"]) + " " + state, site_pos + Vector2(-45, -18), 12, COL_TEXT)
         if known and int(site["challenger"]) >= 0:
@@ -437,7 +435,8 @@ func _draw_map(_canvas: Control) -> void:
         if str(base["state"]) == "가동":
             map_layer.draw_circle(p, WarSim.SUPPLY_RADIUS, Color(accent.r, accent.g, accent.b, 0.045))
             map_layer.draw_arc(p, WarSim.SUPPLY_RADIUS, 0.0, TAU, 56, Color(accent.r, accent.g, accent.b, 0.33), 1.5)
-        map_layer.draw_rect(Rect2(p - Vector2(7, 7), Vector2(14, 14)), accent)
+        map_layer.draw_texture_rect_region(TACTICAL_ART,Rect2(p-Vector2(20,20),Vector2(40,40)),Rect2(64,128,64,64))
+        map_layer.draw_circle(p+Vector2(15,-10),4.0,accent)
         _draw_string("보급 %s · %d" % [str(base["state"]), int(base.get("stock", 100.0))], p + Vector2(-40, 24), 12, Color("#f6f4e8"))
     for commander in sim.commanders:
         if fog_enabled and not sim.finished and int(commander["side"]) != 0 and not sim.player_can_see(commander["pos"]):
@@ -910,15 +909,16 @@ func _draw_portrait(canvas: Control) -> void:
     var unit: Dictionary = sim.find_unit(selected_id)
     if unit.is_empty():
         return
+    var portrait_index: int = 0
+    match str(unit["name"]):
+        "마속": portrait_index = 1
+        "위연": portrait_index = 2
+        "장합": portrait_index = 3
     var accent: Color = COL_BLUE if str(unit["personality"]) == "신중" else (COL_RED if str(unit["personality"]) == "공격" else COL_GOLD)
     canvas.draw_rect(Rect2(0,0,49,78),Color("#26383b"))
+    canvas.draw_texture_rect_region(TACTICAL_ART,Rect2(1,7,47,47),Rect2(portrait_index*64,64,64,64))
     canvas.draw_rect(Rect2(1,1,47,76),accent,false,1.2)
-    canvas.draw_colored_polygon(PackedVector2Array([Vector2(4,72),Vector2(11,45),Vector2(38,45),Vector2(45,72)]),accent.darkened(0.3))
-    canvas.draw_circle(Vector2(24,30),13,Color("#bba88d"))
-    canvas.draw_colored_polygon(PackedVector2Array([Vector2(10,26),Vector2(14,10),Vector2(24,5),Vector2(35,10),Vector2(39,26)]),Color("#29363b"))
-    canvas.draw_line(Vector2(12,25),Vector2(37,25),accent,2)
-    canvas.draw_line(Vector2(20,36),Vector2(29,36),Color("#44382e"),1.5)
-    canvas.draw_line(Vector2(24,44),Vector2(24,72),Color("#c2b394"),1.5)
+    canvas.draw_string(korean_font,Vector2(4,65),str(unit["name"]),HORIZONTAL_ALIGNMENT_LEFT,-1,10,COL_TEXT)
     canvas.draw_rect(Rect2(6,69,37,5),Color("#0f1c23"))
     canvas.draw_rect(Rect2(6,69,37*float(unit["morale"])/100.0,5),accent)
 
@@ -932,8 +932,11 @@ func _draw_terrain_texture() -> void:
         for x in range(int(forest.position.x)+7,int(forest.end.x)-4,15):
             for y in range(int(forest.position.y)+8,int(forest.end.y)-4,16):
                 var p := Vector2(x,y)
-                map_layer.draw_circle(p+Vector2(2,3),6.5,Color("#233d2c"))
-                map_layer.draw_circle(p,5.5,Color("#416746"))
+                var size: float = 18.0 + float((x*3+y*7)%5)
+                map_layer.draw_texture_rect_region(TACTICAL_ART,Rect2(p-Vector2.ONE*size*0.5,Vector2.ONE*size),Rect2(0,128,64,64))
+    for i in range(4):
+        var rock_pos: Vector2 = sim.hill.position + Vector2(12.0+float(i)*sim.hill.size.x/4.0,sim.hill.size.y*0.65)
+        map_layer.draw_texture_rect_region(TACTICAL_ART,Rect2(rock_pos,Vector2(18,18)),Rect2(192,128,64,64))
     for radius in [0.25,0.38,0.48]:
         var center: Vector2 = sim.hill.get_center()
         var points := PackedVector2Array()
@@ -946,22 +949,20 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> v
     var direction: Vector2 = unit["facing"]
     var side: Vector2 = Vector2(-direction.y,direction.x)
     var moving: bool = (unit["pos"] as Vector2).distance_to(unit["goal"]) > 5.0 and sim.started and not sim.finished
-    var bob: float = sin(render_clock*12.0+index*1.7)*1.3 if moving else 0.0
+    var bob: float = sin(render_clock*12.0+index*1.7)*1.0 if moving else 0.0
     p += side*bob
-    map_layer.draw_circle(p+Vector2(1.5,2.0),4.4,Color(0,0,0,0.25))
-    if str(unit["type"]) == "기병":
-        map_layer.draw_line(p-direction*5.0,p+direction*4.0,Color("#8b7356"),6.0,true)
-        map_layer.draw_circle(p+direction*4.0,2.5,Color("#ad9575"))
-        map_layer.draw_circle(p,3.0,accent)
-        map_layer.draw_line(p,p+direction*9.0,Color("#d7c9a2"),1.3)
-    else:
-        map_layer.draw_circle(p,3.4,accent)
-        map_layer.draw_circle(p+direction*2.1,1.8,Color("#d1bd9a"))
-        if str(unit["type"]) == "궁병":
-            map_layer.draw_arc(p+direction*3.0,4.0,direction.angle()-1.1,direction.angle()+1.1,9,Color("#dfc695"),1.4)
-        else:
-            map_layer.draw_line(p+side*3.0,p+direction*7.0+side*3.0,Color("#e4dfcb"),1.4)
-            map_layer.draw_line(p-side*3.0-direction*2.0,p-side*3.0+direction*2.0,accent.darkened(0.25),2.5)
+    var kind: int = 0
+    if str(unit["type"]) == "궁병":
+        kind = 1
+    elif str(unit["type"]) == "기병":
+        kind = 2
+    var tile: int = int(unit["side"])*3 + kind
+    var extent: float = 16.0 if kind == 2 else 13.5
+    var map_offset: Vector2 = MAP_SIZE*0.5 - camera_center*camera_zoom
+    var angle: float = direction.angle() if kind == 2 else direction.angle()+PI*0.5
+    map_layer.draw_set_transform(map_offset+p*camera_zoom,angle,Vector2.ONE*camera_zoom)
+    map_layer.draw_texture_rect_region(TACTICAL_ART,Rect2(Vector2.ONE*(-extent*0.5),Vector2.ONE*extent),Rect2(tile*64,0,64,64),Color(1.0,1.0,1.0,accent.a))
+    map_layer.draw_set_transform(map_offset,0.0,Vector2.ONE*camera_zoom)
 
 func _draw_combat_effects() -> void:
     for fx in sim.visual_effects:
