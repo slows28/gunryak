@@ -1359,13 +1359,7 @@ func _check_victory() -> void:
         var unit_pos: Vector2 = unit["pos"]
         var enemy_commander: Dictionary = commanders[1 - side]
         if unit_pos.distance_to(enemy_commander["pos"]) < 26.0:
-            var defended: bool = false
-            for guard in units:
-                if int(guard["side"]) == 1 - side and float(guard["troops"]) > 0.0 and not bool(guard["routed"]):
-                    if (guard["pos"] as Vector2).distance_to(enemy_commander["pos"]) < 76.0:
-                        defended = true
-                        break
-            if not defended:
+            if commander_guard_count(1-side) == 0:
                 _finish("책사 포획 성공 — 아군 승리" if side == 0 else "아군 책사 포획 — 패배")
                 return
     var side_alive: Array[int] = [0, 0]
@@ -2160,20 +2154,59 @@ func _update_convoy(dt: float) -> void:
     if convoy.is_empty() or float(convoy["hp"]) <= 0.0:
         return
     var p: Vector2 = convoy["pos"]
+    var situation: Dictionary = convoy_status()
+    var guards: int = int(situation["guards"])
+    var attackers: int = int(situation["attackers"])
+    if attackers > 0:
+        convoy["hp"] = maxf(0.0,float(convoy["hp"])-dt*float(attackers)* (0.8 if guards > 0 else 3.5))
+        convoy["blocked_seconds"] = float(convoy.get("blocked_seconds",0.0))+dt
+    elif guards == 0:
+        convoy["unguarded_seconds"] = float(convoy.get("unguarded_seconds",0.0))+dt
+    else:
+        convoy["pos"] = p.move_toward(convoy["goal"],dt*(7.5 if long_operation else (25.0 if wide_field else 16.0)))
+        convoy["moving_seconds"] = float(convoy.get("moving_seconds",0.0))+dt
+
+# Shared, actual-position rules for the capture check and the player display.
+func commander_guard_count(side: int) -> int:
+    var count: int = 0
+    var origin: Vector2 = commanders[side]["pos"]
+    for unit in units:
+        if int(unit["side"]) == side and float(unit["troops"]) > 0.0 and not bool(unit["routed"]):
+            if (unit["pos"] as Vector2).distance_to(origin) < 76.0:
+                count += 1
+    return count
+
+func convoy_status() -> Dictionary:
+    if convoy.is_empty(): return {}
+    var p: Vector2 = convoy["pos"]
+    var destination: Vector2 = convoy["goal"]
     var guards: int = 0
     var attackers: int = 0
     for unit in units:
-        if float(unit["troops"]) <= 0.0 or bool(unit["routed"]):
-            continue
+        if float(unit["troops"]) <= 0.0 or bool(unit["routed"]): continue
         var distance: float = p.distance_to(unit["pos"])
-        if int(unit["side"]) == 0 and distance < 125.0:
-            guards += 1
-        elif int(unit["side"]) == 1 and distance < 65.0:
-            attackers += 1
-    if attackers > 0:
-        convoy["hp"] = maxf(0.0,float(convoy["hp"])-dt*float(attackers)* (0.8 if guards > 0 else 3.5))
-    if guards > 0 and attackers == 0:
-        convoy["pos"] = p.move_toward(convoy["goal"],dt*(7.5 if long_operation else (25.0 if wide_field else 16.0)))
+        if int(unit["side"]) == 0 and distance < 125.0: guards += 1
+        elif int(unit["side"]) == 1 and distance < 65.0: attackers += 1
+    var length: float = maxf(1.0,layout_point(Vector2(100,282)).distance_to(destination))
+    var progress: float = clampf(1.0-p.distance_to(destination)/length,0.0,1.0)
+    var state: String = "파괴" if float(convoy["hp"])<=0.0 else ("도착" if p.distance_to(destination)<12.0 else ("교전 정체" if attackers>0 else ("호위 대기" if guards==0 else ("호위 이동" if started else "출전 준비"))))
+    return {"guards":guards,"attackers":attackers,"progress":progress,"remaining":p.distance_to(destination),"state":state}
+
+# Read-only route preview for the selected army. Never picks a new bridge.
+func committed_route_preview(unit: Dictionary) -> Array[Vector2]:
+    var points: Array[Vector2] = []
+    var p: Vector2 = unit["pos"]
+    var goal: Vector2 = unit["goal"]
+    var bridge: float = float(unit.get("bridge_y",-1.0))
+    if long_operation and bridge>=0.0:
+        var exit_bank: int = int(unit.get("bridge_bank",0))
+        var rx: float = river_x(bridge)
+        if exit_bank != 0:
+            if (p.x-river_x(p.y))*exit_bank<0.0 and absf(p.x-river_x(p.y))>=35.0:
+                points.append(Vector2(rx-exit_bank*64.0,bridge))
+            points.append(Vector2(rx+exit_bank*64.0,bridge))
+    points.append(goal)
+    return points
 
 # Cavalry and withdrawing units bypass barriers using end-point detours.
 # Infantry can stay and attack the barrier. This is local steering, not global A*.
