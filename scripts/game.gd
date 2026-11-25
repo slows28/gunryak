@@ -196,7 +196,7 @@ func _build_interface() -> void:
     add_child(unit_list)
     unit_list.item_selected.connect(_on_unit_selected)
     _label("02  작전 목표",Vector2(956,344),Vector2(267,20),13,COL_MUTED)
-    mission_choice = _options(Vector2(950,363),["중앙 진격","북측 확보","남측 우회","본진 방어"])
+    mission_choice = _options(Vector2(950,363),["중앙 진격","북측 확보","남측 우회","본진 방어","전열 엄호","측후방 기동","구원 지원"])
     mission_choice.size.x = 306
     mission_choice.item_selected.connect(_on_choices_changed)
     _label("03  진형 · 지휘 방침",Vector2(956,401),Vector2(267,21),13,COL_MUTED)
@@ -446,6 +446,8 @@ func _refresh_hud() -> void:
         details_label.text = "통솔 %d · 무력 %d · 지력 %d · 판단 %d\n%s / %s · 응집 %d · 피로 %d\n식량 %d%s · %s\n%s" % [int(unit["leadership"]), int(unit["martial"]), int(unit["intelligence"]), int(unit["judgment"]), str(unit["action"]), str(unit["formation"]), int(unit["cohesion"]), int(unit["fatigue"]), int(unit["rations"]), ammo_text, "포위" if bool(unit["surrounded"]) else str(unit["obedience"]), str(unit["reason"])]
     if not unit.is_empty():
         details_label.tooltip_text = "%s\n사기 %d · 응집 %d · 피로 %d\n식량 %d · 화살 %d\n%s" % [str(unit["name"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"]),str(unit["reason"])]
+        if sim.six_armies:
+            details_label.tooltip_text += "\n협동 타격 %d · 상성 우위 타격 %d · 측후방 피해 %d" % [roundi(unit["linked_hits"]),roundi(unit["counter_damage"]),roundi(unit["flank_damage"])]
     var start_line: int = maxi(0, sim.events.size() - 4)
     var lines: String = ""
     for i in range(start_line, sim.events.size()):
@@ -673,6 +675,7 @@ func _draw_map(_canvas: Control) -> void:
                 var anchor: Vector2 = _screen(selected["defense_anchor"])
                 map_layer.draw_arc(anchor, 28.0,0.0,TAU,32,COL_BLUE,2.0)
                 _draw_string("사수",anchor+Vector2(-12,4),11,COL_BLUE)
+    _draw_cooperation_links()
     _draw_fortifications()
     for report in sim.open_situations():
         var rp: Vector2 = report["pos"]
@@ -1966,3 +1969,21 @@ func _draw_bridge(p: Vector2) -> void:
         for x in [-32.0,-11.0,11.0,32.0]:
             map_layer.draw_rect(Rect2(p+Vector2(x-2,y-6),Vector2(4,9)),Color("#59462f"))
             map_layer.draw_rect(Rect2(p+Vector2(x-2,y-6),Vector2(4,2)),Color("#d3b680"))
+
+func _draw_cooperation_links() -> void:
+    var unit: Dictionary=sim.find_unit(selected_id)
+    if unit.is_empty() or not sim.started: return
+    if str(unit["mission"]) not in ["전열 엄호","측후방 기동","구원 지원"]: return
+    var ally: Dictionary=sim.find_unit(int(unit.get("link_id",-1)))
+    if ally.is_empty() or float(ally["troops"])<=0.0: return
+    var p: Vector2=unit["pos"]
+    var q: Vector2=ally["pos"]
+    var k: float=1.0/camera_zoom
+    var d: float=p.distance_to(q)
+    var direction: Vector2=(q-p).normalized()
+    for i in range(0,int(d),int(maxf(14.0,18.0*k))):
+        var end: float=minf(float(i)+8.0*k,d)
+        map_layer.draw_line(p+direction*float(i),p+direction*end,Color(COL_BLUE,0.65),1.7*k,true)
+    var goal: Vector2=unit["goal"]
+    map_layer.draw_line(p,goal,Color(COL_GOLD,0.65),1.5*k,true)
+    map_layer.draw_arc(goal,9.0*k,0,TAU,24,COL_GOLD,1.5*k,true)
