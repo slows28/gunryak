@@ -703,6 +703,18 @@ func _decide(unit: Dictionary) -> void:
         action = "호위" if side == 0 else "차단"
         reason = "군량 수레 접근"
         goal = (convoy["pos"] as Vector2) + Vector2(34 if side == 0 else 70,0)
+        if long_operation:
+            # Spread default escorts around the wagon instead of stacking at one point.
+            var rank: int = command_ids(side).find(int(unit["id"]))
+            if rank >= 0:
+                var lane: float = float(rank % 3 - 1) * 70.0
+                goal += Vector2(-55.0 if rank >= 3 else 0.0, lane)
+            # Leave one living infantry formation with the commander by default.
+            # Explicit map destinations and non-default missions take precedence.
+            if _escort_rearguard(side) == int(unit["id"]):
+                action = "책사 호위"
+                reason = "군량 수레와 후방 지휘부를 분리하여 방어"
+                goal = (commanders[side]["pos"] as Vector2) + Vector2(42.0 if side == 0 else -42.0,0)
     if wide_field and unit.has("parent_id") and enemy_distance > 165.0 and action not in ["후퇴","패주","재집결","휴식","보급 복귀","탄약 보충","매복"]:
         var parent: Dictionary = find_unit(int(unit["parent_id"]))
         if not parent.is_empty() and float(parent["troops"]) > 0.0 and not bool(parent["routed"]):
@@ -2125,6 +2137,25 @@ func _update_structures(dt: float) -> void:
 func merit(unit: Dictionary) -> int:
     return maxi(0,int(round(float(unit["damage_dealt"])*2.0/(ARMY_SCALE if six_armies else 1.0) + float(unit["objective_time"])*0.8 + float(unit["supply_guard_time"])*0.4 + float(unit["structure_damage"]) - float(unit["deserted"])/(ARMY_SCALE if six_armies else 1.0))))
 
+# Default rear guard is chosen from eligible infantry near the actual commander.
+# A deliberate player map order is never silently reassigned to rear guard.
+func _escort_rearguard(side: int) -> int:
+    var best_id: int = -1
+    var best_distance: float = INF
+    var origin: Vector2 = commanders[side]["pos"]
+    for candidate in units:
+        if int(candidate["side"]) != side or str(candidate["type"]) != "보병":
+            continue
+        if float(candidate["troops"]) <= 0.0 or bool(candidate["routed"]) or bool(candidate["reserve"]):
+            continue
+        if bool(candidate.get("has_destination",false)) or str(candidate["mission"]) not in ["중앙 진격","본진 방어"]:
+            continue
+        var distance: float = origin.distance_to(candidate["pos"])
+        if distance < best_distance:
+            best_distance = distance
+            best_id = int(candidate["id"])
+    return best_id
+
 func _update_convoy(dt: float) -> void:
     if convoy.is_empty() or float(convoy["hp"]) <= 0.0:
         return
@@ -2680,11 +2711,22 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
         var sign_value: float=1.0 if lateral.dot(p-ep)>=0.0 else -1.0
         unit["flank_target"]=enemy["id"]
         unit["flank_goal"]=_field_point(ep+lateral*sign_value*155.0-ef*45.0)
-        unit["flank_until"]=battle_time+24.0
+        var maneuver_budget: float = 24.0
+        if long_operation:
+            # Wide-field travel and a committed bridge can exceed the old fixed timeout.
+            var waypoint: Vector2 = unit["flank_goal"]
+            var route_distance: float = p.distance_to(waypoint)
+            if _river_separates(p,waypoint):
+                route_distance += 260.0
+            maneuver_budget = clampf(24.0 + route_distance / 18.0, 24.0, 80.0)
+        unit["flank_until"]=battle_time+maneuver_budget
         unit["flank_phase"]=0
     if p.distance_to(unit["flank_goal"])<30.0 and int(unit["flank_phase"])==0:
         unit["flank_phase"]=1
         unit["flank_completed"]+=1
+        if long_operation:
+            # Waiting for the front line has a separate limited synchronization window.
+            unit["flank_until"] = maxf(float(unit["flank_until"]),battle_time+30.0)
         _log(str(unit["name"])+": 협동 우회 지점 도달")
     if int(unit["flank_phase"])==1:
         var approach: Vector2=(p-ep).normalized()
