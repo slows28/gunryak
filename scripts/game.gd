@@ -72,6 +72,10 @@ var observing_enemy: bool = false
 var observed_enemy_id: int = -1
 var contact_button: Button
 var combat_brief: Label
+var mind_dialog: AcceptDialog
+var mind_report: RichTextLabel
+var mind_button: Button
+var thought_feed: Label
 var battle_samples: Dictionary = {}
 var recent_losses: Dictionary = {}
 var sample_time: float = -100.0
@@ -266,12 +270,14 @@ func _build_interface() -> void:
     apply_btn.hide()
     live_order_button=_button("작전 지도 열기",Vector2(950,460),Vector2(306,42),_open_order_map)
     _primary_button(live_order_button)
-    _label("03  장수의 현장 판단",Vector2(956,520),Vector2(267,25),15,COL_GOLD)
+    _label("03  장수의 심리·판단",Vector2(956,520),Vector2(194,25),15,COL_GOLD)
+    mind_button=_button("장수 보고",Vector2(1151,520),Vector2(105,28),_open_mind_report)
+    mind_button.tooltip_text="전체 장수의 실시간 판단, 심리, 명령 반응 · G"
     selected_label = _label("",Vector2(1034,565),Vector2(220,27),14,COL_GOLD)
-    details_label = _label("",Vector2(1034,590),Vector2(221,50),12,COL_TEXT)
+    details_label = _label("",Vector2(1034,590),Vector2(221,38),12,COL_TEXT)
     details_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     details_label.clip_text=true
-    decision_label=_label("",Vector2(1034,641),Vector2(221,33),11,COL_MUTED)
+    decision_label=_label("",Vector2(1034,629),Vector2(221,44),12,COL_TEXT)
     decision_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     decision_label.clip_text=true
     _label("전황 기록",Vector2(27,692),Vector2(125,26),17,COL_GOLD)
@@ -282,12 +288,17 @@ func _build_interface() -> void:
     map_detail_button = _button("전술 표시 · 간결",Vector2(950,761),Vector2(306,28),_toggle_map_detail)
     map_detail_button.tooltip_text = "군단 진형과 전술 이동 경로 표시 전환"
     _build_planning_dialog()
+    _build_mind_report()
     _button("브리핑",Vector2(27,730),Vector2(112,26),_open_briefing)
     contact_button=_button("교전 위치",Vector2(27,761),Vector2(112,26),_focus_combat)
     contact_button.tooltip_text="최근 실제 교전 위치로 카메라 이동 · C 단축키"
     combat_brief=_label("",Vector2(153,691),Vector2(578,24),14,COL_GOLD)
+    thought_feed=_label("",Vector2(153,718),Vector2(578,74),12,COL_TEXT)
+    thought_feed.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    thought_feed.clip_text=true
     event_label.position.y=718
     event_label.size.y=74
+    event_label.hide()
     _button("도움말",Vector2(443,74),Vector2(73,26),_open_demo_help)
     _button("철수",Vector2(521,74),Vector2(60,26),_ask_retreat)
     situation_btn = _button("긴급 보고",Vector2(585,74),Vector2(75,26),func():
@@ -350,6 +361,7 @@ func _draw_roster_status(canvas: Control) -> void:
         var strength: float=clampf(float(unit["troops"])/maxf(1.0,float(unit["initial_troops"])),0.0,1.0)
         var morale: float=clampf(float(unit["morale"])/100.0,0.0,1.0)
         var shade: Color=COL_RED if bool(unit["routed"]) else COL_BLUE
+        var mind: Dictionary=unit.get("mind",{})
         var right: float=canvas.size.x-12.0
         var label: String=_number_text(roundi(sim.corps_report(uid)["troops"]))+"명"
         var w: float=korean_font.get_string_size(label,HORIZONTAL_ALIGNMENT_LEFT,-1,13).x
@@ -359,6 +371,8 @@ func _draw_roster_status(canvas: Control) -> void:
         canvas.draw_rect(Rect2(bar.position,Vector2(bar.size.x*strength,bar.size.y)),shade)
         canvas.draw_rect(Rect2(bar.position+Vector2(0,5),Vector2(bar.size.x,2)),Color("#121915"))
         canvas.draw_rect(Rect2(bar.position+Vector2(0,5),Vector2(bar.size.x*morale,2)),COL_GOLD)
+        var mood: String=str(mind.get("mood","준비"))
+        canvas.draw_string(korean_font,Vector2(right-126,row.position.y+26),mood,HORIZONTAL_ALIGNMENT_LEFT,-1,10,_mood_color(mood))
         if index<unit_list.item_count-1:
             canvas.draw_line(Vector2(6,row.end.y+1),Vector2(canvas.size.x-6,row.end.y+1),Color(0.70,0.59,0.40,0.16),1.0)
 
@@ -630,8 +644,9 @@ func _refresh_hud() -> void:
         var leader: Dictionary = sim.find_unit(uid)
         if leader.is_empty(): continue
         var state: String = _field_action(leader)
-        unit_list.set_item_text(index,"%d  %s    %s" % [index+1,str(leader["name"]),state])
-        unit_list.set_item_tooltip(index,"%s명 · 사기 %d · 응집 %d · 식량 %d" % [_number_text(roundi(sim.corps_report(uid)["troops"])),roundi(leader["morale"]),roundi(leader["cohesion"]),roundi(leader["rations"])])
+        var psyche: Dictionary=leader.get("mind",{})
+        unit_list.set_item_text(index,"%d %s  %s" % [index+1,str(leader["name"]),state])
+        unit_list.set_item_tooltip(index,"%s명 · 병사 사기 %d · 장수 %s\n%s\n%s" % [_number_text(roundi(sim.corps_report(uid)["troops"])),roundi(leader["morale"]),str(psyche.get("mood","전투 준비")),str(psyche.get("reason","")),str(psyche.get("concern",""))])
         unit_list.set_item_custom_fg_color(index,COL_MUTED if float(leader["troops"]) <= 0.0 else (COL_RED if bool(leader["routed"]) else COL_TEXT))
     if is_instance_valid(roster_overlay): roster_overlay.queue_redraw()
     _refresh_enemy_roster()
@@ -666,9 +681,11 @@ func _refresh_hud() -> void:
         var corps: Dictionary = sim.corps_report(selected_id)
         selected_label.text = "%s · %s · %s명" % [str(unit["name"]),leader_state,_number_text(roundi(corps["troops"]))]
         var ammo_text: String = " · 화살 %d" % int(unit.get("ammo", 100.0)) if str(unit["type"]) == "궁병" else ""
-        details_label.text = "%s · %s\n가한 피해 %s / 손실 %s\n응집 %d · 식량 %d%s" % [_field_action(unit),str(unit["formation"]),_number_text(roundi(corps["damage_dealt"])),_number_text(roundi(corps["casualties_taken"])),int(unit["cohesion"]),int(unit["rations"]),ammo_text]
+        var psyche: Dictionary=unit.get("mind",{})
+        details_label.text = "%s · %s\n자신감 %d / 긴장 %d" % [str(psyche.get("mood","준비")),str(unit["formation"]),roundi(float(psyche.get("confidence",0.0))),roundi(float(psyche.get("stress",0.0)))]
+        details_label.modulate=_mood_color(str(psyche.get("mood","준비")))
         decision_label.text = str(unit["reason"])
-        decision_label.tooltip_text=str(unit["reason"])
+        decision_label.tooltip_text=str(unit["reason"])+"\n"+str(psyche.get("observed",""))+"\n우려: "+str(psyche.get("concern",""))+"\n최근 명령: "+str(psyche.get("last_order",""))
     if not unit.is_empty():
         details_label.tooltip_text = "%s\n사기 %d · 응집 %d · 피로 %d\n식량 %d · 화살 %d\n%s" % [str(unit["name"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"]),str(unit["reason"])]
         if sim.six_armies:
@@ -679,6 +696,7 @@ func _refresh_hud() -> void:
                 var stages: Array[String] = ["측면 기동","정면 접촉 대기","협동 공격"]
                 details_label.tooltip_text += "\n"+stages[clampi(int(unit["flank_phase"]),0,2)]+" · 완료 %d · 공격 %d · 중단 %d" % [int(unit["flank_completed"]),int(unit["flank_commits"]),int(unit["flank_aborts"])]
     if observing_enemy:
+        details_label.modulate=Color.WHITE
         var enemy: Dictionary=sim.find_unit(observed_enemy_id)
         if not enemy.is_empty() and _visible_unit(enemy):
             live_order_label.text="적군 관측 · %s\n%s / %s / %s명\n사기 %d · 응집 %d" % [str(enemy["name"]),str(enemy["type"]),_field_action(enemy),_number_text(roundi(float(enemy["troops"]))),roundi(float(enemy["morale"])),roundi(float(enemy["cohesion"]))]
@@ -696,6 +714,8 @@ func _refresh_hud() -> void:
             decision_label.tooltip_text=""
         live_order_button.text="아군 작전 지도"
     if is_instance_valid(combat_brief): combat_brief.text=_battle_brief()
+    if is_instance_valid(thought_feed): thought_feed.text=_latest_general_reports()
+    if is_instance_valid(mind_dialog) and mind_dialog.visible: _refresh_mind_report()
     var start_line: int = maxi(0, sim.events.size() - 3)
     var lines: String = ""
     for i in range(start_line, sim.events.size()):
@@ -714,6 +734,71 @@ func _refresh_hud() -> void:
         notice_label.text = "장수 선택 후 전령 파견\n실제 전장 이동 중 차단될 수 있습니다."
     if runtime_notice != "":
         notice_label.text = runtime_notice
+
+func _mood_color(mood: String) -> Color:
+    if mood in ["공황","위기감","지휘 불능","압박"]: return COL_RED
+    if mood in ["불안","초조","동요","긴장","지침"]: return COL_GOLD
+    if mood=="자신감": return Color("#a9d5a5")
+    return COL_MUTED
+
+func _latest_general_reports() -> String:
+    var reports: Array[Dictionary]=[]
+    for id in sim.command_ids(0):
+        var u: Dictionary=sim.find_unit(id)
+        var m: Dictionary=u.get("mind",{})
+        var history: Array=m.get("history",[])
+        if history.is_empty(): continue
+        var last: Dictionary=history.back()
+        reports.append({"time":last["time"],"name":u["name"],"text":last["text"],"category":last["category"]})
+    reports.sort_custom(func(a:Dictionary,b:Dictionary)->bool: return float(a["time"])>float(b["time"]))
+    var lines: Array[String]=[]
+    for i in range(mini(3,reports.size())):
+        var row: Dictionary=reports[i]
+        lines.append("[%s] %s · %s" % [_operation_clock(float(row["time"])*sim.operation_scale()),str(row["name"]),str(row["text"])])
+    if lines.is_empty(): return "장수의 판단과 명령 반응이 이곳에 실시간 기록됩니다."
+    return "\n".join(lines)
+
+func _build_mind_report() -> void:
+    mind_dialog=AcceptDialog.new()
+    mind_dialog.title="장수 보고실 · 실시간 심리 및 판단"
+    mind_dialog.ok_button_text="전장으로"
+    add_child(mind_dialog)
+    mind_report=RichTextLabel.new()
+    mind_report.custom_minimum_size=Vector2(840,590)
+    mind_report.bbcode_enabled=true
+    mind_report.add_theme_font_size_override("normal_font_size",15)
+    mind_report.scroll_active=true
+    mind_dialog.add_child(mind_report)
+
+func _open_mind_report() -> void:
+    if not is_instance_valid(mind_dialog): return
+    _refresh_mind_report()
+    mind_dialog.popup_centered(Vector2i(870,650))
+
+func _refresh_mind_report() -> void:
+    var lines: Array[String]=["[color=#d7bd85]장수 개인의 심리 추정 모델 · 병사 사기와 별개 · 실제 AI 판단 근거 기록[/color]"]
+    for id in sim.command_ids(0):
+        var u: Dictionary=sim.find_unit(id)
+        var m: Dictionary=u.get("mind",{})
+        if m.is_empty(): continue
+        var age: float=maxf(0.0,sim.battle_time-float(m["decision_at"]))*sim.operation_scale()
+        var mood: String=str(m["mood"])
+        lines.append("[color=#8ed5e7][b]%s[/b][/color]  %s / %s  ·  [color=#%s]%s[/color]  ·  %d명" % [str(u["name"]),str(u["personality"]),str(u["type"]),_mood_color(mood).to_html(false),mood,roundi(float(u["troops"]))])
+        lines.append("자신감 %d   긴장 %d   명령 신뢰 %d   병사 사기 %d   |   판단 %.1f초 전" % [roundi(float(m["confidence"])),roundi(float(m["stress"])),roundi(float(m["trust"])),roundi(float(u["morale"])),age])
+        lines.append("판단: %s  →  %s" % [str(m["action"]),str(m["reason"])])
+        lines.append("관측: %s   |   우려: %s" % [str(m["observed"]),str(m["concern"])])
+        lines.append("최근 명령: %s" % str(m["last_order"]))
+        if id==selected_id:
+            var h: Array=m["history"]
+            for j in range(maxi(0,h.size()-3),h.size()):
+                var e: Dictionary=h[j]
+                lines.append("[color=#a6b6b4]  %s · %s · %s[/color]" % [_operation_clock(float(e["time"])*sim.operation_scale()),str(e["category"]),str(e["text"])])
+        lines.append("")
+    var next_text: String="\n".join(lines)
+    if mind_report.text!=next_text:
+        var scroll: float=mind_report.get_v_scroll_bar().value
+        mind_report.text=next_text
+        mind_report.get_v_scroll_bar().set_deferred("value",scroll)
 
 func _goal_name(p: Vector2) -> String:
     for site in sim.outposts:
@@ -1163,6 +1248,8 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     if rich or camera_zoom>=0.9: label += "  "+_number_text(roundi(float(unit["troops"])))
     if rich and detailed_map: label += " · "+str(unit["formation"])
     if not state.is_empty(): label += " · "+state
+    if side==0 and selected:
+        label+=" / "+str(unit.get("mind",{}).get("mood","준비"))
     var fs: int = 14 if selected else 12
     var width: float = (korean_font.get_string_size(label,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+18.0)*inv
     var height: float = (27.0 if selected else 21.0)*inv
@@ -1821,6 +1908,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
             KEY_MINUS: _change_zoom(-0.25)
             KEY_F: _focus_selected()
             KEY_C: _focus_combat()
+            KEY_G: _open_mind_report()
             KEY_V: _toggle_fog(not fog_enabled)
             KEY_HOME: _reset_camera()
             KEY_B: _open_briefing()
