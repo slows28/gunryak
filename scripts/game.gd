@@ -327,6 +327,9 @@ func _start() -> void:
     map_mode = "선택"
     runtime_notice = ""
     sim.start()
+    var row: int=sim.command_ids(0).find(selected_id)
+    if row>=0: unit_list.select(row)
+    _select_unit()
     _refresh_hud()
 
 func _pause() -> void:
@@ -2043,6 +2046,8 @@ func _open_order_map() -> void:
 
 func _return_to_battle() -> void:
     sim.paused=order_pause_before
+    var row: int=sim.command_ids(0).find(selected_id)
+    if row>=0: unit_list.select(row)
     _select_unit()
     _refresh_hud()
     map_layer.queue_redraw()
