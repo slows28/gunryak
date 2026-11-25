@@ -68,6 +68,12 @@ var finish_seen: bool = false
 var title_screen: Control
 var outcome_dialog: AcceptDialog
 var outcome_text: Label
+var campaign_active: bool = false
+var chapter: int = 0
+var campaign_results: Array[String] = []
+var campaign_next: Button
+var touch_origin: Vector2 = Vector2.ZERO
+var touch_dragged: bool = false
 
 class RenderLayer extends Control:
     var painter: Callable
@@ -305,7 +311,7 @@ func _process(delta: float) -> void:
         _update_audio_and_warning()
         queue_redraw()
         portrait.queue_redraw()
-    if is_instance_valid(map_layer):
+    if is_instance_valid(map_layer) and (not sim.paused or not sim.started):
         map_layer.queue_redraw()
     if sim.finished and not finish_seen:
         finish_seen = true
@@ -314,7 +320,7 @@ func _process(delta: float) -> void:
 
 func _refresh_hud() -> void:
     var phase: String = "전투 준비"
-    phase_label.text = "01 작전 준비  ·  02 자율 교전  ·  03 전투 결산"
+    phase_label.text = ("북벌 %d/3 · " % (chapter+1) if campaign_active else "") + "01 작전 준비 · 02 교전 · 03 결산"
     if sim.finished:
         phase = "종료  " + sim.result
         phase_label.text = "03 전투 결산  |  전투 분석 및 타임라인"
@@ -336,6 +342,8 @@ func _refresh_hud() -> void:
         selected_label.text = "%s [%s] %d명 / 사기 %d" % [str(unit["name"]), leader_state, int(float(unit["troops"])), int(float(unit["morale"]))]
         var ammo_text: String = " · 화살 %d" % int(unit.get("ammo", 100.0)) if str(unit["type"]) == "궁병" else ""
         details_label.text = "통솔 %d · 무력 %d · 지력 %d · 판단 %d\n%s / %s · 응집 %d · 피로 %d\n식량 %d%s · %s\n%s" % [int(unit["leadership"]), int(unit["martial"]), int(unit["intelligence"]), int(unit["judgment"]), str(unit["action"]), str(unit["formation"]), int(unit["cohesion"]), int(unit["fatigue"]), int(unit["rations"]), ammo_text, "포위" if bool(unit["surrounded"]) else str(unit["obedience"]), str(unit["reason"])]
+    if not unit.is_empty():
+        details_label.tooltip_text = "%s\n사기 %d · 응집 %d · 피로 %d\n식량 %d · 화살 %d\n%s" % [str(unit["name"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"]),str(unit["reason"])]
     var start_line: int = maxi(0, sim.events.size() - 4)
     var lines: String = ""
     for i in range(start_line, sim.events.size()):
@@ -358,6 +366,23 @@ func _refresh_hud() -> void:
         notice_label.text = runtime_notice
 
 func _gui_input(event: InputEvent) -> void:
+    if event is InputEventScreenTouch and Rect2(MAP_TOP_LEFT,MAP_SIZE).has_point(event.position):
+        if event.pressed:
+            touch_origin = event.position
+            touch_dragged = false
+        elif not touch_dragged:
+            _map_select(event.position)
+        accept_event()
+        return
+    if event is InputEventScreenDrag and Rect2(MAP_TOP_LEFT,MAP_SIZE).has_point(event.position):
+        if touch_origin.distance_to(event.position) > 10.0:
+            touch_dragged = true
+            camera_center -= event.relative/camera_zoom
+            _clamp_camera()
+            map_layer.queue_redraw()
+            queue_redraw()
+        accept_event()
+        return
     if event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_MIDDLE) != 0 and Rect2(MAP_TOP_LEFT,MAP_SIZE).has_point(event.position):
         camera_center -= event.relative / camera_zoom
         _clamp_camera()
@@ -370,32 +395,34 @@ func _gui_input(event: InputEvent) -> void:
             accept_event()
             return
     if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-        var mouse_pos: Vector2 = event.position
-        if not Rect2(MAP_TOP_LEFT, MAP_SIZE).has_point(mouse_pos):
-            return
-        if not sim.started and map_mode != "선택":
-            var field_pos: Vector2 = _world_mouse(mouse_pos)
-            var applied: bool = false
-            match map_mode:
-                "배치": applied = sim.place_unit(selected_id, field_pos)
-                "경유점": applied = sim.add_waypoint(selected_id, field_pos)
-                "방어선": applied = sim.set_defense_line(selected_id, field_pos)
-            runtime_notice = "작전 계획 반영: " + map_mode if applied else "설정 불가: 배치 범위·거리 또는 경유점 한도 확인"
-            if map_mode != "경유점" and applied:
-                map_mode = "선택"
-            _refresh_hud()
-            queue_redraw()
+        _map_select(event.position)
+
+func _map_select(mouse_pos: Vector2) -> void:
+    if not Rect2(MAP_TOP_LEFT, MAP_SIZE).has_point(mouse_pos):
+        return
+    if not sim.started and map_mode != "선택":
+        var field_pos: Vector2 = _world_mouse(mouse_pos)
+        var applied: bool = false
+        match map_mode:
+            "배치": applied = sim.place_unit(selected_id, field_pos)
+            "경유점": applied = sim.add_waypoint(selected_id, field_pos)
+            "방어선": applied = sim.set_defense_line(selected_id, field_pos)
+        runtime_notice = "작전 계획 반영: " + map_mode if applied else "설정 불가: 배치 범위·거리 또는 경유점 한도 확인"
+        if map_mode != "경유점" and applied:
+            map_mode = "선택"
+        _refresh_hud()
+        queue_redraw()
+        accept_event()
+        return
+    for i in range(mini(3, sim.units.size())):
+        var unit: Dictionary = sim.units[i]
+        var p: Vector2 = unit["pos"]
+        if _world_mouse(mouse_pos).distance_to(p) < 47.0:
+            selected_id = i
+            unit_list.select(i)
+            _select_unit()
             accept_event()
             return
-        for i in range(mini(3, sim.units.size())):
-            var unit: Dictionary = sim.units[i]
-            var p: Vector2 = unit["pos"]
-            if _world_mouse(mouse_pos).distance_to(p) < 47.0:
-                selected_id = i
-                unit_list.select(i)
-                _select_unit()
-                accept_event()
-                return
 
 func _draw() -> void:
     draw_rect(Rect2(0, 0, 1280, 800), COL_BG)
@@ -415,8 +442,10 @@ func _draw_map(_canvas: Control) -> void:
     for y in [131.0, 282.0, 435.0]:
         _paint_terrain(Rect2(0,y-9.0,MAP_SIZE.x,18.0),33,48.0)
     for forest in sim.forests:
+        map_layer.draw_rect(forest.grow(7.0),Color(0.12,0.20,0.12,0.18))
         _paint_terrain(forest,34,90.0)
-        map_layer.draw_rect(forest,Color("#335443"),false,1.5)
+        map_layer.draw_rect(forest,Color(0.18,0.28,0.14,0.25),false,3.5)
+    map_layer.draw_rect(sim.hill.grow(5.0),Color(0.18,0.15,0.09,0.18))
     _paint_terrain(sim.hill,35,90.0)
     _draw_terrain_texture()
     if not sim.started:
@@ -526,6 +555,7 @@ func _draw_map(_canvas: Control) -> void:
                 var anchor: Vector2 = _screen(selected["defense_anchor"])
                 map_layer.draw_arc(anchor, 28.0,0.0,TAU,32,COL_BLUE,2.0)
                 _draw_string("사수",anchor+Vector2(-12,4),11,COL_BLUE)
+    _draw_fortifications()
     _draw_combat_effects()
     var label_areas: Array[Rect2] = []
     for unit in sim.units:
@@ -546,6 +576,8 @@ func _draw_unit(unit: Dictionary, label_areas: Array[Rect2]) -> void:
     var slot_index: int = 0
     for spot in sim.formation_slots(unit):
         var point: Vector2 = _screen(spot)
+        var scatter: float = (100.0-float(unit["cohesion"]))*0.065
+        point += Vector2(sin(float(slot_index)*7.3),cos(float(slot_index)*5.7))*scatter
         _draw_soldier(point, unit, accent, slot_index)
         slot_index += 1
     _paint_tile(38+side,Rect2(p+Vector2(-39,-24),Vector2(24,32)),Color(1,1,1,accent.a))
@@ -697,7 +729,7 @@ func _open_planning() -> void:
     if unit.is_empty():
         return
     plan_scenario.select(sim.scenario_id)
-    plan_scenario.disabled = sim.started and not sim.finished
+    plan_scenario.disabled = campaign_active or (sim.started and not sim.finished)
     plan_donor.clear()
     for i in range(3):
         var candidate: Dictionary = sim.find_unit(i)
@@ -719,6 +751,8 @@ func _refresh_plan_status() -> void:
     plan_status.text = "%s / %s\n%s 부대 · %d명 · 경유점 %d개 · 부장 %s" % [sim.scenario_title,sim.scenario_goal,str(unit["name"]),int(unit["troops"]),unit["waypoints"].size(),sim.deputy_name(unit)]
 
 func _change_scenario(index: int) -> void:
+    if campaign_active:
+        return
     if sim.set_scenario(index):
         _reset_camera()
         finish_seen = false
@@ -882,7 +916,10 @@ func _open_briefing() -> void:
         tactic = "고지에 화력을 집중하고 측면 지원군으로 접근로를 통제하십시오."
     elif sim.scenario_id == 2:
         tactic = "보급기지 주변에 방어선을 정하고 기병을 기동 예비대로 운용하십시오."
-    brief_text.text = "%s\n\n승리 목표: %s\n제한 시간: %.0f초\n\n권장 전략: %s\n\n1~5턴: 사전 작전 수행 / 6턴 이후: 전령 파견\n장수별 능력과 성향, 정찰 정보, 보급을 고려하십시오." % [sim.scenario_title,sim.scenario_goal,sim.scenario_limit,tactic]
+    var story: String = ""
+    if campaign_active:
+        story = ["북벌의 첫 관문 — 촉군은 북쪽과 남쪽 길을 확보해야 한다.\n","고지 쟁탈 — 전군의 접근로를 확보하기 위해 중앙 고지를 차지한다.\n","퇴로 사수 — 위군의 반격 속에서 군량 기지를 지켜야 한다.\n"][chapter]
+    brief_text.text = story + "%s\n\n승리 목표: %s\n제한 시간: %.0f초\n\n권장 전략: %s\n\n1~5턴: 사전 작전 수행 / 6턴 이후: 전령 파견\n장수별 능력과 성향, 정찰 정보, 보급을 고려하십시오." % [sim.scenario_title,sim.scenario_goal,sim.scenario_limit,tactic]
     brief_dialog.popup_centered()
 
 func _open_analysis() -> void:
@@ -981,12 +1018,23 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> v
             frame = frame%2
         tile = 16+row*4+frame
     var extent: float = 19.0 if kind == 2 else 16.0
+    var phase: float = render_clock*(17.0 if kind == 2 else 10.0)+index*1.7
+    var attacking: bool = int(unit.get("contact_troops",0)) > 0 and not bool(unit["routed"])
+    var hit: bool = sim.battle_time-float(unit.get("last_hit",-100.0)) < 0.16
     if moving:
-        p.y += sin(render_clock*12.0+index*1.7)*0.7
+        p += direction*sin(phase)*(1.5 if kind == 2 else 0.8)
+        p.y += sin(phase)*0.9
+    if attacking:
+        p += direction*maxf(0.0,sin(phase))*2.2
+    if hit:
+        p -= direction*1.5
+    var shade: Color = Color(1.0,0.72,0.62,accent.a) if hit else Color(1,1,1,accent.a)
+    if str(unit["formation"]) == "방진" and not moving:
+        extent *= 0.93
     var map_offset: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
     var mirror: float = -1.0 if direction.x < 0.0 else 1.0
     map_layer.draw_set_transform(map_offset+p*camera_zoom,0.0,Vector2(mirror,1.0)*camera_zoom)
-    map_layer.draw_texture_rect_region(PAINTED_ART,Rect2(-extent*0.5,-extent*0.75,extent,extent),_art_region(tile),Color(1,1,1,accent.a))
+    map_layer.draw_texture_rect_region(PAINTED_ART,Rect2(-extent*0.5,-extent*0.75,extent,extent),_art_region(tile),shade)
     map_layer.draw_set_transform(map_offset,0.0,Vector2.ONE*camera_zoom)
 
 func _draw_combat_effects() -> void:
@@ -1014,6 +1062,7 @@ func _draw_combat_effects() -> void:
                 _paint_fx(2,p.lerp(target,0.65),45.0,alpha*0.75)
             _:
                 _paint_fx(4,(p+target)*0.5,29.0,alpha)
+                _paint_fx(2,(p+target)*0.5,20.0+age*22.0,alpha*0.35)
 
 func _setup_sound() -> void:
     sound_player = AudioStreamPlayer.new()
@@ -1137,10 +1186,11 @@ func _build_title_screen() -> void:
     sub.position = Vector2(694,245)
     sub.add_theme_font_size_override("font_size",22)
     title_screen.add_child(sub)
-    _title_button("작전실 입장",Vector2(690,330),_leave_title)
-    _title_button("전장 브리핑",Vector2(690,395),_title_brief)
-    _title_button("음향 전환",Vector2(690,460),_toggle_sound)
-    _title_button("종료",Vector2(690,525),_quit_game)
+    _title_button("북벌 캠페인 시작",Vector2(690,325),_begin_campaign)
+    _title_button("단독 전투",Vector2(690,385),_leave_title)
+    _title_button("전장 브리핑",Vector2(690,445),_title_brief)
+    _title_button("음향 전환",Vector2(690,505),_toggle_sound)
+    _title_button("종료",Vector2(690,565),_quit_game)
     title_screen.show()
 
 func _title_button(caption: String, pos: Vector2, callback: Callable) -> void:
@@ -1173,12 +1223,77 @@ func _build_outcome_dialog() -> void:
     outcome_dialog.ok_button_text = "전장으로"
     add_child(outcome_dialog)
     outcome_text = Label.new()
-    outcome_text.custom_minimum_size = Vector2(510,180)
+    outcome_text.custom_minimum_size = Vector2(660,290)
     outcome_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     outcome_text.add_theme_color_override("font_color",COL_GOLD)
-    outcome_text.add_theme_font_size_override("font_size",20)
-    outcome_dialog.add_child(outcome_text)
+    outcome_text.add_theme_font_size_override("font_size",16)
+    var layout := VBoxContainer.new()
+    outcome_dialog.add_child(layout)
+    layout.add_child(outcome_text)
+    campaign_next = Button.new()
+    campaign_next.text = "다음 전투 준비"
+    campaign_next.pressed.connect(_advance_campaign)
+    layout.add_child(campaign_next)
 
 func _show_outcome() -> void:
     outcome_text.text = "%s\n\n%s\n전투 시간 %.1f초\n아군 잔여 병력 %d명 · 적군 잔여 병력 %d명\n전령 도착 %d · 차단 %d" % [sim.result,sim.scenario_title,sim.battle_time,sim.total_troops(0),sim.total_troops(1),sim.delivered_orders,sim.intercepted_orders]
+    outcome_text.text += "\n\n" + "\n".join(sim.battle_report())
+    if campaign_active:
+        campaign_results.append(sim.result)
+        outcome_text.text += "\n\n북벌 진행 %d / 3" % (chapter+1)
+    campaign_next.visible = campaign_active and chapter < 2
     outcome_dialog.popup_centered()
+
+
+func _draw_fortifications() -> void:
+    for structure in sim.structures:
+        var area: Rect2 = structure["rect"]
+        var hp: float = float(structure["hp"])
+        var ratio: float = hp/maxf(1.0,float(structure["max_hp"]))
+        map_layer.draw_rect(area.grow(4.0),Color(0.12,0.10,0.08,0.36))
+        if hp <= 0.0:
+            map_layer.draw_rect(area,Color("#584b37"))
+            _draw_string("파괴",area.get_center()+Vector2(-14,0),10,COL_MUTED)
+            continue
+        var tile: int = 46 if str(structure["kind"]) == "성문" else 47
+        var cursor: float = area.position.y
+        while cursor < area.end.y:
+            var h: float = minf(25.0,area.end.y-cursor)
+            _paint_tile(tile,Rect2(area.position.x-5.0,cursor,area.size.x+10.0,h),Color(1.0,0.75+ratio*0.25,0.55+ratio*0.45))
+            cursor += h
+        var p: Vector2 = area.get_center()
+        map_layer.draw_rect(Rect2(p+Vector2(-19,-10),Vector2(38,4)),Color("#332a1d"))
+        map_layer.draw_rect(Rect2(p+Vector2(-19,-10),Vector2(38*ratio,4)),COL_GOLD)
+        _draw_string(str(structure["name"]),p+Vector2(-25,-16),10,COL_TEXT)
+
+func _begin_campaign() -> void:
+    campaign_active = true
+    chapter = 0
+    campaign_results.clear()
+    sim.set_scenario(0)
+    _reset()
+    title_screen.hide()
+    _open_briefing()
+
+func _advance_campaign() -> void:
+    if not campaign_active or not sim.finished or chapter >= 2:
+        return
+    var carry: Array[Dictionary] = []
+    for i in range(3):
+        var previous: Dictionary = sim.find_unit(i)
+        carry.append(previous.duplicate(true))
+    chapter += 1
+    sim.set_scenario(chapter)
+    _reset()
+    for i in range(3):
+        var unit: Dictionary = sim.find_unit(i)
+        var previous: Dictionary = carry[i]
+        for key in ["name","personality","ability","leadership","martial","intelligence","judgment","loyalty","general_state","general_hp","general_risk","active_deputy","deputy_index"]:
+            unit[key] = previous[key]
+        unit["troops"] = clampf(float(previous["troops"])+25.0,40.0,220.0)
+        unit["initial_troops"] = unit["troops"]
+        unit["morale"] = clampf(float(previous["morale"])+30.0,45.0,100.0)
+    outcome_dialog.hide()
+    _refresh_unit_list()
+    _select_unit()
+    _open_briefing()
