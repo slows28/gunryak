@@ -62,6 +62,40 @@ func _capture() -> void:
         quit(1)
         return
     game.call("_start")
+    var own_id: int=game.selected_id
+    if game.fog_enabled or game.enemy_list.item_count!=6:
+        push_error("VISUAL_CAPTURE_FAIL: both sides must be visible in default demo")
+        quit(1)
+        return
+    game.call("_show_enemy_roster")
+    game.call("_inspect_enemy_row",0)
+    if game.observed_enemy_id<0 or game.selected_id!=own_id or game.unit_list.visible:
+        push_error("VISUAL_CAPTURE_FAIL: enemy inspection changed friendly command authority")
+        quit(1)
+        return
+    game.call("_refresh_hud")
+    game.queue_redraw()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("enemy_inspection.png"):
+        quit(1)
+        return
+    game.call("_toggle_fog",true)
+    for row in range(game.enemy_list.item_count):
+        var id: int=int(game.enemy_list.get_item_metadata(row))
+        if id<0: continue
+        if not game.call("_visible_unit",game.sim.find_unit(id)):
+            push_error("VISUAL_CAPTURE_FAIL: hidden enemy leaked to roster")
+            quit(1)
+            return
+    game.call("_toggle_fog",false)
+    game.call("_show_friendly_roster")
+    game.call("_reset_camera")
+    if game.combat_sounds.size()!=3 or game.combat_players.size()!=4:
+        push_error("VISUAL_CAPTURE_FAIL: battle Foley not initialized")
+        quit(1)
+        return
+    print("PLAYABILITY_PASS: enemy inspection, fog, command isolation and combat audio")
     game.game_speed=4.0
     var dust_captured: bool = false
     for i in range(120):
@@ -94,6 +128,10 @@ func _capture() -> void:
     await process_frame
     await RenderingServer.frame_post_draw
     if not _save_frame("battle_112s.png"):
+        quit(1)
+        return
+    if not game.combat_brief.text.contains("아군 손실") or not game.live_order_label.text.contains("현재:"):
+        push_error("VISUAL_CAPTURE_FAIL: real battle feedback missing")
         quit(1)
         return
     game.call("_focus_selected")
@@ -300,6 +338,7 @@ func _capture() -> void:
             var age: float=game.sim.battle_time-float(fx["time"])
             if age<0.1 or age>0.35: continue
             if not game.sim.player_can_see(fx["from"]) or not game.sim.player_can_see(fx["to"]): continue
+            game.call("_focus_combat")
             game.camera_center=(fx["from"] as Vector2).lerp(fx["to"],0.5)
             game.camera_zoom=1.8
             game.call("_clamp_camera")
@@ -313,6 +352,16 @@ func _capture() -> void:
             break
     if not combat_captured:
         print("VISUAL_NOTE: no visible combat event in capture window")
+    var observed_loss: bool=false
+    for id in game.recent_losses:
+        var sample: Dictionary=game.recent_losses[id]
+        var victim: Dictionary=game.sim.find_unit(id)
+        if not victim.is_empty() and int(sample["count"])>0 and int(sample["count"])<=roundi(float(victim["casualties_taken"])): observed_loss=true
+    if not observed_loss:
+        push_error("VISUAL_CAPTURE_FAIL: no actual casualty feedback")
+        quit(1)
+        return
+    print("REAL_CASUALTY_FEEDBACK_PASS")
     game.call("_reset_camera")
     await process_frame
     await RenderingServer.frame_post_draw
