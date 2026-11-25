@@ -52,7 +52,7 @@ func _capture() -> void:
         quit(1)
         return
 
-    # Simulate a deterministic 12 seconds of battle without waiting in real time.
+    # Simulate a deterministic 48 operation seconds of battle without waiting in real time.
     game.set_process(false)
     game.sim.issue_map_order(1,"전열 엄호",Vector2(790,900),0)
     game.order_view.call("_select",1)
@@ -62,6 +62,7 @@ func _capture() -> void:
         quit(1)
         return
     game.call("_start")
+    game.game_speed=4.0
     var dust_captured: bool = false
     for i in range(120):
         game.call("_process", 0.1)
@@ -83,7 +84,7 @@ func _capture() -> void:
     game.queue_redraw()
     await process_frame
     await RenderingServer.frame_post_draw
-    if not _save_frame("battle_12s.png"):
+    if not _save_frame("battle_48s.png"):
         quit(1)
         return
     for i in range(160):
@@ -92,7 +93,7 @@ func _capture() -> void:
     game.queue_redraw()
     await process_frame
     await RenderingServer.frame_post_draw
-    if not _save_frame("battle_28s.png"):
+    if not _save_frame("battle_112s.png"):
         quit(1)
         return
     game.call("_focus_selected")
@@ -108,7 +109,7 @@ func _capture() -> void:
     game.queue_redraw()
     await process_frame
     await RenderingServer.frame_post_draw
-    if not _save_frame("battle_60s.png"):
+    if not _save_frame("battle_240s.png"):
         quit(1)
         return
     # Record a later wide-field overview and a zoomed contact view.
