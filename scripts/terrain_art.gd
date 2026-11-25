@@ -2,7 +2,7 @@ extends RefCounted
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 ## Deterministic, continuous terrain art. Gameplay coordinates remain unchanged.
 static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, scenario: int, scale: float = 1.0) -> ImageTexture:
-    # Bake half-resolution wide terrain for fast loading; retain true world coordinates.
+    # Bake higher-resolution wide terrain; retain true world coordinates.
     var bake: float = 0.75 if scale > 1.0 else 1.0
     var w: int = int(extent.x*bake)
     var h: int = int(extent.y*bake)
@@ -99,6 +99,7 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
     var tree_images: Array[Image] = []
     var atlas: Image=FIELDCRAFT.get_image()
     if atlas.is_compressed(): atlas.decompress()
+    if atlas.get_format()!=Image.FORMAT_RGBA8: atlas.convert(Image.FORMAT_RGBA8)
     for i in range(5):
         var tree: Image=atlas.get_region(Rect2i(256,256,256,256))
         var size: int=roundi((45.0+float(i)*5.0)*bake)
