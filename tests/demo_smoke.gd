@@ -13,6 +13,7 @@ func _initialize() -> void:
     call_deferred("_run")
 func _run() -> void:
     var campaign := Campaign.new()
+    campaign.save_path = "user://gunryak_demo_test.json"
     var sim := WarSim.new()
     check(campaign.available(1) and campaign.available(2) and not campaign.available(5),"strategic adjacency")
     var gold: int = campaign.state["gold"]
@@ -33,8 +34,9 @@ func _run() -> void:
     check(campaign.state["pending"] == -1 and (campaign.state["victories"] == 1 if won else campaign.state["defeats"] == 1),"real victory or defeat recorded")
     check(campaign.save(),"save campaign")
     var loaded := Campaign.new()
+    loaded.save_path = campaign.save_path
     check(loaded.load_save() and loaded.state["gold"] == campaign.state["gold"] and loaded.state["active"] == campaign.state["active"],"save round trip")
-    DirAccess.remove_absolute(ProjectSettings.globalize_path(Campaign.SAVE_PATH))
+    DirAccess.remove_absolute(ProjectSettings.globalize_path(campaign.save_path))
     sim.set_scenario(3)
     check(not sim.convoy.is_empty(),"escort scenario has real convoy")
     sim.find_unit(0)["pos"] = sim.convoy["pos"]
