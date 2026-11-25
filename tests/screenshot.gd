@@ -218,7 +218,7 @@ func _capture() -> void:
         quit(1)
         return
     var terrain_size: Vector2=game.terrain_cache.get_size()
-    if terrain_size.x<2025 or terrain_size.y<1282:
+    if terrain_size.x<2700 or terrain_size.y<1710:
         push_error("VISUAL_CAPTURE_FAIL: terrain resolution did not improve")
         quit(1)
         return
@@ -231,7 +231,37 @@ func _capture() -> void:
         push_error("VISUAL_CAPTURE_FAIL: density or presentation isolation invalid")
         quit(1)
         return
-    print("INTEGRATED_VISUAL_PASS: terrain "+str(terrain_size)+" / 72 presentation slots / command skin")
+    var bridge_hq: Texture2D=load("res://assets/art/bridge_hq.svg")
+    if bridge_hq==null or bridge_hq.get_size()!=Vector2(512,384):
+        push_error("VISUAL_CAPTURE_FAIL: high detail bridge unavailable")
+        quit(1)
+        return
+    if game.roster_overlay==null or game.roster_overlay.mouse_filter!=Control.MOUSE_FILTER_IGNORE:
+        push_error("VISUAL_CAPTURE_FAIL: live roster overlay must not intercept selection")
+        quit(1)
+        return
+    game.call("_refresh_visibility")
+    if game.visibility_texture.get_size()!=Vector2(90,57):
+        push_error("VISUAL_CAPTURE_FAIL: refined fog texture missing")
+        quit(1)
+        return
+    var batch_units: Array[Dictionary]=[]
+    batch_units.append(game.sim.find_unit(0))
+    batch_units.append(game.sim.find_unit(3))
+    var rendered: Array[Dictionary]=game.call("_visible_soldier_batch",batch_units,Rect2(Vector2.ZERO,game.sim.field_size))
+    var prev_y: float=-INF
+    for item in rendered:
+        var point: Vector2=item["point"]
+        if point.y<prev_y:
+            push_error("VISUAL_CAPTURE_FAIL: opposing soldiers not depth sorted")
+            quit(1)
+            return
+        prev_y=point.y
+    if rendered.is_empty():
+        push_error("VISUAL_CAPTURE_FAIL: no globally sorted soldier instances")
+        quit(1)
+        return
+    print("INTEGRATED_VISUAL_PASS: terrain "+str(terrain_size)+" / 72 presentation slots / command skin / HQ bridge / depth sort / live roster / refined fog")
 
     # Same simulation tick, same camera: compare quiet and detailed presentation.
     var frozen_time: float = game.sim.battle_time
