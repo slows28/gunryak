@@ -24,7 +24,7 @@ var attack: Button
 var slot_choice: OptionButton
 var type_choice: OptionButton
 var formation_choice: OptionButton
-const SHAPES = ["횡대","종대","방진","어린진","학익진","봉시진","안행진"]
+const SHAPES: Array[String] = ["횡대","종대","방진","어린진","학익진","봉시진","안행진"]
 var difficulty_choice: OptionButton
 var map_canvas: Control
 var land_texture: ImageTexture
