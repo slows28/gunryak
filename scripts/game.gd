@@ -109,9 +109,11 @@ class RenderLayer extends Control:
 
 func _ready() -> void:
     sim.tactical_enabled = true
+    sim.set_wide_field(true)
     _install_korean_font()
     _build_map_layer()
     _rebuild_terrain()
+    _reset_camera()
     _build_interface()
     _build_presentation()
     _setup_sound()
@@ -386,7 +388,7 @@ func _refresh_hud() -> void:
     var phase: String = "전투 준비"
     battle_title_label.text = sim.scenario_title
     objective_label.text = "목표  ·  "+sim.scenario_goal
-    phase_label.text = ("북벌 전략 %d턴 · " % int(campaign.state["turn"]) if campaign_active else "") + "01 작전 준비 · 02 교전 · 03 결산"
+    phase_label.text = ("북벌 전략 %d턴 · " % int(campaign.state["turn"]) if campaign_active else "") + "대형 전장 2,700 × 1,710"
     if sim.finished:
         phase = "종료  " + sim.result
         phase_label.text = "03 전투 결산  |  전투 분석 및 타임라인"
@@ -437,6 +439,14 @@ func _refresh_hud() -> void:
         notice_label.text = runtime_notice
 
 func _gui_input(event: InputEvent) -> void:
+    if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and Rect2(760,700,144,91.2).has_point(event.position):
+        camera_zoom = maxf(1.0,camera_zoom)
+        camera_center = (event.position-Vector2(760,700))*sim.field_size.x/144.0
+        _clamp_camera()
+        map_layer.queue_redraw()
+        queue_redraw()
+        accept_event()
+        return
     if event is InputEventScreenTouch and Rect2(MAP_TOP_LEFT,MAP_SIZE).has_point(event.position):
         if event.pressed:
             touch_origin = event.position
@@ -510,20 +520,20 @@ func _draw() -> void:
 
 func _draw_map(_canvas: Control) -> void:
     map_layer.draw_set_transform(MAP_SIZE * 0.5 - camera_center * camera_zoom, 0.0, Vector2.ONE * camera_zoom)
-    var map_rect: Rect2 = Rect2(Vector2.ZERO, MAP_SIZE)
+    var map_rect: Rect2 = Rect2(Vector2.ZERO,sim.field_size)
     if terrain_cache != null:
         map_layer.draw_texture_rect(terrain_cache,map_rect,false)
     else:
         map_layer.draw_rect(map_rect,Color("#58684e"))
     _draw_terrain_texture()
     if not sim.started:
-        map_layer.draw_rect(Rect2(_screen(Vector2(35,22)),Vector2(235,530)),Color(COL_BLUE,0.035))
-        for y in range(22,552,18):
-            map_layer.draw_line(Vector2(270,y),Vector2(270,mini(y+8,552)),Color(COL_BLUE,0.5),1.5)
+        map_layer.draw_rect(Rect2(Vector2(35,22),Vector2(270*sim.layout_scale-35,sim.field_size.y-40)),Color(COL_BLUE,0.035))
+        for y in range(22,int(sim.field_size.y)-18,36):
+            map_layer.draw_line(Vector2(270*sim.layout_scale,y),Vector2(270*sim.layout_scale,y+16),Color(COL_BLUE,0.5),1.5)
     # Static gate art removed: show the actual, potentially relocating supply bases only.
-    _map_text("북로",Vector2(440,106),Color("#d6cfaa"),11)
+    _map_text("북로",sim.layout_point(Vector2(440,106)),Color("#d6cfaa"),11)
     _map_text("중앙 고지",sim.hill.get_center()+Vector2(-29,-22),Color("#e2d9b5"),11)
-    _map_text("남로",Vector2(440,466),Color("#d6cfaa"),11)
+    _map_text("남로",sim.layout_point(Vector2(440,466)),Color("#d6cfaa"),11)
     # Capture sites show control, contested progress and victory holds directly.
     for site in sim.outposts:
         var site_pos: Vector2 = _screen(site["pos"])
@@ -656,6 +666,11 @@ func _draw_unit(unit: Dictionary) -> void:
         accent = Color(accent, 0.48)
     elif float(unit["ambush_ready"]) >= 3.0:
         accent = Color(accent, 0.64)
+    if camera_zoom < 0.65:
+        var flag := Rect2(p-Vector2(27,44)/camera_zoom,Vector2(54,60)/camera_zoom)
+        _paint_tile(38+side,flag,Color(1,1,1,accent.a))
+        map_layer.draw_arc(p,12.0/camera_zoom,0.0,TAU,24,accent,2.0/camera_zoom,true)
+        return
     var slots: Array[Vector2] = sim.formation_slots(unit)
     slots.sort_custom(func(a: Vector2,b: Vector2) -> bool: return a.y < b.y)
     var slot_index: int = 0
@@ -957,22 +972,21 @@ func _world_mouse(p: Vector2) -> Vector2:
     return (p - MAP_TOP_LEFT - MAP_SIZE*0.5)/camera_zoom + camera_center
 
 func _clamp_camera() -> void:
-    var half: Vector2 = MAP_SIZE * 0.5 / camera_zoom
-    camera_center.x = clampf(camera_center.x,half.x,MAP_SIZE.x-half.x)
-    camera_center.y = clampf(camera_center.y,half.y,MAP_SIZE.y-half.y)
+    var half: Vector2 = MAP_SIZE*0.5/camera_zoom
+    camera_center.x = clampf(camera_center.x,minf(half.x,sim.field_size.x*0.5),maxf(sim.field_size.x-half.x,sim.field_size.x*0.5))
+    camera_center.y = clampf(camera_center.y,minf(half.y,sim.field_size.y*0.5),maxf(sim.field_size.y-half.y,sim.field_size.y*0.5))
 
 func _change_zoom(delta: float) -> void:
-    camera_zoom = clampf(camera_zoom+delta,1.0,2.5)
+    camera_zoom = clampf(camera_zoom+delta,MAP_SIZE.x/sim.field_size.x,2.5)
     _clamp_camera()
-    map_layer.queue_redraw()
+    if is_instance_valid(map_layer): map_layer.queue_redraw()
     queue_redraw()
 
 func _reset_camera() -> void:
     render_clock = sim.battle_time
-    camera_zoom = 1.0
-    camera_center = MAP_SIZE*0.5
-    if is_instance_valid(map_layer):
-        map_layer.queue_redraw()
+    camera_zoom = MAP_SIZE.x/sim.field_size.x
+    camera_center = sim.field_size*0.5
+    if is_instance_valid(map_layer): map_layer.queue_redraw()
     queue_redraw()
 
 func _focus_selected() -> void:
@@ -1069,17 +1083,20 @@ func _draw_history(canvas: Control) -> void:
 
 func _draw_minimap() -> void:
     var origin := Vector2(760,700)
-    var factor: float = 0.16
-    draw_rect(Rect2(origin,MAP_SIZE*factor),Color("#405641"))
-    for forest in sim.forests:
-        draw_rect(Rect2(origin+forest.position*factor,forest.size*factor),Color("#263d2d"))
+    var factor: float = 144.0/sim.field_size.x
+    var mini_rect := Rect2(origin,sim.field_size*factor)
+    if terrain_cache != null:
+        draw_texture_rect(terrain_cache,mini_rect,false)
+    else:
+        draw_rect(mini_rect,Color("#405641"))
     for unit in sim.units:
         if float(unit["troops"]) > 0.0 and _visible_unit(unit):
             draw_circle(origin+(unit["pos"] as Vector2)*factor,2.8,COL_BLUE if int(unit["side"]) == 0 else COL_RED)
     for site in sim.outposts:
         draw_circle(origin+(site["pos"] as Vector2)*factor,3.0,COL_GOLD,false,1.2)
-    var visible_size: Vector2 = MAP_SIZE / camera_zoom
-    draw_rect(Rect2(origin+(camera_center-visible_size*0.5)*factor,visible_size*factor),COL_GOLD,false,1.0)
+    var visible_size: Vector2 = MAP_SIZE/camera_zoom
+    draw_rect(Rect2(origin+(camera_center-visible_size*0.5)*factor,visible_size*factor),COL_GOLD,false,1.4)
+    draw_rect(mini_rect,Color("#9caa9b"),false,1.0)
 
 func _draw_portrait(canvas: Control) -> void:
     var unit: Dictionary = sim.find_unit(selected_id)
@@ -1093,7 +1110,8 @@ func _draw_portrait(canvas: Control) -> void:
 
 func _draw_terrain_texture() -> void:
     # Small compass and a clean frame give orientation without repeated labels.
-    var p := Vector2(868,32)
+    var p: Vector2 = camera_center+(Vector2(868,32)-MAP_SIZE*0.5)/camera_zoom
+    if camera_zoom < 0.8: return
     map_layer.draw_circle(p,20,Color(0.08,0.12,0.13,0.58))
     map_layer.draw_arc(p,20,0.0,TAU,32,Color(COL_GOLD,0.65),1.0,true)
     map_layer.draw_colored_polygon(PackedVector2Array([p+Vector2(0,-15),p+Vector2(-6,5),p,p+Vector2(6,5)]),COL_GOLD)
@@ -1515,7 +1533,7 @@ func _advance_campaign() -> void:
 func _rebuild_terrain() -> void:
     if terrain_cache != null and terrain_scenario == sim.scenario_id:
         return
-    terrain_cache = TerrainArt.battlefield(MAP_SIZE,sim.forests,sim.hill,sim.scenario_id)
+    terrain_cache = TerrainArt.battlefield(sim.field_size,sim.forests,sim.hill,sim.scenario_id,sim.layout_scale)
     terrain_scenario = sim.scenario_id
 
 func _blend_land(target: Image, source: Image, area: Rect2, feather: float, kind: int) -> void:
