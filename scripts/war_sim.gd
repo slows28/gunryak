@@ -718,6 +718,8 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         unit["charge_cooldown"] = maxf(0.0, float(unit["charge_cooldown"]) - dt)
     var actual_move: Vector2 = Vector2.ZERO
     if pos.distance_to(goal) > 2.0:
+        if not structures.is_empty() and (str(unit["type"]) == "기병" or bool(unit["routed"])):
+            goal = _detour_goal(unit,pos,goal)
         var new_pos: Vector2 = pos.move_toward(goal, rate * dt)
         unit["pos"] = _structure_move(unit, pos, _field_point(new_pos))
         var moved: Vector2 = (unit["pos"] as Vector2) - pos
@@ -941,6 +943,8 @@ func _combat(dt: float) -> void:
         var exposure: float = 1.28 if rear else (1.14 if flank else 1.0)
         if str(enemy["formation"]) == "방진":
             exposure *= 0.80
+            if enemy.get("specialty","") == "방진":
+                exposure *= 0.92
         elif str(enemy["formation"]) == "종대" and (flank or rear):
             exposure *= 1.30
         if str(enemy["next_formation"]) != "":
@@ -1395,7 +1399,12 @@ func _update_scouts(dt: float) -> void:
             continue
         scout["report_timer"] = maxf(0.0, float(scout["report_timer"]) - dt)
         if not threat.is_empty() and threat_d < (125.0 if _in_forest(threat["pos"]) else 190.0) and float(scout["report_timer"]) <= 0.0:
-            var confidence: float = clampf(1.0 - threat_d / 320.0 - (0.18 if _in_forest(threat["pos"]) else 0.0), 0.30, 0.95)
+            var scout_bonus: float = 0.0
+            for ally in units:
+                if int(ally["side"]) == side and ally.get("specialty","") == "정찰" and float(ally["troops"]) > 0.0 and not bool(ally["routed"]):
+                    scout_bonus = 0.08
+                    break
+            var confidence: float = clampf(1.0 - threat_d / 320.0 - (0.18 if _in_forest(threat["pos"]) else 0.0)+scout_bonus, 0.30, 0.95)
             var observed_pos: Vector2 = _field_point((threat["pos"] as Vector2) + Vector2(rng.randf_range(-1.0,1.0),rng.randf_range(-1.0,1.0)) * (1.0-confidence) * 40.0)
             pending_reports.append({"side":side,"id":int(threat["id"]),"pos":observed_pos,"time":battle_time,"type":threat["type"],"troops":roundf(float(threat["troops"])/10.0)*10.0,"confidence":confidence,"arrive":battle_time + 2.0 + p.distance_to(commanders[side]["pos"])/130.0})
             scout["reports"] = int(scout["reports"]) + 1
@@ -1877,3 +1886,31 @@ func _update_convoy(dt: float) -> void:
         convoy["hp"] = maxf(0.0,float(convoy["hp"])-dt*float(attackers)* (0.8 if guards > 0 else 3.5))
     if guards > 0 and attackers == 0:
         convoy["pos"] = p.move_toward(convoy["goal"],dt*16.0)
+
+# Cavalry and withdrawing units bypass barriers using end-point detours.
+# Infantry can stay and attack the barrier. This is local steering, not global A*.
+func _detour_goal(unit: Dictionary,p: Vector2,goal: Vector2) -> Vector2:
+    for structure in structures:
+        if float(structure["hp"]) <= 0.0 or int(structure["side"]) == int(unit["side"]):
+            continue
+        var area: Rect2 = (structure["rect"] as Rect2).grow(15.0)
+        var blocked: bool = false
+        for i in range(1,9):
+            if area.has_point(p.lerp(goal,float(i)/8.0)):
+                blocked = true
+                break
+        if not blocked:
+            continue
+        var top := Vector2(area.get_center().x,area.position.y-12.0)
+        var bottom := Vector2(area.get_center().x,area.end.y+12.0)
+        var via: Vector2 = top if p.distance_to(top)+top.distance_to(goal) < p.distance_to(bottom)+bottom.distance_to(goal) else bottom
+        if absf(p.y-via.y) > 8.0:
+            return _field_point(Vector2(p.x,via.y))
+        return _field_point(Vector2(goal.x,via.y))
+    return goal
+
+func order_retreat() -> bool:
+    if not started or finished:
+        return false
+    _finish("책사 철수 결정 — 패배")
+    return true
