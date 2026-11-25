@@ -63,6 +63,39 @@ func _process(_dt: float) -> bool:
             quit(1)
             return false
         print("GENERAL_PERSONALITY_PASS: bounded initiative, support request, trust response")
+        # Separate sim verifies report dispatch, receipt, actual execution and end.
+        var fixture=preload("res://scripts/war_sim.gd").new()
+        fixture.tactical_enabled=true
+        fixture.start()
+        fixture.turn=6
+        fixture.battle_time=80.0
+        fixture.situation_reports.append({"id":901,"unit_id":0,"title":"검사 보고","kind":"전선 압박","status":"미대응"})
+        if not fixture.respond_situation(901,"사수"):
+            push_error("GUNRYAK_SCENE_FAIL: report dispatch failed")
+            quit(1)
+            return false
+        var letter: Dictionary=fixture.couriers.back()
+        var actor: Dictionary=fixture.find_unit(0)
+        fixture._deliver_tactical(actor,letter)
+        if fixture.situation_reports[0]["status"]!="명령 수령" or int(letter["report_id"])!=901:
+            push_error("GUNRYAK_SCENE_FAIL: report receipt not linked")
+            quit(1)
+            return false
+        fixture._decide(actor)
+        fixture._update_response_outcomes()
+        if fixture.situation_reports[0]["status"]!="실행 중":
+            push_error("GUNRYAK_SCENE_FAIL: actual tactical action not tracked")
+            quit(1)
+            return false
+        actor["casualties_taken"]=7.0
+        actor["damage_dealt"]=11.0
+        fixture.battle_time=105.0
+        fixture._update_response_outcomes()
+        if fixture.situation_reports[0]["status"]!="실행 종료" or int(fixture.situation_reports[0]["loss_delta"])!=7 or int(fixture.situation_reports[0]["damage_delta"])!=11:
+            push_error("GUNRYAK_SCENE_FAIL: tactical execution result invalid")
+            quit(1)
+            return false
+        print("COMMAND_OUTCOME_PASS")
         print("GENERAL_MIND_FIXTURE_PASS")
         # Accelerated playback preserves the 25-minute operation clock.
         instance.game_speed=4.0
