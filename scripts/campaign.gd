@@ -159,7 +159,7 @@ func prepare(target: int, sim) -> bool:
         u["personality"] = officer["personality"]
         u["type"] = state["types"][i]
         u["formation"] = str(state["formations"][i]) if six_armies else ("종대" if u["type"] == "기병" else "횡대")
-        if six_armies: u["policy"] = str(u["formation"])+" 유지"
+        if six_armies: u["policy"] = "현장 판단"
         u["troops"] = float(state["troops"][i])
         u["initial_troops"] = u["troops"]
         u["general_hp"] = float(person["hp"])
