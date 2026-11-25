@@ -78,6 +78,7 @@ var mind_dialog: AcceptDialog
 var mind_report: RichTextLabel
 var mind_button: Button
 var thought_feed: Label
+var general_cards: Array[Button]=[]
 var feed_toggle: Button
 var show_general_feed: bool=true
 var battle_samples: Dictionary = {}
@@ -305,6 +306,14 @@ func _build_interface() -> void:
     event_label.position.y=718
     event_label.size.y=74
     event_label.hide()
+    thought_feed.hide()
+    for i in range(6):
+        var card: Button=_button("",Vector2(151+(i%3)*196,690+floori(float(i)/3.0)*50),Vector2(190,47),_select_general_card.bind(i))
+        card.add_theme_font_size_override("font_size",12)
+        card.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+        card.alignment=HORIZONTAL_ALIGNMENT_LEFT
+        general_cards.append(card)
+    combat_brief.hide()
     _button("도움말",Vector2(443,74),Vector2(73,26),_open_demo_help)
     _button("철수",Vector2(521,74),Vector2(60,26),_ask_retreat)
     situation_btn = _button("긴급 보고",Vector2(585,74),Vector2(75,26),func():
@@ -724,6 +733,7 @@ func _refresh_hud() -> void:
         live_order_button.text="아군 작전 지도"
     if is_instance_valid(combat_brief): combat_brief.text=_battle_brief()
     if is_instance_valid(thought_feed): thought_feed.text=_latest_general_reports()
+    _refresh_general_cards()
     if is_instance_valid(mind_dialog) and mind_dialog.visible: _refresh_mind_report()
     var start_line: int = maxi(0, sim.events.size() - 3)
     var lines: String = ""
@@ -746,9 +756,41 @@ func _refresh_hud() -> void:
 
 func _toggle_feed() -> void:
     show_general_feed=not show_general_feed
-    thought_feed.visible=show_general_feed
+    thought_feed.hide()
+    combat_brief.visible=not show_general_feed
+    for card in general_cards: card.visible=show_general_feed
     event_label.visible=not show_general_feed
     feed_toggle.text="장수 판단" if show_general_feed else "전황 기록"
+
+func _select_general_card(index: int) -> void:
+    var ids: Array[int]=sim.command_ids(0)
+    if index>=ids.size(): return
+    selected_id=ids[index]
+    _show_friendly_roster()
+    unit_list.select(index)
+    _select_unit()
+    _focus_selected()
+
+func _refresh_general_cards() -> void:
+    var ids: Array[int]=sim.command_ids(0)
+    for i in range(general_cards.size()):
+        var card: Button=general_cards[i]
+        if i>=ids.size():
+            card.hide()
+            continue
+        card.visible=show_general_feed
+        var u: Dictionary=sim.find_unit(ids[i])
+        var mind: Dictionary=u.get("mind",{})
+        var mood: String=str(mind.get("mood","준비"))
+        var reason: String=str(mind.get("reason","초기 배치"))
+        var brief: String=reason if reason.length()<=14 else reason.substr(0,13)+"…"
+        card.text="%s · %s · %s\n%s" % [str(u["name"]),mood,_field_action(u),brief]
+        card.tooltip_text="판단: "+reason+"\n관측: "+str(mind.get("observed",""))+"\n우려: "+str(mind.get("concern",""))+"\n최근 명령: "+str(mind.get("last_order",""))
+        card.add_theme_color_override("font_color",_mood_color(mood) if mood not in ["침착","준비","전투 준비"] else COL_TEXT)
+        card.add_theme_color_override("font_hover_color",COL_GOLD)
+        card.modulate=Color.WHITE if ids[i]==selected_id and not observing_enemy else Color(0.88,0.91,0.89)
+        if ids[i]==selected_id and not observing_enemy:
+            card.add_theme_color_override("font_color",COL_GOLD)
 
 func _mood_color(mood: String) -> Color:
     if mood in ["공황","위기감","지휘 불능","압박"]: return COL_RED
@@ -816,6 +858,19 @@ func _refresh_mind_report() -> void:
                 var e: Dictionary=h[j]
                 lines.append("[color=#a6b6b4]  %s · %s · %s[/color]" % [_operation_clock(float(e["time"])*sim.operation_scale()),str(e["category"]),str(e["text"])])
         lines.append("")
+    lines.append("[color=#d7bd85][b]지휘 결과 · 최근 대응 6건[/b][/color]")
+    var logged: int=0
+    for i in range(sim.situation_reports.size()-1,-1,-1):
+        var report: Dictionary=sim.situation_reports[i]
+        if str(report["status"]) in ["대기","미대응","시간 경과"]: continue
+        var actor: Dictionary=sim.find_unit(int(report.get("executor",-1)))
+        var actor_name: String=str(actor.get("name",""))
+        lines.append("%s → %s · %s %s" % [str(report["title"]),str(report.get("response","현장 판단")),actor_name,str(report["status"])])
+        if report.has("received_at"):
+            lines.append("  관측 행동: %s | 수행 구간 손실 %d / 가한 피해 %d (인과 효과 아님)" % [str(report.get("action_seen","미확인")),int(report.get("loss_delta",0)),int(report.get("damage_delta",0))])
+        logged+=1
+        if logged>=6: break
+    if logged==0: lines.append("아직 대응한 보고 없음")
     var next_text: String="\n".join(lines)
     if mind_report.text!=next_text:
         var scroll: float=mind_report.get_v_scroll_bar().value
@@ -2469,7 +2524,9 @@ func _select_situation(index: int) -> void:
             "군량 부족": context = "철수 또는 재집결로 생존을 도모하십시오. 사수는 소모를 계속 감수합니다."
             "명령 이탈": context = "독자 판단을 허용하거나 긴급 사수 지시로 작전을 수정할 수 있습니다."
             _: context = "지정 위치 사수 또는 가까운 아군의 지원을 선택하십시오."
-        situation_detail.text = "%s\n%s\n긴급 지휘력 %d/4 · 명령은 실제 전령으로 이동합니다. 6턴 이전에는 관찰만 가능합니다.\n%s" % [report["title"],context,sim.command_points,situation_notice]
+        var officer: Dictionary=sim.find_unit(int(report["unit_id"]))
+        var mind: Dictionary=officer.get("mind",{})
+        situation_detail.text = "%s\n%s\n장수 건의: %s · 현재 %s\n긴급 지휘력 %d/4 · 전령 전달 · 6턴 이전에는 관찰만 가능\n%s" % [report["title"],context,str(report.get("proposal","없음")),str(mind.get("mood","미확인")),sim.command_points,situation_notice]
         break
 
 func _respond_situation(order: String) -> void:
