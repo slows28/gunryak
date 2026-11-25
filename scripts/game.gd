@@ -198,7 +198,7 @@ func _build_interface() -> void:
     mission_choice.size.x = 306
     mission_choice.item_selected.connect(_on_choices_changed)
     _label("03  진형 · 지휘 방침",Vector2(956,401),Vector2(267,21),13,COL_MUTED)
-    policy_choice = _options(Vector2(950,420),["현장 판단","명령 엄수","재량 위임","횡대 유지","종대 유지","방진 유지"])
+    policy_choice = _options(Vector2(950,420),["현장 판단","명령 엄수","재량 위임","횡대 유지","종대 유지","방진 유지","어린진 유지","학익진 유지","봉시진 유지","안행진 유지"])
     policy_choice.size.x = 306
     policy_choice.item_selected.connect(_on_choices_changed)
     apply_btn = _button("작전 적용 / 전령 보내기",Vector2(950,460),Vector2(306,42),_apply_order)
@@ -421,7 +421,7 @@ func _refresh_hud() -> void:
         var leader: Dictionary = sim.find_unit(uid)
         if leader.is_empty(): continue
         var state: String = "패주" if bool(leader["routed"]) else ("전멸" if float(leader["troops"]) <= 0.0 else str(leader["type"]))
-        unit_list.set_item_text(index,"%d  %s · %s · %d명" % [index+1,str(leader["name"]),state,roundi(sim.corps_report(uid)["troops"])])
+        unit_list.set_item_text(index,"%d  %s · %s · %d명" % [index+1,str(leader["name"]),str(leader["formation"]) if state==str(leader["type"]) else state,roundi(sim.corps_report(uid)["troops"])])
         unit_list.set_item_custom_fg_color(index,COL_MUTED if float(leader["troops"]) <= 0.0 else (COL_RED if bool(leader["routed"]) else COL_TEXT))
     var enemy_text: String = "미확인" if fog_enabled and not sim.finished else str(sim.total_troops(1))
     status_label.text = "%s\n아군 %d  /  적군 %s\n전령 %d 이동 · %d 도착 · %d 차단" % [phase,sim.total_troops(0),enemy_text,sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
@@ -729,12 +729,17 @@ func _draw_unit(unit: Dictionary) -> void:
             map_layer.draw_line(p,p+(unit["facing"] as Vector2)*8*k,accent,1.5*k,true)
         return
     var slots: Array[Vector2] = _visual_slots(unit)
+    if sim.six_armies and slots.size()>2:
+        var hull: PackedVector2Array = Geometry2D.convex_hull(PackedVector2Array(slots))
+        if hull.size()>3:
+            map_layer.draw_colored_polygon(hull,Color(accent,0.12))
+            map_layer.draw_polyline(hull,Color(accent,0.50),1.6,true)
     slots.sort_custom(func(a: Vector2,b: Vector2) -> bool: return a.y < b.y)
     var slot_index: int = 0
     for spot in slots:
         # Presentation only: retain the authoritative simulation slots for contact calculations.
         var point: Vector2 = spot
-        var scatter: float = (100.0-float(unit["cohesion"]))*0.075
+        var scatter: float = (100.0-float(unit["cohesion"]))*0.045
         point += Vector2(sin(float(slot_index)*7.3),cos(float(slot_index)*5.7))*scatter
         _draw_soldier(point, unit, accent, slot_index)
         slot_index += 1
@@ -770,7 +775,7 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     elif bool(unit["rallying"]): state = "재집결"
     elif str(unit["action"]) == "매복": state = "매복"
     if unit.has("parent_id") and camera_zoom < 0.8: return
-    var label: String = "%s  %d" % [str(unit["name"]),int(float(unit["troops"]))]
+    var label: String = "%s · %s  %d" % [str(unit["name"]),str(unit["formation"]),int(float(unit["troops"]))] if camera_zoom>=0.65 else "%s %d" % [str(unit["name"]),int(float(unit["troops"]))]
     if not state.is_empty():
         label += " · "+state
     var fs: int = maxi(10,int(round((11.0 if camera_zoom<0.65 else 13.0)*inv)))
@@ -846,8 +851,8 @@ func _build_planning_dialog() -> void:
     plan_donor = _plan_option(root,"다른 장수 / 병력 제공 부대",["왕평 부대","마속 부대","위연 부대"])
     var troop_row := HBoxContainer.new()
     root.add_child(troop_row)
-    _plan_button(troop_row,"병력 10명 받기",_transfer_in)
-    _plan_button(troop_row,"병력 10명 보내기",_transfer_out)
+    _plan_button(troop_row,"병력 500명 받기",_transfer_in)
+    _plan_button(troop_row,"병력 500명 보내기",_transfer_out)
     _plan_button(troop_row,"장수 교체",_swap_general)
     plan_deputy = _plan_option(root,"부장",["통솔형 부장","공격형 부장","책략형 부장"])
     plan_deputy.item_selected.connect(_change_deputy)
@@ -947,18 +952,18 @@ func _change_scenario(index: int) -> void:
         queue_redraw()
 
 func _transfer_in() -> void:
-    if sim.transfer_troops(selected_id,plan_donor.get_selected_id(),10):
+    if sim.transfer_troops(selected_id,plan_donor.get_selected_id(),500):
         _refresh_plan_status()
         _refresh_hud()
     else:
-        plan_status.text = "병력 조정 불가: 최소 40명 / 최대 220명"
+        plan_status.text = "병력 조정 불가: 최소 1,000명 / 최대 5,000명"
 
 func _transfer_out() -> void:
-    if sim.transfer_troops(plan_donor.get_selected_id(),selected_id,10):
+    if sim.transfer_troops(plan_donor.get_selected_id(),selected_id,500):
         _refresh_plan_status()
         _refresh_hud()
     else:
-        plan_status.text = "병력 조정 불가: 최소 40명 / 최대 220명"
+        plan_status.text = "병력 조정 불가: 최소 1,000명 / 최대 5,000명"
 
 func _swap_general() -> void:
     if campaign_active:
@@ -1203,7 +1208,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> v
             row = 3
             frame = frame%2
         tile = 16+row*4+frame
-    var extent: float = 23.0 if kind == 2 else 19.0
+    var extent: float = (16.0 if kind==2 else 14.0) if sim.six_armies else (23.0 if kind == 2 else 19.0)
     var phase: float = render_clock*(17.0 if kind == 2 else 10.0)+index*1.7
     var attacking: bool = int(unit.get("contact_troops",0)) > 0 and not bool(unit["routed"])
     var hit: bool = sim.battle_time-float(unit.get("last_hit",-100.0)) < 0.16 and index%4 == 0
@@ -1656,10 +1661,10 @@ func _draw_outcome_comparison(canvas: Control) -> void:
     var peak: float = maxf(1.0,maxf(float(blue),float(red)))
     canvas.draw_string(korean_font,Vector2(0,16),"아군 잔여 %d명" % blue,HORIZONTAL_ALIGNMENT_LEFT,-1,15,COL_BLUE)
     canvas.draw_string(korean_font,Vector2(0,51),"적군 잔여 %d명" % red,HORIZONTAL_ALIGNMENT_LEFT,-1,15,COL_RED)
-    canvas.draw_rect(Rect2(152,4,550,15),Color("#121c1f"))
-    canvas.draw_rect(Rect2(152,4,550*float(blue)/peak,15),COL_BLUE)
-    canvas.draw_rect(Rect2(152,39,550,15),Color("#121c1f"))
-    canvas.draw_rect(Rect2(152,39,550*float(red)/peak,15),COL_RED)
+    canvas.draw_rect(Rect2(192,4,510,15),Color("#121c1f"))
+    canvas.draw_rect(Rect2(192,4,510*float(blue)/peak,15),COL_BLUE)
+    canvas.draw_rect(Rect2(192,39,510,15),Color("#121c1f"))
+    canvas.draw_rect(Rect2(192,39,510*float(red)/peak,15),COL_RED)
 
 func _outcome_analysis() -> void:
     outcome_dialog.hide()
@@ -1892,6 +1897,7 @@ func _refresh_visibility() -> void:
 # More visible soldiers per actual manpower, with separate ranks and spacing.
 # Contact simulation retains twelve authoritative tactical slots per detachment.
 func _visual_slots(unit: Dictionary) -> Array[Vector2]:
+    if sim.six_armies: return sim.formation_slots(unit)
     var result: Array[Vector2] = []
     var count: int = clampi(ceili(float(unit["troops"])/3.0),1,64)
     var front: Vector2 = unit["facing"]
