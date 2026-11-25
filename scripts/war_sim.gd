@@ -4,6 +4,10 @@ extends RefCounted
 
 const FIELD_W: float = 900.0
 const FIELD_H: float = 570.0
+# Compact mode remains available for legacy regression fixtures. The game uses wide mode.
+var wide_field: bool = false
+var field_size: Vector2 = Vector2(FIELD_W,FIELD_H)
+var layout_scale: float = 1.0
 const TURN_SECONDS: float = 18.0
 const LAST_TURN: int = 10
 const MAX_SECONDS: float = TURN_SECONDS * float(LAST_TURN)
@@ -117,6 +121,7 @@ func reset() -> void:
     scouts.append({"side":1, "pos":Vector2(755, 340), "goal":Vector2(525, 440), "leg":0, "alive":true, "report_timer":0.0, "reports":0})
     _configure_scenario()
     _configure_structures()
+    _expand_layout()
     _log("출전 편성 준비: " + scenario_title)
 
 func _add_unit(side: int, title: String, unit_type: String, disposition: String, ability: float, start: Vector2, mission: String, people: float) -> void:
@@ -210,7 +215,7 @@ func request_order(unit_id: int, mission: String, policy: String) -> bool:
 func reposition_commander(forward: bool) -> void:
     if finished:
         return
-    commanders[0]["goal"] = Vector2(270, 346) if forward else Vector2(54, 515)
+    commanders[0]["goal"] = layout_point(Vector2(270,346) if forward else Vector2(54,515))
     _log("책사 이동: %s" % ("전진 지휘" if forward else "본진 복귀"))
 
 func step(dt: float) -> void:
@@ -420,7 +425,7 @@ func _has_supply(side: int, position: Vector2) -> bool:
     return false
 
 func _best_supply_position(side: int) -> Vector2:
-    var focus: Vector2 = Vector2(170, 275) if side == 0 else Vector2(730, 275)
+    var focus: Vector2 = layout_point(Vector2(170,275) if side == 0 else Vector2(730,275))
     var strength: float = 0.0
     for unit in units:
         if int(unit["side"]) == side and float(unit["troops"]) > 0.0:
@@ -428,7 +433,7 @@ func _best_supply_position(side: int) -> Vector2:
             strength += float(unit["troops"]) / 100.0
     focus /= 1.0 + strength
     var direction: float = -1.0 if side == 0 else 1.0
-    var suggested: Vector2 = Vector2(clampf(focus.x + 105.0 * direction, 75.0, FIELD_W - 75.0), clampf(focus.y, 95.0, FIELD_H - 75.0))
+    var suggested: Vector2 = Vector2(clampf(focus.x + 105.0 * direction, 75.0, field_size.x - 75.0), clampf(focus.y, 95.0, field_size.y - 75.0))
     var candidates: Array[Vector2] = [suggested, suggested + Vector2(0, -68), suggested + Vector2(0, 68)]
     var winning: Vector2 = suggested
     var best_score: float = -100000.0
@@ -520,7 +525,7 @@ func _decide(unit: Dictionary) -> void:
     elif troops < 24.0 or morale < 19.0:
         action = "후퇴"
         reason = "붕괴 위험: 전선을 이탈하고 재집결"
-        goal = Vector2(86, pos.y) if side == 0 else Vector2(815, pos.y)
+        goal = Vector2(86.0*layout_scale if side == 0 else 815.0*layout_scale,pos.y)
     elif bool(unit["rallying"]) or float(unit["cohesion"]) < 30.0:
         if float(unit["cohesion"]) >= 72.0 and float(unit["fatigue"]) < 55.0:
             unit["rallying"] = false
@@ -702,10 +707,10 @@ func _flank_waypoint(unit: Dictionary, enemy: Dictionary) -> Vector2:
 func _mission_point(side: int, mission: String) -> Vector2:
     var x: float = 680.0 if side == 0 else 220.0
     match mission:
-        "북측 확보": return Vector2(x, 145.0)
-        "남측 우회": return Vector2(x, 432.0)
-        "본진 방어": return Vector2(125.0, 285.0) if side == 0 else Vector2(775.0, 285.0)
-        _: return Vector2(x, 287.0)
+        "북측 확보": return layout_point(Vector2(x,145.0))
+        "남측 우회": return layout_point(Vector2(x,432.0))
+        "본진 방어": return layout_point(Vector2(125.0,285.0) if side == 0 else Vector2(775.0,285.0))
+        _: return layout_point(Vector2(x,287.0))
 
 func _formation_transition(unit: Dictionary, dt: float) -> void:
     if str(unit["next_formation"]) == "":
@@ -736,6 +741,8 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         "방진": rate *= 0.65
     if str(unit["next_formation"]) != "":
         rate *= 0.55
+    if wide_field and (enemy.is_empty() or pos.distance_to(enemy["pos"]) > 220.0):
+        rate *= 1.35
     rate *= _terrain_movement_multiplier(unit, pos)
     rate *= 1.0 - 0.28 * float(unit["fatigue"]) / 100.0
     rate *= 0.65 + 0.35 * float(unit["cohesion"]) / 100.0
@@ -754,7 +761,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         var moved: Vector2 = (unit["pos"] as Vector2) - pos
         actual_move = moved
         if moved.length_squared() > 0.03:
-            unit["fatigue"] = minf(100.0, float(unit["fatigue"]) + moved.length() * (0.030 if str(unit["type"]) == "기병" else 0.042))
+            unit["fatigue"] = minf(100.0, float(unit["fatigue"]) + moved.length() * (0.030 if str(unit["type"]) == "기병" else 0.042) * (0.48 if wide_field else 1.0))
             unit["facing"] = moved.normalized()
     if str(unit["type"]) == "기병":
         _update_charge(unit, actual_move, dt)
@@ -837,7 +844,7 @@ func _resolve_frontline(dt: float) -> void:
                 _log("%s 전선이 압박으로 밀립니다." % str(losing_unit["name"]))
 
 func _field_point(p: Vector2) -> Vector2:
-    return Vector2(clampf(p.x, 18.0, FIELD_W - 18.0), clampf(p.y, 22.0, FIELD_H - 18.0))
+    return Vector2(clampf(p.x, 18.0, field_size.x - 18.0), clampf(p.y, 22.0, field_size.y - 18.0))
 
 
 # Terrain layout is the same geometry used by game.gd's tactical map.
@@ -846,8 +853,8 @@ func terrain_at(p: Vector2) -> String:
         return "숲"
     if hill.has_point(p):
         return "고지"
-    for y in [131.0, 282.0, 435.0]:
-        if absf(p.y - y) <= 10.0:
+    for lane in range(3):
+        if absf(p.y-road_y(p.x,lane)) <= (16.0 if wide_field else 10.0):
             return "도로"
     return "평지"
 
@@ -1088,11 +1095,11 @@ func _update_outposts(dt: float) -> void:
             _log("%s: %s 점령" % [str(site["name"]), "아군" if faction == 0 else "적군"])
 
 func _objective_winner() -> int:
-    if outposts.size() < 2 or turn < 3:
+    if outposts.size() < 2 or turn < (6 if wide_field else 3):
         return -1
     if scenario_id == 1:
         var central: Dictionary = outposts[0]
-        if int(central["owner"]) >= 0 and float(central["hold"]) >= 18.0:
+        if int(central["owner"]) >= 0 and float(central["hold"]) >= (30.0 if wide_field else 18.0):
             return int(central["owner"])
         return -1
     if scenario_id in [2,3]:
@@ -1207,7 +1214,7 @@ func validate_state() -> Array[String]:
         var p: Vector2 = unit["pos"]
         if is_nan(p.x) or is_nan(p.y) or is_inf(p.x) or is_inf(p.y):
             problems.append("unit position is not finite: %s" % str(unit["name"]))
-        elif p.x < 0.0 or p.x > FIELD_W or p.y < 0.0 or p.y > FIELD_H:
+        elif p.x < 0.0 or p.x > field_size.x or p.y < 0.0 or p.y > field_size.y:
             problems.append("unit out of bounds: %s" % str(unit["name"]))
         var troops: float = float(unit["troops"])
         if is_nan(troops) or is_inf(troops) or troops < 0.0 or troops > MAX_TROOPS:
@@ -1382,7 +1389,7 @@ func _apply_policy(unit: Dictionary, policy: String) -> void:
     unit["obedience"] = policy if policy in ["명령 엄수", "재량 위임"] else "성향 기반"
 
 func _home_point(side: int) -> Vector2:
-    return Vector2(65, 285) if side == 0 else Vector2(835, 285)
+    return layout_point(Vector2(65,285) if side == 0 else Vector2(835,285))
 
 func _enforce_orders(unit: Dictionary, action: String, reason: String, goal: Vector2, enemy_distance: float) -> Dictionary:
     var result_order: Dictionary = {"action":action, "reason":reason, "goal":goal}
@@ -1446,7 +1453,7 @@ func _update_scouts(dt: float) -> void:
         elif p.distance_to(goal) < 12.0:
             scout["leg"] = (int(scout["leg"]) + 1) % 4
             var x: float = 375.0 if side == 0 else 525.0
-            var points: Array[Vector2] = [Vector2(x, 120), Vector2(x, 430), Vector2(460, 280), _home_point(side)]
+            var points: Array[Vector2] = [layout_point(Vector2(x,120)),layout_point(Vector2(x,430)),layout_point(Vector2(460,280)),_home_point(side)]
             scout["goal"] = points[int(scout["leg"])]
             goal = scout["goal"]
         scout["pos"] = _field_point(p.move_toward(goal, 82.0 * dt))
@@ -1715,7 +1722,7 @@ func swap_generals(first_id: int, second_id: int) -> bool:
 
 func place_unit(unit_id: int, position: Vector2) -> bool:
     var unit: Dictionary = find_unit(unit_id)
-    if started or unit.is_empty() or int(unit["side"]) != 0 or position.x > 270.0 or position.x < 35.0:
+    if started or unit.is_empty() or int(unit["side"]) != 0 or position.x > 270.0*layout_scale or position.x < 35.0:
         return false
     position = _field_point(position)
     for other in units:
@@ -1914,7 +1921,7 @@ func _update_convoy(dt: float) -> void:
     if attackers > 0:
         convoy["hp"] = maxf(0.0,float(convoy["hp"])-dt*float(attackers)* (0.8 if guards > 0 else 3.5))
     if guards > 0 and attackers == 0:
-        convoy["pos"] = p.move_toward(convoy["goal"],dt*16.0)
+        convoy["pos"] = p.move_toward(convoy["goal"],dt*(25.0 if wide_field else 16.0))
 
 # Cavalry and withdrawing units bypass barriers using end-point detours.
 # Infantry can stay and attack the barrier. This is local steering, not global A*.
@@ -2093,3 +2100,55 @@ func _tactical_decision(unit: Dictionary, enemy: Dictionary, action: String, rea
             _log(str(unit["name"])+": 관측된 약한 적을 독자 추격")
         return {"action":"돌파","reason":"독자 판단: 약한 적을 추격","goal":enemy["pos"]}
     return result_order
+
+# Scale strategic locations, not soldiers, attack reach or line-of-sight.
+func set_wide_field(enabled: bool) -> void:
+    wide_field = enabled
+    reset()
+
+func layout_point(p: Vector2) -> Vector2:
+    return p*layout_scale
+
+func road_y(x: float,lane: int) -> float:
+    var y: float = [131.0,282.0,435.0][lane]*layout_scale
+    if wide_field:
+        y += sin(x/220.0+float(lane)*1.6)*48.0+sin(x/94.0+float(lane))*19.0
+    return y
+
+func _expand_layout() -> void:
+    layout_scale = 3.0 if wide_field else 1.0
+    field_size = Vector2(FIELD_W,FIELD_H)*layout_scale
+    if not wide_field: return
+    for unit in units:
+        for key in ["pos","goal","defense_anchor","tactical_anchor"]:
+            unit[key] = layout_point(unit[key])
+    for base in bases:
+        for key in ["pos","target"]: base[key] = layout_point(base[key])
+    for commander in commanders:
+        for key in ["pos","goal"]: commander[key] = layout_point(commander[key])
+    for scout in scouts:
+        for key in ["pos","goal"]: scout[key] = layout_point(scout[key])
+    for site in outposts:
+        site["pos"] = layout_point(site["pos"])
+    if not convoy.is_empty():
+        for key in ["pos","goal"]: convoy[key] = layout_point(convoy[key])
+    for i in range(forests.size()):
+        var old: Rect2 = forests[i]
+        var size: Vector2 = old.size*1.75
+        forests[i] = Rect2(layout_point(old.get_center())-size*0.5,size)
+    # Additional cover away from the primary objectives creates alternate routes.
+    forests.append(Rect2(570,520,230,250))
+    forests.append(Rect2(1830,1130,280,220))
+    forests.append(Rect2(1110,1270,210,180))
+    forests.append(Rect2(1920,240,220,190))
+    var hill_size: Vector2 = hill.size*1.8
+    hill = Rect2(layout_point(hill.get_center())-hill_size*0.5,hill_size)
+    for structure in structures:
+        var old: Rect2 = structure["rect"]
+        structure["rect"] = Rect2(layout_point(old.position),Vector2(old.size.x,old.size.y*3.0))
+    scenario_limit = [360.0,330.0,300.0,390.0,360.0][scenario_id]
+    if scenario_id == 1:
+        scenario_goal = "6턴 이후 중앙 고지 30초 연속 확보"
+    elif scenario_id == 2:
+        scenario_goal = "300초 동안 아군 보급기지 사수"
+    reserve_next = [36.0,36.0]
