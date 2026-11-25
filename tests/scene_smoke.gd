@@ -112,16 +112,18 @@ func _process(_dt: float) -> bool:
             quit(1)
             return false
         var actual: Array[Vector2]=model.formation_slots(leader)
-        var visible: Array[Vector2]=model.representative_slots(leader,72)
-        if visible.size()!=72 or actual.is_empty():
+        var visible: Array[Vector2]=model.representative_slots(leader,216)
+        if visible.size()!=216 or actual.is_empty():
             push_error("GUNRYAK_SCENE_FAIL: formation presentation missing")
             quit(1)
             return false
+        var visible_positions: Dictionary={}
         for i in range(visible.size()):
-            if visible[i].distance_to(actual[i%actual.size()])>12.0 or model.terrain_at(visible[i])=="하천":
-                push_error("GUNRYAK_SCENE_FAIL: representative soldier escaped actual anchor")
+            if visible[i].distance_to(actual[i%actual.size()])>12.0 or model.terrain_at(visible[i])=="하천" or visible_positions.has(visible[i]):
+                push_error("GUNRYAK_SCENE_FAIL: representative soldier left its anchor or overlaps another slot")
                 quit(1)
                 return false
+            visible_positions[visible[i]]=true
         var local: Array[Vector2]=[Vector2(18,0),Vector2(50,0)]
         if view_model.local_target(Vector2.ZERO,local,30.0)!=Vector2(18,0) or view_model.local_target(Vector2.ZERO,local,10.0)!=Vector2.INF:
             push_error("GUNRYAK_SCENE_FAIL: visual contact range incorrect")

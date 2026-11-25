@@ -742,3 +742,16 @@ Godot 4.7.2에서 저장소 엔진 러너의 검사 목록과 통과 표식을 �
 - Godot 4.7.2에서 `xvfb-run -a -s '-screen 0 1280x800x24' env LIBGL_ALWAYS_SOFTWARE=1 godot --audio-driver Dummy --rendering-driver opengl3 --path . --script res://tests/screenshot.gd`로 실제 화면 37장과 사격 동기화를 검증했다. 기존 ObjectDB 종료 경고 2건이 남았다.
 - 독립 창에서 작전 지도, 출전, 4배속, 마속 선택, 확대와 일시정지를 조작했고 03:51의 사격 상태를 확인했다. 타이틀 표시까지 44초가 걸렸고, Mesa 소프트웨어 렌더링과 다른 검사 병행 조건의 전체 세션에서 6~18 FPS, 중앙값 9를 기록했다. Windows 렌더러와 실제 GPU 성능은 별도 검증이 필요하다.
 - 저장소의 Godot 검사 9개를 모두 통과했다. `python3 -u test_results/arrow-presentation/rain/run_checks.py`로 기존 검사 목록을 실행했으며 검사별 제한 시간은 450초였다. 시뮬레이션은 282건 통과, 실패 0이었다. 판본의 검사 결과는 `test_results/arrow-presentation/rain/engine-test-report.json`에, 화살비 GIF의 실제 렌더링 48장은 같은 폴더의 `clip/`에 보관했다.
+
+## 2026-11-25 — 병사 크기와 군단 표시 밀도 조정
+
+기준 커밋은 `1808e96`이며, `work/demo-troop-scale`에서 이어갔다.
+
+- 병사 스프라이트의 가로·세로를 28% 줄였다. 말과 기수의 상대 크기를 유지하고, 발 위치에 맞춰 그림자와 전사 표식도 줄였다. 화살의 출발점과 착탄 높이는 새 병사 크기에 맞췄다.
+- 유효 병력을 전열마다 더 촘촘한 간격으로 배치한다. 근접 확대의 표시 상한은 보병·궁병 216명, 기병 144명이다. 병력 4,680명의 보병을 기준으로 화면에 그리는 수는 기존 72명에서 213명으로 늘어난다. 확대를 줄이면 대열당 표현 수를 줄인다.
+- 기존 전술 슬롯을 중심으로 화면용 소열을 만들어 진형·도하와 전투 판정에 같은 전열을 사용한다. 표시용 병사와 그림자는 실제 인원수를 바탕으로 그린다.
+
+- 북남 요충지 04:00의 같은 카메라와 교전에서 `test_results/troop-scale/troop-scale-comparison.png`를 만들었다. 양쪽 궁병의 축소된 병사와 화살비는 `before/archer_release.png`, `after/archer_release.png`에서 확인했다.
+- 일반 Godot 창에서 작전 지도 진입, 출전, 배속, 마속 선택, 확대, 일시정지와 최근 교전을 실제 입력으로 조작했다. 일반 창의 05:15 교전은 `after/player_melee.png`에 있다. 검사 병행 조건에서 타이틀까지 36초, 94개 표본의 6~24 FPS와 중앙값 10을 기록했다.
+- Godot 4.7.2, Mesa 소프트웨어 렌더링에서 각각 단독으로 작전 04:00의 같은 좌표를 정지 렌더링했다. 20프레임 예열 후 96프레임씩 측정했다. 0.85배 중앙값은 27.69→31.67ms, 90백분위는 33.84→38.95ms였다. 1.8배 중앙값은 30.22→26.67ms, 90백분위는 35.94→32.50ms였다. 초기 장면 표시까지는 14.21→14.52초였다. 실제 GPU와 동적 전투 성능은 별도 측정 범위다.
+- `python3 -u test_results/troop-scale/run_checks.py`로 Godot 4.7.2 검사 목록 9개를 통과했다. 검사별 제한 시간은 450초였다. 여섯 군단 테스트의 5개 시나리오 결과가 기준판과 모두 일치했다. `xvfb-run -a -s '-screen 0 1280x800x24' env LIBGL_ALWAYS_SOFTWARE=1 godot --audio-driver Dummy --rendering-driver opengl3 --path . --script res://tests/screenshot.gd`로 화면 37장, 병력과 전술 슬롯의 일치, 확대별 표시 밀도 및 사격 동기화를 확인했다. 기존 Godot 종료 ObjectDB 경고 2건이 남아 있다.

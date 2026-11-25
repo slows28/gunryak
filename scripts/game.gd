@@ -24,6 +24,7 @@ const PORTRAIT_NAMES=["왕평","마속","위연","강유","관흥","장익","장
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const PAINTED_FX = preload("res://assets/art/painted_fx.webp")
 const TITLE_ART = preload("res://assets/art/title_art.webp")
+const SOLDIER_SCALE: float = 0.72
 const MAP_TOP_LEFT: Vector2 = Vector2(16, 124)
 const MAP_SIZE: Vector2 = Vector2(934, 550)
 const MINIMAP_AREA = Rect2(1128,609,126,80)
@@ -1706,7 +1707,8 @@ func _draw_depth_scene(soldiers:Array[Dictionary],trees:Array[Dictionary],visibl
             ti+=1
         else:
             var item:Dictionary=soldiers[si]
-            _draw_soldier(item["point"],item["unit"],item["accent"],int(item["index"]),item["target"],float(item.get("bow_age",-1.0)))
+            _draw_soldier(item["point"],item["unit"],item["accent"],int(item["index"]),
+                item["target"],float(item["bow_age"]),bool(item["shadow"]))
             si+=1
 
 func _draw_contact_fronts(visible_units: Array[Dictionary],field_view: Rect2) -> void:
@@ -1782,6 +1784,9 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         if not cacheable or not formation_render_cache.has(id):
             formation_render_cache[id]=_visual_slots(unit)
         var slots: Array[Vector2]=formation_render_cache[id]
+        if slots.is_empty(): continue
+        var core: int=mini(slots.size(),clampi(ceili(float(unit["troops"])/180.0),1,24)) if sim.six_armies else slots.size()
+        var reach: float=173.0 if unit["type"]=="궁병" else 34.0
         var target_id: int=int(unit.get("contact_target_id",-1))
         var target: Dictionary=sim.find_unit(target_id)
         var can_contact: bool=sim.started and not sim.finished and not bool(unit["routed"]) and target_id>=0 and not target.is_empty() and _visible_unit(target)
@@ -1790,13 +1795,13 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             if not cacheable or not contact_cache.has(id):
                 var anchors: Array[Vector2]=sim.formation_slots(target)
                 var aim: Array[Vector2]=[]
-                var reach: float=173.0 if str(unit["type"])=="궁병" else 34.0
-                for point in slots: aim.append(FrontView.local_target(point,anchors,reach))
+                # Every file shares its actual tactical slot's opponent.
+                for index in range(core): aim.append(FrontView.local_target(slots[index],anchors,reach))
                 contact_cache[id]=aim
             targets=contact_cache[id]
-        # True frontage anchors come first; at medium zoom only thin out
-        # representative soldiers layered around those anchors.
-        var core: int=clampi(ceili(float(unit["troops"])/180.0),1,24)
+        var draw_count: int=slots.size()
+        if sim.six_armies and camera_zoom<1.35:
+            draw_count=mini(draw_count,core*(6 if camera_zoom>=0.92 else 4))
         var volley: Dictionary=volleys.get(id,{})
         var volley_lanes: Array[Vector2]=[]
         var volley_offset:=Vector2.ZERO
@@ -1808,20 +1813,27 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             if volley.has("arrow_lanes"): volley_lanes=volley["arrow_lanes"]
             volley_age=render_clock-float(volley["time"])
             volley_offset=(volley["from"] as Vector2)-(unit["pos"] as Vector2)
-        for index in range(slots.size()):
-            if sim.six_armies and camera_zoom<1.10 and index>=core and (index-core)%2==1: continue
-            var point: Vector2=slots[index]
-            var center: Vector2=unit["pos"]
-            var local_target: Vector2=targets[index] if index<targets.size() else Vector2.INF
-            if sim.started and not sim.finished and not sim.paused and previous_centers.has(id):
-                var previous: Vector2=previous_centers[id]
-                point+=previous.lerp(center,clampf(step_buffer/0.1,0.0,1.0))-center
-            var scatter: float=(100.0-float(unit["cohesion"]))*0.045
-            if bool(unit["routed"]): scatter+=6.5
-            point+=Vector2(sin(float(index)*7.3),cos(float(index)*5.7))*scatter
-            var event_age: float=render_clock-float(unit.get("last_visual",-100.0))-float(index%5)*0.026
+        var center: Vector2=unit["pos"]
+        var march_offset:=Vector2.ZERO
+        if sim.started and not sim.finished and not sim.paused and previous_centers.has(id):
+            var previous: Vector2=previous_centers[id]
+            march_offset=previous.lerp(center,clampf(step_buffer/0.1,0.0,1.0))-center
+        var scatter: float=(100.0-float(unit["cohesion"]))*0.045
+        if bool(unit["routed"]): scatter+=6.5
+        var last_attack_age: float=render_clock-float(unit.get("last_visual",-100.0))
+        for index in range(draw_count):
+            var point: Vector2=slots[index]+march_offset
+            if scatter>0.0:
+                point+=Vector2(sin(float(index)*7.3),cos(float(index)*5.7))*scatter
+            var local_target: Vector2=Vector2.INF
+            if not targets.is_empty():
+                local_target=targets[index%core]
+                if local_target!=Vector2.INF and slots[index].distance_squared_to(local_target)>reach*reach:
+                    local_target=Vector2.INF
+            var event_age: float=last_attack_age-float(index%5)*0.026
             if local_target!=Vector2.INF and event_age>=0.0 and event_age<=0.30:
-                point=FrontView.advance_toward_contact(point,local_target,sin(clampf(event_age/0.30,0.0,1.0)*PI),str(unit["type"]))
+                var lunge: float=sin(clampf(event_age/0.30,0.0,1.0)*PI)*SOLDIER_SCALE
+                point=FrontView.advance_toward_contact(point,local_target,lunge,str(unit["type"]))
             var bow_age: float=-1.0
             if not volley_lanes.is_empty():
                 var shot_position: Vector2=slots[index]+volley_offset
@@ -1832,9 +1844,10 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
                     bow_age=release_age
                     local_target=shot_target
                     point+=volley_offset*(1.0-smoothstep(FrontView.VOLLEY_RELEASE,FrontView.VOLLEY_RECOVERY,bow_age))
-            if sim.in_open_water(point): point=slots[index]
-            point=Vector2(clampf(point.x,0.0,sim.field_size.x),clampf(point.y,0.0,sim.field_size.y))
-            batch.append({"point":point,"unit":unit,"accent":accent,"index":index,"target":local_target,"bow_age":bow_age})
+            if point!=slots[index] and sim.in_open_water(point): point=slots[index]
+            point=point.clamp(Vector2.ZERO,sim.field_size)
+            batch.append({"point":point,"unit":unit,"accent":accent,"index":index,"target":local_target,
+                "bow_age":bow_age,"shadow":index<core})
     batch.sort_custom(func(a:Dictionary,b:Dictionary)->bool: return (a["point"] as Vector2).y<(b["point"] as Vector2).y)
     return batch
 
@@ -1878,18 +1891,26 @@ func _draw_unit(unit: Dictionary) -> void:
         var slots: Array[Vector2]=sim.formation_slots(unit)
         if slots.size()>=3:
             _draw_formation_footprint(slots,Color(accent,0.15),Color(accent,0.75),k)
-        for spot in slots:
-            map_layer.draw_circle(spot,1.45*k,Color("#15201d"))
-            map_layer.draw_circle(spot,0.95*k,accent)
+        var spots: Array[Vector2]=slots
+        if sim.six_armies:
+            spots=sim.representative_slots(unit,mini(_representative_soldier_count(unit),slots.size()*3))
+        for spot in spots:
+            map_layer.draw_circle(spot,0.94*k,Color("#15201d"))
+            map_layer.draw_circle(spot,0.62*k,accent)
         var center_color: Color=COL_GOLD if int(unit["id"])==(observed_enemy_id if observing_enemy else selected_id) else accent
         map_layer.draw_circle(p,3.7*k,Color("#17221f"))
         map_layer.draw_circle(p,3.0*k,center_color,false,1.1*k,true)
         var front: Vector2=(unit["facing"] as Vector2).normalized()
         map_layer.draw_line(p+front*4*k,p+front*8*k,center_color,1.4*k,true)
         return
-    var slots: Array[Vector2] = _visual_slots(unit)
-    if detailed_map and sim.six_armies and slots.size()>2 and int(unit["id"])==selected_id and side==0:
-        _draw_formation_footprint(slots,Color(accent,0.045),Color(COL_GOLD,0.35),1.2)
+    var id: int=int(unit["id"])
+    var selected: bool=id==(observed_enemy_id if observing_enemy else selected_id)
+    var show_footprint: bool=detailed_map and sim.six_armies and id==selected_id and side==0
+    var drawn_slots: Array[Vector2]=[]
+    if selected or show_footprint:
+        drawn_slots=formation_render_cache[id] if formation_render_cache.has(id) else _visual_slots(unit)
+    if show_footprint:
+        _draw_formation_footprint(drawn_slots,Color(accent,0.045),Color(COL_GOLD,0.35),1.2)
     var flag_extent: Vector2 = Vector2(15,22) if unit.has("parent_id") else Vector2(23,32)
     _paint_tile(38+side,Rect2(p-Vector2(flag_extent.x*0.5,flag_extent.y+7),flag_extent),Color(1,1,1,accent.a))
     if camera_zoom>=1.0 and not unit.has("parent_id"):
@@ -1902,10 +1923,10 @@ func _draw_unit(unit: Dictionary) -> void:
         map_layer.draw_line(p + forward*22.0, p + forward*35.0, Color(accent,0.8), 1.8)
     if detailed_map and str(unit["formation"]) == "방진" and side==0 and int(unit["id"])==selected_id:
         map_layer.draw_rect(Rect2(p-Vector2(25,25),Vector2(50,50)),Color(accent,0.20),false,1.0)
-    if int(unit["id"]) == (observed_enemy_id if observing_enemy else selected_id):
+    if selected:
         # Four unobtrusive selection brackets around the actual formation extent.
         var bounds := Rect2(p,Vector2.ZERO)
-        for spot in slots: bounds = bounds.expand(spot)
+        for spot in drawn_slots: bounds = bounds.expand(spot)
         bounds = bounds.grow(8.0)
         var length: float = 10.0/camera_zoom
         for corner in [bounds.position,Vector2(bounds.end.x,bounds.position.y),bounds.end,Vector2(bounds.position.x,bounds.end.y)]:
@@ -2456,14 +2477,14 @@ func _soldier_pose(unit: Dictionary, index: int, now: float) -> int:
 func _soldier_motion_region(base: Rect2,pose: int) -> Rect2:
     return Rect2(base.position+Vector2(pose*288,0),base.size)
 
-func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, target: Vector2=Vector2.INF, bow_age: float=-1.0) -> void:
+func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, target: Vector2, bow_age: float, draw_shadow: bool) -> void:
     var direction: Vector2 = unit["facing"]
     if target!=Vector2.INF and not bool(unit["routed"]) and p.distance_squared_to(target)>0.1:
         direction=(target-p).normalized()
     var moving: bool = float(unit.get("motion_speed",0.0)) > 2.0 and sim.started and not sim.finished
     var kind: int = 1 if str(unit["type"])=="궁병" else (2 if str(unit["type"])=="기병" else 0)
     # The atlas uses a shared foot anchor. Taller silhouettes, compact lateral footprint.
-    var extent: Vector2 = Vector2(13,18) if kind==2 else Vector2(9,13)
+    var extent: Vector2 = (Vector2(13,18) if kind==2 else Vector2(9,13))*SOLDIER_SCALE
     if not sim.six_armies: extent*=1.25
     # Front and rear ranks no longer perform the same thrust on every tick.
     var visual_contact: bool=target!=Vector2.INF
@@ -2490,19 +2511,20 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     var phase: float = render_clock*sim.operation_scale()*(13.0 if kind==2 else 9.0)+index*1.7
     var hit: bool = sim.battle_time-float(unit.get("last_hit",-100.0))<0.16 and index%4==0
     if moving:
-        p+=direction*sin(phase)*(2.0 if kind==2 else 1.0)
-        p.y+=sin(phase)*0.9
+        var stride: float=sin(phase)*SOLDIER_SCALE
+        p+=direction*stride*(2.0 if kind==2 else 1.0)
+        p.y+=stride*0.9
     if pose==3 and kind!=1 and visual_contact:
-        p+=direction*(3.5 if kind==2 else 2.2)
-    elif pose==2 and kind!=1: p-=direction*0.8
-    if hit: p-=direction*1.0
+        p+=direction*(3.5 if kind==2 else 2.2)*SOLDIER_SCALE
+    elif pose==2 and kind!=1: p-=direction*0.8*SOLDIER_SCALE
+    if hit: p-=direction*SOLDIER_SCALE
     var variation: float=0.88+float(posmod(index*17+int(unit["id"])*7,11))*0.012
     var shade: Color = Color(1.0,0.78,0.70,accent.a) if hit else Color(variation,variation,variation,accent.a)
     var map_offset: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
-    # Shadow is separated from the art, so feet stay grounded and faction colors stay clear.
-    if camera_zoom>=1.10:
-        map_layer.draw_set_transform(map_offset+(p+Vector2(2.5,1.0))*camera_zoom,0.0,Vector2(1.0,0.45)*camera_zoom)
-        map_layer.draw_circle(Vector2.ZERO,7.0 if kind==2 else 4.8,Color(0.04,0.05,0.035,0.30))
+    # A shared shadow under each small file keeps densely packed feet readable.
+    if camera_zoom>=1.10 and draw_shadow:
+        map_layer.draw_set_transform(map_offset+(p+Vector2(2.5,1.0)*SOLDIER_SCALE)*camera_zoom,0.0,Vector2(1.0,0.45)*camera_zoom)
+        map_layer.draw_circle(Vector2.ZERO,(7.0 if kind==2 else 4.8)*SOLDIER_SCALE,Color(0.04,0.05,0.035,0.30))
     var column: int=0
     if absf(direction.y)>absf(direction.x)*1.10: column=1 if direction.y>0.0 else 2
     var region: Rect2=Rect2(column*96,(int(unit["side"])*3+kind)*96,96,96)
@@ -2514,7 +2536,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     map_layer.draw_texture_rect_region(art,Rect2(Vector2(-extent.x*0.5,-extent.y*0.90),extent),source,shade)
     if aiming==FrontView.BowPhase.DRAW and column==0 and camera_zoom>=1.35:
         var draw: float=smoothstep(0.08,FrontView.VOLLEY_RELEASE,bow_age)
-        var hand:=Vector2(lerpf(0.25,-0.8,draw),-5.9)
+        var hand:=Vector2(lerpf(0.25,-0.8,draw),-5.9)*SOLDIER_SCALE
         map_layer.draw_texture_rect(BATTLE_ARROW,Rect2(hand-Vector2(0.40,0.85),Vector2(5.2,1.30)),false,shade)
     map_layer.draw_set_transform(map_offset,0.0,Vector2.ONE*camera_zoom)
 
@@ -2558,7 +2580,7 @@ func _draw_fallen(view: Rect2) -> void:
         var kind: int=1 if str(entry["kind"])=="궁병" else (2 if str(entry["kind"])=="기병" else 0)
         var region:=Rect2(0,(side*3+kind)*96,96,96)
         map_layer.draw_set_transform(offset+p*camera_zoom,float(entry["angle"]),Vector2.ONE*camera_zoom)
-        map_layer.draw_texture_rect_region(SOLDIER_ART,Rect2(-6,-5,12,10),region,Color(0.57,0.55,0.48,0.70))
+        map_layer.draw_texture_rect_region(SOLDIER_ART,Rect2(Vector2(-6,-5)*SOLDIER_SCALE,Vector2(12,10)*SOLDIER_SCALE),region,Color(0.57,0.55,0.48,0.70))
     map_layer.draw_set_transform(offset,0.0,Vector2.ONE*camera_zoom)
 
 func _draw_loss_markers() -> void:
@@ -2636,8 +2658,8 @@ func _draw_volley(fx: Dictionary, origin: Vector2, target: Vector2, age: float) 
         if airborne<0.0: continue
         var direction: Vector2=(to-from).normalized()
         var lateral: Vector2=direction.orthogonal()
-        var launch: Vector2=from+direction*2.4+Vector2(0,-6.0)
-        var impact: Vector2=to+Vector2(0,-3.4)
+        var launch: Vector2=from+(direction*2.4+Vector2(0,-6.0))*SOLDIER_SCALE
+        var impact: Vector2=to+Vector2(0,-3.4)*SOLDIER_SCALE
         var separation: float=launch.distance_to(impact)
         var flight: float=clampf(separation/390.0,0.17,0.45)
         var rise: float=clampf(separation*0.23,7.0,29.0)
@@ -3367,13 +3389,15 @@ func _refresh_visibility() -> void:
     visibility_texture = ImageTexture.create_from_image(image)
     visibility_stamp = sim.battle_time
 
-# More visible soldiers per actual manpower, with separate ranks and spacing.
-# Contact simulation retains twelve authoritative tactical slots per detachment.
+func _representative_soldier_count(unit: Dictionary) -> int:
+    var strength: float=float(unit["troops"])
+    if unit["type"]=="기병":
+        return clampi(ceili(strength/30.0),0,144)
+    return clampi(ceili(strength/22.0),0,216)
+
 func _visual_slots(unit: Dictionary) -> Array[Vector2]:
     if sim.six_armies:
-        # Visual detail uses the same formation geometry; combat still uses authoritative slots.
-        var count: int=clampi(ceili(float(unit["troops"])/65.0),1,72)
-        return sim.representative_slots(unit,count)
+        return sim.representative_slots(unit,_representative_soldier_count(unit))
     var result: Array[Vector2] = []
     var count: int = clampi(ceili(float(unit["troops"])/3.0),1,64)
     var front: Vector2 = unit["facing"]

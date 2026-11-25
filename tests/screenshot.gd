@@ -463,12 +463,33 @@ func _capture() -> void:
         quit(1)
         return
     var actual_strength: float=float(game.sim.find_unit(0)["troops"])
+    var actual_slots: Array[Vector2]=game.sim.formation_slots(game.sim.find_unit(0))
     var sample_army: Dictionary=game.sim.find_unit(0).duplicate(true)
+    sample_army["id"]=-600
+    sample_army["type"]="보병"
     sample_army["troops"]=4680.0
     sample_army["next_formation"]=""
-    var slots: Array=game.call("_visual_slots",sample_army)
-    if slots.size()!=72 or float(game.sim.find_unit(0)["troops"])!=actual_strength:
+    sample_army["contact_target_id"]=-1
+    var slots: Array[Vector2]=game.call("_visual_slots",sample_army)
+    var cavalry: Dictionary=sample_army.duplicate()
+    cavalry["type"]="기병"
+    var mounted_slots: Array[Vector2]=game.call("_visual_slots",cavalry)
+    if slots.size()!=213 or mounted_slots.size()!=144 or float(game.sim.find_unit(0)["troops"])!=actual_strength or (
+        game.sim.formation_slots(game.sim.find_unit(0))!=actual_slots
+    ):
         push_error("VISUAL_CAPTURE_FAIL: density or presentation isolation invalid")
+        quit(1)
+        return
+    var saved_density_zoom: float=game.camera_zoom
+    var density_units: Array[Dictionary]=[sample_army]
+    var density_view:=Rect2(Vector2.ZERO,game.sim.field_size)
+    game.camera_zoom=1.8
+    var close_batch: Array[Dictionary]=game.call("_visible_soldier_batch",density_units,density_view)
+    game.camera_zoom=0.8
+    var distant_batch: Array[Dictionary]=game.call("_visible_soldier_batch",density_units,density_view)
+    game.camera_zoom=saved_density_zoom
+    if close_batch.size()!=slots.size() or distant_batch.size()!=96:
+        push_error("VISUAL_CAPTURE_FAIL: unexpected amount of representative soldiers at supported zoom levels")
         quit(1)
         return
     var bridge_hq: Texture2D=load("res://assets/art/bridge_hq.svg")
@@ -501,7 +522,7 @@ func _capture() -> void:
         push_error("VISUAL_CAPTURE_FAIL: no globally sorted soldier instances")
         quit(1)
         return
-    print("INTEGRATED_VISUAL_PASS: terrain "+str(terrain_size)+" / 72 presentation slots / command skin / HQ bridge / depth sort / live roster / refined fog")
+    print("INTEGRATED_VISUAL_PASS: terrain "+str(terrain_size)+" / denser presentation slots / command skin / HQ bridge / depth sort / live roster / refined fog")
 
     # Same simulation tick, same camera: compare quiet and detailed presentation.
     var frozen_time: float = game.sim.battle_time

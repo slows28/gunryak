@@ -1122,9 +1122,13 @@ func formation_contacts(attacker: Dictionary, defender: Dictionary, weapon_reach
                 break
     return engaged
 
-# Representative contact point, evaluated only when a visual event is emitted.
-# Authoritative contacts and damage remain unchanged.
-# Display-only front rank anchors use the same formation positions as contact calculations.
+# Draw smaller files inside each tactical slot, with the actual front
+# row first so distant views can draw fewer soldiers in the same formation.
+const REPRESENTATIVE_FILE_OFFSETS: Array[Vector2] = [
+    Vector2.ZERO, Vector2(-1,-1), Vector2(1,1), Vector2(1,-1), Vector2(-1,1),
+    Vector2(-1,0), Vector2(1,0), Vector2(0,-1), Vector2(0,1),
+]
+
 func representative_slots(unit: Dictionary,count: int) -> Array[Vector2]:
     var anchors: Array[Vector2]=formation_slots(unit)
     var result: Array[Vector2]=[]
@@ -1132,19 +1136,24 @@ func representative_slots(unit: Dictionary,count: int) -> Array[Vector2]:
     var front: Vector2=(unit["facing"] as Vector2).normalized()
     if front.length_squared()<0.1: front=Vector2.RIGHT if int(unit["side"])==0 else Vector2.LEFT
     var lateral: Vector2=front.orthogonal()
+    var spacing: float=4.65 if str(unit["type"])=="기병" else 4.15
+    var center: Vector2=unit["pos"]
+    var near_river: bool=long_operation and absf(center.x-river_x(center.y))<=150.0
     for i in range(count):
         var anchor: Vector2=anchors[i%anchors.size()]
         var layer: int=floori(float(i)/float(anchors.size()))
-        var spread: float=4.4 if str(unit["type"])=="기병" else 3.8
-        var offset: Vector2=Vector2.ZERO
-        if layer==1: offset=-front*spread+lateral*spread
-        elif layer==2: offset=front*spread-lateral*spread
-        elif layer>=3: offset=Vector2.from_angle(float(i)*2.39996)*spread
-        var point: Vector2=_field_point(anchor+offset)
-        if long_operation: point=_dry_formation_slot(unit["pos"],point)
+        var offset: Vector2
+        if layer<REPRESENTATIVE_FILE_OFFSETS.size():
+            var file: Vector2=REPRESENTATIVE_FILE_OFFSETS[layer]
+            offset=front*file.x+lateral*file.y
+        else:
+            offset=Vector2.from_angle(float(i)*2.39996)
+        var point: Vector2=_field_point(anchor+offset*spacing)
+        if near_river: point=_dry_formation_slot(center,point)
         result.append(point)
     return result
 
+# Evaluate the closest actual contact when a combat effect is emitted.
 func visual_contact_pair(attacker: Dictionary,defender: Dictionary) -> Array[Vector2]:
     var left: Array[Vector2]=formation_slots(attacker)
     var right: Array[Vector2]=formation_slots(defender)
