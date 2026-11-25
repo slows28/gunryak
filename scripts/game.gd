@@ -22,6 +22,8 @@ const COL_GOLD: Color = Color("#efc878")
 var sim = WarSim.new()
 var korean_font: SystemFont
 var selected_id: int = 0
+var detailed_map: bool = false
+var map_detail_button: Button
 var step_buffer: float = 0.0
 var ui_clock: float = 0.0
 var runtime_notice: String = ""
@@ -226,8 +228,10 @@ func _build_interface() -> void:
     _label("전황 기록",Vector2(27,692),Vector2(125,26),17,COL_GOLD)
     event_label = _label("",Vector2(153,692),Vector2(578,102),13,COL_TEXT)
     event_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    notice_label = _label("",Vector2(950,697),Vector2(306,93),13,COL_MUTED)
+    notice_label = _label("",Vector2(950,697),Vector2(306,61),13,COL_MUTED)
     notice_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    map_detail_button = _button("전술 표시 · 간결",Vector2(950,761),Vector2(306,28),_toggle_map_detail)
+    map_detail_button.tooltip_text = "군단 진형과 전술 이동 경로 표시 전환"
     _build_planning_dialog()
     _button("브리핑",Vector2(27,730),Vector2(112,26),_open_briefing)
     _button("전투 분석",Vector2(27,761),Vector2(112,26),_open_analysis)
@@ -598,6 +602,11 @@ func _draw() -> void:
     draw_line(Vector2(950,362),Vector2(1254,362),Color("#706049"),1.0)
     _draw_minimap()
 
+func _toggle_map_detail() -> void:
+    detailed_map = not detailed_map
+    map_detail_button.text = "전술 표시 · 상세" if detailed_map else "전술 표시 · 간결"
+    map_layer.queue_redraw()
+
 func _draw_map(_canvas: Control) -> void:
     map_layer.draw_set_transform(MAP_SIZE * 0.5 - camera_center * camera_zoom, 0.0, Vector2.ONE * camera_zoom)
     var map_rect: Rect2 = Rect2(Vector2.ZERO,sim.field_size)
@@ -615,8 +624,8 @@ func _draw_map(_canvas: Control) -> void:
             var bridge := Vector2(sim.river_x(crossing),crossing)
             if camera_zoom >= 0.75:
                 _draw_bridge(bridge)
-            if camera_zoom >= 0.75:
-                _map_plate("교량",bridge+Vector2(0,-45),COL_GOLD,11)
+            if detailed_map and camera_zoom >= 0.75:
+                _map_plate(_bridge_name(crossing),bridge+Vector2(0,-45),COL_GOLD,11)
     if not sim.started:
         map_layer.draw_rect(Rect2(Vector2(35,22),Vector2(270*sim.layout_scale-35,sim.field_size.y-40)),Color(COL_BLUE,0.035))
         for y in range(22,int(sim.field_size.y)-18,36):
@@ -632,7 +641,8 @@ func _draw_map(_canvas: Control) -> void:
         var known: bool = not fog_enabled or sim.finished or sim.player_can_see(site["pos"])
         var owner: int = int(site["owner"]) if known else -1
         var color: Color = COL_BLUE if owner == 0 else (COL_RED if owner == 1 else COL_GOLD)
-        map_layer.draw_arc(site_pos, WarSim.OUTPOST_RADIUS, 0.0, TAU, 44, Color(color.r,color.g,color.b,0.20),1.2,true)
+        if detailed_map or (known and int(site["challenger"])>=0):
+            map_layer.draw_arc(site_pos, WarSim.OUTPOST_RADIUS, 0.0, TAU, 44, Color(color.r,color.g,color.b,0.20),1.2,true)
         var marker_scale: float = maxf(1.0,0.75/camera_zoom)
         _field_art(7,Rect2(site_pos-Vector2(42,65)*marker_scale,Vector2(84,84)*marker_scale))
         _paint_tile(40 if owner < 0 else 38+owner,Rect2(site_pos+Vector2(10,-25)*marker_scale,Vector2(24,30)*marker_scale))
@@ -705,6 +715,7 @@ func _draw_map(_canvas: Control) -> void:
             continue
         if fog_enabled and not sim.finished and int(unit["side"]) != 0:
             continue
+        if not detailed_map or float(unit.get("bridge_y",-1.0))>=0.0: continue
         if float(unit["troops"]) > 0.0 and (int(unit["id"]) == selected_id or str(unit["action"]) in ["패주","측면 우회","돌파"]) and str(unit["action"]) in ["측면 우회", "거점 점령", "거점 방어", "재집결", "전열 지원", "탄약 보충", "보급 복귀", "패주", "정보 확인", "명령 수행", "계획 경유", "방어선 사수"]:
             var start_point: Vector2 = _screen(unit["pos"])
             var flank_waypoint: Vector2 = _screen(unit["goal"])
@@ -726,8 +737,9 @@ func _draw_map(_canvas: Control) -> void:
                 var anchor: Vector2 = _screen(selected["defense_anchor"])
                 map_layer.draw_arc(anchor, 28.0,0.0,TAU,32,COL_BLUE,2.0)
                 _draw_string("사수",anchor+Vector2(-12,4),11,COL_BLUE)
-    _draw_cooperation_links()
-    _draw_selected_bridge_route()
+    if detailed_map:
+        _draw_cooperation_links()
+        _draw_selected_bridge_route()
     _draw_fortifications()
     for report in sim.open_situations():
         var rp: Vector2 = report["pos"]
@@ -800,7 +812,7 @@ func _draw_unit(unit: Dictionary) -> void:
     var slots: Array[Vector2] = _visual_slots(unit)
     if sim.six_armies and slots.size()>2 and int(unit["id"])==selected_id and side==0:
         var hull: PackedVector2Array = Geometry2D.convex_hull(PackedVector2Array(slots))
-        if hull.size()>3:
+        if hull.size()>3 and detailed_map:
             map_layer.draw_colored_polygon(hull,Color(accent,0.045))
             map_layer.draw_polyline(hull,Color(COL_GOLD,0.35),1.2,true)
     slots.sort_custom(func(a: Vector2,b: Vector2) -> bool: return a.y < b.y)
@@ -812,18 +824,27 @@ func _draw_unit(unit: Dictionary) -> void:
         point += Vector2(sin(float(slot_index)*7.3),cos(float(slot_index)*5.7))*scatter
         _draw_soldier(point, unit, accent, slot_index)
         slot_index += 1
-    var flag_extent: Vector2 = Vector2(20,26) if unit.has("parent_id") else Vector2(30,40)
+    var flag_extent: Vector2 = Vector2(15,22) if unit.has("parent_id") else Vector2(23,32)
     _paint_tile(38+side,Rect2(p-Vector2(flag_extent.x*0.5,flag_extent.y+7),flag_extent),Color(1,1,1,accent.a))
     var forward: Vector2 = unit["facing"]
-    map_layer.draw_line(p + forward*22.0, p + forward*35.0, Color(accent,0.8), 1.8)
-    if str(unit["formation"]) == "방진" and side==0 and int(unit["id"])==selected_id:
+    if detailed_map:
+        map_layer.draw_line(p + forward*22.0, p + forward*35.0, Color(accent,0.8), 1.8)
+    if detailed_map and str(unit["formation"]) == "방진" and side==0 and int(unit["id"])==selected_id:
         map_layer.draw_rect(Rect2(p-Vector2(25,25),Vector2(50,50)),Color(accent,0.20),false,1.0)
     if side == 0 and int(unit["id"]) == selected_id:
-        map_layer.draw_arc(p, 39.0, 0.0, TAU, 48, COL_GOLD, 1.8)
-    if float(unit.get("front_pressure", 0.0)) > 0.10:
+        # Four unobtrusive selection brackets around the actual formation extent.
+        var bounds := Rect2(p,Vector2.ZERO)
+        for spot in slots: bounds = bounds.expand(spot)
+        bounds = bounds.grow(8.0)
+        var length: float = 10.0/camera_zoom
+        for corner in [bounds.position,Vector2(bounds.end.x,bounds.position.y),bounds.end,Vector2(bounds.position.x,bounds.end.y)]:
+            var dx: float = 1.0 if corner.x==bounds.position.x else -1.0
+            var dy: float = 1.0 if corner.y==bounds.position.y else -1.0
+            map_layer.draw_polyline(PackedVector2Array([corner+Vector2(dx*length,0),corner,corner+Vector2(0,dy*length)]),COL_GOLD,1.5/camera_zoom,true)
+    if detailed_map and float(unit.get("front_pressure", 0.0)) > 0.10:
         map_layer.draw_arc(p, 38.0, forward.angle()-0.65, forward.angle()+0.65, 16, COL_RED if side == 0 else COL_BLUE, 2.5,true)
     var contacts: int = int(unit.get("contact_troops", 0))
-    if contacts > 0 and unit_type != "궁병":
+    if detailed_map and contacts > 0 and unit_type != "궁병":
         map_layer.draw_arc(p, 30.0, forward.angle()-0.8, forward.angle()+0.8, 18, Color(COL_GOLD, 0.58), 1.5,true)
     if str(unit["next_formation"]) != "":
         _draw_string("↻", p + Vector2(28, 0), 15, COL_GOLD)
@@ -844,52 +865,56 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     elif bool(unit["rallying"]): state = "재집결"
     elif str(unit["action"]) == "매복": state = "매복"
     if unit.has("parent_id") and camera_zoom < 0.8: return
-    var label: String = "%s · %s  %d" % [str(unit["name"]),str(unit["formation"]),int(float(unit["troops"]))] if camera_zoom>=0.65 else "%s %d" % [str(unit["name"]),int(float(unit["troops"]))]
-    if not state.is_empty():
-        label += " · "+state
-    var fs: int = maxi(7,int(round((11.0 if camera_zoom<0.65 else 12.0)*inv)))
-    var width: float = maxf(58.0*inv,korean_font.get_string_size(label,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+12.0*inv)
-    var height: float = 24.0*inv
+    # Place all unit text in viewport pixels; the camera never scales glyphs.
+    var rich: bool = selected or detailed_map
+    var label: String = str(unit["name"])
+    if rich: label += "  "+_number_text(roundi(float(unit["troops"])))
+    if rich and detailed_map: label += " · "+str(unit["formation"])
+    if not state.is_empty(): label += " · "+state
+    var fs: int = 14 if selected else 12
+    var width: float = (korean_font.get_string_size(label,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+18.0)*inv
+    var height: float = (27.0 if selected else 21.0)*inv
     var chosen := Rect2()
     var found: bool = false
     var best_score: float = INF
-    for offset in [Vector2(0,-56),Vector2(0,46),Vector2(-78,-32),Vector2(78,-32),Vector2(-78,37),Vector2(78,37),Vector2(0,-83),Vector2(0,73),Vector2(-105,-65),Vector2(105,-65)]:
-        var candidate := Rect2(p+(offset as Vector2)*maxf(1.0,inv*0.62)-Vector2(width*0.5,height*0.5),Vector2(width,height))
-        if not view.encloses(candidate):
-            continue
+    var vertical: float = maxf(42.0,36.0*inv)
+    var horizontal: float = maxf(54.0,52.0*inv)
+    for offset in [Vector2(0,-vertical),Vector2(0,vertical),Vector2(-horizontal,-vertical*0.5),Vector2(horizontal,-vertical*0.5),Vector2(-horizontal,vertical*0.5),Vector2(horizontal,vertical*0.5),Vector2(0,-vertical*1.6),Vector2(0,vertical*1.6)]:
+        var candidate := Rect2(p+offset-Vector2(width*0.5,height*0.5),Vector2(width,height))
+        if not view.encloses(candidate): continue
         var score: float = (candidate.get_center()-p).length()
         for prior in occupied:
-            if prior.grow(3.0*inv).intersects(candidate):
-                score += 10000.0
+            if prior.grow(4.0*inv).intersects(candidate): score += 10000.0
         for other in visible_units:
             var q: Vector2 = other["pos"]
-            if Rect2(q-Vector2(26,25),Vector2(52,50)).intersects(candidate):
-                score += 160.0
-        if score < best_score:
-            chosen = candidate
-            best_score = score
-            found = true
-    # During dense contacts, an unimportant chip may be omitted instead of overlapping.
-    if not found or best_score >= 10000.0:
-        if not selected:
-            return
-        chosen = Rect2(Vector2(clampf(p.x-width*0.5,view.position.x,view.end.x-width),clampf(p.y-60.0,view.position.y,view.end.y-height)),Vector2(width,height))
+            if Rect2(q-Vector2(29,30),Vector2(58,60)).intersects(candidate): score += 500.0
+        if score<best_score:
+            chosen=candidate
+            best_score=score
+            found=true
+    if not found or best_score>=10000.0:
+        if not selected: return
+        chosen=Rect2(Vector2(clampf(p.x-width*0.5,view.position.x,view.end.x-width),clampf(p.y-vertical,view.position.y,view.end.y-height)),Vector2(width,height))
     occupied.append(chosen)
     var attachment: Vector2 = chosen.get_center()
-    map_layer.draw_line(p,attachment,Color(accent,0.55),1.0*inv,true)
-    map_layer.draw_rect(Rect2(chosen.position+Vector2(2,2)*inv,chosen.size),Color(0,0,0,0.38))
-    map_layer.draw_rect(chosen,Color(Color("#181d19"),0.90))
-    map_layer.draw_rect(chosen,Color("#88734c"),false,0.7*inv)
-    if selected: map_layer.draw_rect(chosen,COL_GOLD,false,1.1*inv)
-    map_layer.draw_rect(Rect2(chosen.position,Vector2(3.0*inv,height)),accent)
-    _draw_string(label,chosen.position+Vector2(7.0*inv,14.0*inv),fs,COL_TEXT)
-    var ratio: float = clampf(float(unit["troops"])/maxf(1.0,float(unit["initial_troops"])),0.0,1.0)
-    var cohesion: float = clampf(float(unit["cohesion"])/100.0,0.0,1.0)
-    var bar_width: float = width-12.0*inv
-    var bar: Vector2 = chosen.position+Vector2(7.0*inv,18.0*inv)
-    map_layer.draw_rect(Rect2(bar,Vector2(bar_width,3.0*inv)),Color("#394247"))
-    map_layer.draw_rect(Rect2(bar,Vector2(bar_width*ratio,3.0*inv)),accent)
-    if selected: map_layer.draw_rect(Rect2(bar+Vector2(0,4.0*inv),Vector2(bar_width*cohesion,2.0*inv)),COL_GOLD)
+    if selected or detailed_map:
+        map_layer.draw_line(p,attachment,Color(accent,0.38),0.8*inv,true)
+    var screen_origin: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
+    map_layer.draw_set_transform(screen_origin+chosen.position*camera_zoom,0.0,Vector2.ONE)
+    var pixel_size: Vector2 = chosen.size*camera_zoom
+    var rect := Rect2(Vector2.ZERO,pixel_size)
+    map_layer.draw_rect(Rect2(Vector2(1,2),pixel_size),Color(0,0,0,0.27))
+    map_layer.draw_rect(rect,Color("#171e1b") if selected else Color(0.07,0.10,0.09,0.83))
+    if selected: map_layer.draw_rect(rect,Color(COL_GOLD,0.8),false,1.0)
+    map_layer.draw_rect(Rect2(Vector2.ZERO,Vector2(3,pixel_size.y)),accent)
+    _draw_string(label,Vector2(9,16 if selected else 14),fs,COL_TEXT)
+    if rich:
+        var ratio: float=clampf(float(unit["troops"])/maxf(1.0,float(unit["initial_troops"])),0.0,1.0)
+        var bar_width: float=pixel_size.x-14.0
+        var bar: Vector2=Vector2(8,pixel_size.y-4)
+        map_layer.draw_rect(Rect2(bar,Vector2(bar_width,2)),Color("#394247"))
+        map_layer.draw_rect(Rect2(bar,Vector2(bar_width*ratio,2)),accent)
+    map_layer.draw_set_transform(screen_origin,0.0,Vector2.ONE*camera_zoom)
 
 func _screen(p: Vector2) -> Vector2:
     return p
@@ -1959,13 +1984,15 @@ func _primary_button(btn: Button) -> void:
     btn.add_theme_stylebox_override("hover",hover)
 
 func _map_plate(value: String,p: Vector2,accent: Color,fs: int) -> void:
-    var k: float = maxf(1.0,float(fs)/11.0)
-    var w: float = korean_font.get_string_size(value,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+12.0*k
-    var rect := Rect2(p-Vector2(w*0.5,11*k),Vector2(w,18*k))
-    map_layer.draw_rect(rect,Color(0.09,0.08,0.055,0.87))
-    map_layer.draw_rect(rect,Color("#bba16b"),false,k)
-    map_layer.draw_rect(Rect2(rect.position,Vector2(2,18)*k),accent)
-    _draw_string(value,p+Vector2(-w*0.5+6*k,2*k),fs,COL_TEXT)
+    var pixel_font: int = clampi(roundi(float(fs)*camera_zoom),12,14)
+    var w: float = korean_font.get_string_size(value,HORIZONTAL_ALIGNMENT_LEFT,-1,pixel_font).x+14.0
+    var origin: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
+    map_layer.draw_set_transform(origin+p*camera_zoom,0.0,Vector2.ONE)
+    var rect := Rect2(Vector2(-w*0.5,-12),Vector2(w,21))
+    map_layer.draw_rect(rect,Color(0.07,0.10,0.09,0.86))
+    map_layer.draw_rect(Rect2(rect.position,Vector2(2,21)),accent)
+    _draw_string(value,Vector2(-w*0.5+7,3),pixel_font,COL_TEXT)
+    map_layer.draw_set_transform(origin,0.0,Vector2.ONE*camera_zoom)
 
 func _refresh_visibility() -> void:
     # Only an indication of the same actual player visibility used for unit disclosure.
