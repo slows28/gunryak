@@ -85,7 +85,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $url = 'https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_win64.exe.zip'
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\godot.zip"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\godot.zip" -MaximumRetryCount 4 -RetryIntervalSec 10
           Expand-Archive -Path "$env:RUNNER_TEMP\godot.zip" -DestinationPath "$env:RUNNER_TEMP\godot-bin" -Force
           & "$env:RUNNER_TEMP\godot-bin\Godot_v4.7.2-stable_win64_console.exe" --version
       - name: Run genuine Windows Godot tests
