@@ -147,6 +147,26 @@ func _capture() -> void:
         quit(1)
         return
     game.call("_toggle_feed")
+    var portraits: Texture2D=load("res://assets/art/general_portraits.svg")
+    if portraits==null or portraits.get_size()!=Vector2(1152,864):
+        push_error("VISUAL_CAPTURE_FAIL: general portrait atlas unavailable")
+        quit(1)
+        return
+    var regions: Array[Rect2]=[]
+    for side in range(2):
+        for id in game.sim.command_ids(side):
+            var u: Dictionary=game.sim.find_unit(id)
+            var icon: AtlasTexture=game.call("_commander_icon",str(u["name"]),side)
+            if icon.atlas!=portraits or regions.has(icon.region):
+                push_error("VISUAL_CAPTURE_FAIL: commander portrait reused or missing")
+                quit(1)
+                return
+            regions.append(icon.region)
+    print("GENERAL_PORTRAITS_PASS: "+str(regions.size())+" distinct live portrait regions")
+    if not game.mind_report.text.contains("건의:"):
+        push_error("VISUAL_CAPTURE_FAIL: general proposal not presented")
+        quit(1)
+        return
     print("GENERAL_REPORT_VISUAL_PASS")
 
     if not game.combat_brief.text.contains("아군 손실") or not game.live_order_label.text.contains("현재:"):
