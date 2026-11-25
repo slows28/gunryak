@@ -69,6 +69,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "morale": 100.0, "out_supply": 0.0, "supplied": true,
         "action": "대기", "reason": "초기 배치", "ai_cooldown": 0.0,
         "charge": 0.0, "last_raid": -999.0, "contact_troops": 0,
+        "front_pressure": 0.0, "pushed_distance": 0.0,
         "raid_active": false, "raid_target": Vector2.ZERO, "raid_until": 0.0
     }
     if unit_type == "기병":
@@ -161,6 +162,7 @@ func step(dt: float) -> void:
     for unit in units:
         if float(unit["troops"]) > 0.0:
             _move_unit(unit, dt)
+    _resolve_frontline(dt)
     _combat(dt)
     _check_victory()
 
@@ -468,6 +470,79 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         if front.length_squared() > 1.0:
             unit["facing"] = (unit["facing"] as Vector2).lerp(front.normalized(), minf(1.0, dt * 2.0)).normalized()
 
+
+# M2-1: Keep formation bodies separate. This applies to friends and enemies.
+# M2-2: A contact line shifts toward the weaker side, based on the soldiers
+# actually in each formation, morale and how well a unit resists front pressure.
+func _body_distance(a: Dictionary, b: Dictionary) -> float:
+    if str(a["type"]) == "궁병" or str(b["type"]) == "궁병":
+        return 25.0
+    return 34.0
+
+func _frontline_power(unit: Dictionary, enemy: Dictionary, direction: Vector2) -> float:
+    var factor: float = 1.0
+    match str(unit["formation"]):
+        "횡대": factor = 1.06
+        "종대": factor = 0.77
+        "방진": factor = 1.28
+    if str(unit["type"]) == "기병":
+        factor *= 1.16 if str(enemy["formation"]) != "방진" else 0.70
+        if _in_forest(unit["pos"]):
+            factor *= 0.70
+    if str(unit["action"]) == "돌파":
+        factor *= 1.12
+    var facing: Vector2 = unit["facing"]
+    if facing.length_squared() > 0.5 and facing.normalized().dot(direction) > 0.45:
+        factor *= 1.06
+    return maxf(1.0, float(unit["troops"]) * (0.25 + 0.75 * float(unit["morale"]) / 100.0) * factor)
+
+func _resolve_frontline(dt: float) -> void:
+    for unit in units:
+        unit["front_pressure"] = 0.0
+    for i in range(units.size()):
+        var a: Dictionary = units[i]
+        if float(a["troops"]) <= 0.0:
+            continue
+        for j in range(i + 1, units.size()):
+            var b: Dictionary = units[j]
+            if float(b["troops"]) <= 0.0:
+                continue
+            var ap: Vector2 = a["pos"]
+            var bp: Vector2 = b["pos"]
+            var delta: Vector2 = bp - ap
+            var distance: float = delta.length()
+            var threshold: float = _body_distance(a, b)
+            if distance >= threshold + 7.0:
+                continue
+            var direction: Vector2 = delta / distance if distance > 0.0001 else (Vector2.RIGHT if int(a["side"]) == 0 else Vector2.LEFT)
+            if distance < threshold:
+                # Geometric separation prevents passing through the other unit.
+                var overlap: float = threshold - distance
+                a["pos"] = _field_point(ap - direction * overlap * 0.5)
+                b["pos"] = _field_point(bp + direction * overlap * 0.5)
+            if int(a["side"]) == int(b["side"]):
+                continue
+            # Ranged detachments can be pursued but do not push a melee line.
+            if str(a["type"]) == "궁병" or str(b["type"]) == "궁병":
+                continue
+            var strength_a: float = _frontline_power(a, b, direction)
+            var strength_b: float = _frontline_power(b, a, -direction)
+            var advantage: float = (strength_a - strength_b) / maxf(1.0, strength_a + strength_b)
+            if absf(advantage) <= 0.035:
+                continue
+            var shift: float = clampf(advantage * 24.0 * dt, -1.6, 1.6)
+            a["pos"] = _field_point((a["pos"] as Vector2) + direction * shift)
+            b["pos"] = _field_point((b["pos"] as Vector2) + direction * shift)
+            var losing_unit: Dictionary = b if shift > 0.0 else a
+            losing_unit["front_pressure"] = maxf(float(losing_unit["front_pressure"]), absf(advantage))
+            losing_unit["pushed_distance"] = float(losing_unit["pushed_distance"]) + absf(shift)
+            # Gradual cohesion loss rather than an instant attrition dice roll.
+            losing_unit["morale"] = maxf(0.0, float(losing_unit["morale"]) - absf(shift) * 0.035)
+            if float(losing_unit["pushed_distance"]) > 18.0 and str(losing_unit["action"]) != "후퇴":
+                # Counter resets keep one event from spamming the battle log.
+                losing_unit["pushed_distance"] = 0.0
+                _log("%s 전선이 압박으로 밀립니다." % str(losing_unit["name"]))
+
 func _field_point(p: Vector2) -> Vector2:
     return Vector2(clampf(p.x, 18.0, FIELD_W - 18.0), clampf(p.y, 22.0, FIELD_H - 18.0))
 
@@ -647,6 +722,8 @@ func validate_state() -> Array[String]:
             problems.append("invalid morale: %s" % str(unit["name"]))
         if float(unit["form_remaining"]) < 0.0:
             problems.append("negative formation time: %s" % str(unit["name"]))
+        if is_nan(float(unit["front_pressure"])) or is_inf(float(unit["front_pressure"])):
+            problems.append("invalid frontline pressure: %s" % str(unit["name"]))
         if bool(unit["raid_active"]):
             var target: Vector2 = unit["raid_target"]
             if is_nan(target.x) or is_nan(target.y) or is_inf(target.x) or is_inf(target.y):
