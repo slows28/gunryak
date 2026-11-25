@@ -82,7 +82,7 @@ func _build_interface() -> void:
     _button("전선 접근", Vector2(956, 521), Vector2(142, 36), _commander_forward)
     _button("본진 복귀", Vector2(1107, 521), Vector2(144, 36), _commander_back)
     selected_label = _label("", Vector2(957, 577), Vector2(294, 27), 15, COL_GOLD)
-    details_label = _label("", Vector2(957, 606), Vector2(293, 74), 12, COL_TEXT)
+    details_label = _label("", Vector2(957, 605), Vector2(293, 78), 11, COL_TEXT)
     details_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     _label("최근 전황", Vector2(27, 693), Vector2(170, 27), 17, COL_TEXT)
     event_label = _label("", Vector2(152, 691), Vector2(735, 102), 12, COL_TEXT)
@@ -237,7 +237,8 @@ func _refresh_hud() -> void:
     var unit: Dictionary = sim.find_unit(selected_id)
     if not unit.is_empty():
         selected_label.text = "%s   %d명 / 사기 %d" % [str(unit["name"]), int(float(unit["troops"])), int(float(unit["morale"]))]
-        details_label.text = "%s · %s\n진형 %s · 지형 %s · 접촉 %d\n전선 압박 %d%% · 보급 %s\n%s" % [str(unit["action"]), str(unit["mission"]), str(unit["formation"]), sim.terrain_at(unit["pos"]), int(unit.get("contact_troops", 0)), int(round(float(unit.get("front_pressure", 0.0)) * 100.0)), "정상" if bool(unit["supplied"]) else "미보급", str(unit["reason"])]
+        var ammo_text: String = " · 화살 %d" % int(unit.get("ammo", 100.0)) if str(unit["type"]) == "궁병" else ""
+        details_label.text = "%s · %s\n%s / %s · 접촉 %d\n응집 %d · 피로 %d · 식량 %d%s\n%s" % [str(unit["action"]), str(unit["mission"]), str(unit["formation"]), sim.terrain_at(unit["pos"]), int(unit.get("contact_troops", 0)), int(unit.get("cohesion", 100.0)), int(unit.get("fatigue", 0.0)), int(unit.get("rations", 100.0)), ammo_text, str(unit["reason"])]
     var start_line: int = maxi(0, sim.events.size() - 4)
     var lines: String = ""
     for i in range(start_line, sim.events.size()):
@@ -324,7 +325,7 @@ func _draw() -> void:
             draw_circle(p, WarSim.SUPPLY_RADIUS, Color(accent.r, accent.g, accent.b, 0.045))
             draw_arc(p, WarSim.SUPPLY_RADIUS, 0.0, TAU, 56, Color(accent.r, accent.g, accent.b, 0.33), 1.5)
         draw_rect(Rect2(p - Vector2(7, 7), Vector2(14, 14)), accent)
-        _draw_string("보급 " + str(base["state"]), p + Vector2(-28, 24), 12, Color("#f6f4e8"))
+        _draw_string("보급 %s · %d" % [str(base["state"]), int(base.get("stock", 100.0))], p + Vector2(-40, 24), 12, Color("#f6f4e8"))
     for commander in sim.commanders:
         var p: Vector2 = _screen(commander["pos"])
         var accent: Color = COL_BLUE if int(commander["side"]) == 0 else COL_RED
@@ -338,7 +339,7 @@ func _draw() -> void:
         _draw_string("전령", p + Vector2(-14, -11), 12, COL_GOLD)
     # Draw real maneuver waypoints so an aggressive flanking decision is visible.
     for unit in sim.units:
-        if float(unit["troops"]) > 0.0 and str(unit["action"]) == "측면 우회":
+        if float(unit["troops"]) > 0.0 and str(unit["action"]) in ["측면 우회", "거점 점령", "거점 방어", "재집결", "전열 지원", "탄약 보충", "보급 복귀"]:
             var start_point: Vector2 = _screen(unit["pos"])
             var flank_waypoint: Vector2 = _screen(unit["goal"])
             draw_line(start_point, flank_waypoint, Color(COL_GOLD, 0.58), 1.4)
@@ -378,6 +379,11 @@ func _draw_unit(unit: Dictionary, label_areas: Array[Rect2]) -> void:
     var ratio: float = clampf(float(unit["troops"]) / float(unit["initial_troops"]), 0.0, 1.0)
     draw_rect(Rect2(p + Vector2(-24, 25), Vector2(48, 4)), Color("#142630"))
     draw_rect(Rect2(p + Vector2(-24, 25), Vector2(48.0 * ratio, 4)), accent)
+    var cohesion: float = clampf(float(unit.get("cohesion", 100.0)) / 100.0, 0.0, 1.0)
+    draw_rect(Rect2(p + Vector2(-24, 31), Vector2(48, 3)), Color("#142630"))
+    draw_rect(Rect2(p + Vector2(-24, 31), Vector2(48.0 * cohesion, 3)), Color("#e3c37b"))
+    if bool(unit.get("rallying", false)):
+        _draw_string("재집결", p + Vector2(-15, 47), 10, COL_GOLD)
 
     # Collision-aware name chips; overlapping armies do not stack unreadable labels.
     var label: String = "%s  %d" % [str(unit["name"]), int(float(unit["troops"]))]
