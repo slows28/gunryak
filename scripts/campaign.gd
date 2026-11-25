@@ -15,18 +15,36 @@ const OFFICERS = [
     {"name":"위연","personality":"공격","stats":[84,93,69,81,46],"specialty":"돌격"},
     {"name":"강유","personality":"균형","stats":[83,79,88,85,80],"specialty":"정찰"},
     {"name":"관흥","personality":"공격","stats":[74,87,61,72,85],"specialty":"돌격"},
-    {"name":"장익","personality":"신중","stats":[82,72,73,78,90],"specialty":"방진"}
+    {"name":"장익","personality":"신중","stats":[82,72,73,78,90],"specialty":"방진"},
+    {"name":"요화","personality":"신중","stats":[76,75,69,78,90],"specialty":"방진"},
+    {"name":"마대","personality":"공격","stats":[77,83,65,77,85],"specialty":"돌격"},
+    {"name":"오의","personality":"균형","stats":[79,73,74,80,87],"specialty":"정찰"}
 ]
 var state: Dictionary = {}
+var six_armies: bool = false
 var save_path: String = SAVE_PATH
 func _init() -> void:
     reset()
 
 func reset() -> void:
     var people: Array = []
-    for i in range(OFFICERS.size()):
-        people.append({"recruited":i<3,"hp":100,"dead":false,"xp":0})
+    for i in range(OFFICERS.size() if six_armies else 6):
+        people.append({"recruited":i<(6 if six_armies else 3),"hp":100,"dead":false,"xp":0})
     state = {"version":1,"turn":1,"gold":220,"food":260,"pool":180,"position":0,"owned":[0],"garrison":[0,100,108,115,102,125],"roster":people,"active":[0,1,2],"troops":[145,108,95],"types":["보병","궁병","기병"],"history":[],"victories":0,"defeats":0,"complete":false,"failed":false,"pending":-1,"difficulty":1}
+    if six_armies:
+        state["version"] = 3
+        state["active"] = [0,1,2,3,4,5]
+        state["troops"] = [4500,3500,3200,4000,3800,4500]
+        state["formations"] = ["방진","안행진","봉시진","학익진","봉시진","방진"]
+        state["types"] = ["보병","궁병","기병","궁병","기병","보병"]
+        state["gold"] = 340
+        state["food"] = 340
+        state["pool"] = 10000
+
+func set_six_armies(enabled: bool) -> void:
+    six_armies = enabled
+    save_path = "user://gunryak_demo_v3.json" if enabled else SAVE_PATH
+    reset()
 
 func available(index: int) -> bool:
     if index < 0 or index >= NODES.size() or state["complete"] or state["failed"]:
@@ -37,7 +55,7 @@ func available(index: int) -> bool:
     return false
 
 func recruit(index: int) -> bool:
-    if index < 0 or index >= OFFICERS.size() or state["pending"] >= 0:
+    if index < 0 or index >= state["roster"].size() or state["pending"] >= 0:
         return false
     var person: Dictionary = state["roster"][index]
     if person["recruited"] or int(state["gold"]) < 55:
@@ -47,7 +65,7 @@ func recruit(index: int) -> bool:
     return true
 
 func assign(slot: int, index: int) -> bool:
-    if slot < 0 or slot >= 3 or index < 0 or index >= OFFICERS.size() or state["pending"] >= 0:
+    if slot < 0 or slot >= state["active"].size() or index < 0 or index >= state["roster"].size() or state["pending"] >= 0:
         return false
     var person: Dictionary = state["roster"][index]
     if not person["recruited"] or person["dead"]:
@@ -59,15 +77,16 @@ func assign(slot: int, index: int) -> bool:
     return true
 
 func replenish(slot: int) -> bool:
-    if slot < 0 or slot >= 3 or int(state["pool"]) < 20 or int(state["gold"]) < 15 or int(state["troops"][slot]) > 200 or state["pending"] >= 0:
-        return false
-    state["pool"] -= 20
+    if slot < 0 or slot >= state["active"].size() or int(state["gold"]) < 15 or state["pending"] >= 0: return false
+    var amount: int = mini(500 if six_armies else 20,(5000 if six_armies else 220)-int(state["troops"][slot]))
+    if amount <= 0 or int(state["pool"]) < amount: return false
+    state["pool"] -= amount
     state["gold"] -= 15
-    state["troops"][slot] += 20
+    state["troops"][slot] += amount
     return true
 
 func set_type(slot: int, kind: String) -> bool:
-    if slot < 0 or slot >= 3 or kind not in ["보병","궁병","기병"] or state["pending"] >= 0:
+    if slot < 0 or slot >= state["active"].size() or kind not in ["보병","궁병","기병"] or state["pending"] >= 0:
         return false
     if state["types"][slot] == kind:
         return true
@@ -98,7 +117,7 @@ func strategic_tick(target: int) -> void:
     state["turn"] += 1
     state["gold"] += 12 + state["owned"].size()*5
     state["food"] += state["owned"].size()*8
-    state["pool"] += 15
+    state["pool"] += 600 if six_armies else 15
     for i in range(1,NODES.size()):
         if i not in state["owned"]:
             state["garrison"][i] = mini(155,int(state["garrison"][i])+(3 if i == target else 6))
@@ -119,25 +138,28 @@ func strategic_tick(target: int) -> void:
             state["history"].append(NODES[exposed]["name"]+" — 위군 반격으로 상실")
 
 func prepare(target: int, sim) -> bool:
-    if not available(target) or state["pending"] >= 0 or int(state["food"]) < 35:
+    var cost: int = 55 if six_armies else 35
+    if not available(target) or state["pending"] >= 0 or int(state["food"]) < cost:
         return false
-    for i in range(3):
+    for i in range(state["active"].size()):
         if int(state["troops"][i]) < 1 or state["roster"][int(state["active"][i])]["dead"]:
             return false
     sim.reset()
     if not sim.set_scenario(int(NODES[target]["scenario"])):
         return false
-    state["food"] -= 35
+    state["food"] -= cost
     state["pending"] = target
-    for i in range(3):
-        var u: Dictionary = sim.find_unit(i)
+    var ids: Array[int] = sim.command_ids(0)
+    for i in range(state["active"].size()):
+        var u: Dictionary = sim.find_unit(ids[i])
         var idx: int = int(state["active"][i])
         var officer: Dictionary = OFFICERS[idx]
         var person: Dictionary = state["roster"][idx]
         u["name"] = officer["name"]
         u["personality"] = officer["personality"]
         u["type"] = state["types"][i]
-        u["formation"] = "종대" if u["type"] == "기병" else "횡대"
+        u["formation"] = str(state["formations"][i]) if six_armies else ("종대" if u["type"] == "기병" else "횡대")
+        if six_armies: u["policy"] = "현장 판단"
         u["troops"] = float(state["troops"][i])
         u["initial_troops"] = u["troops"]
         u["general_hp"] = float(person["hp"])
@@ -152,9 +174,9 @@ func prepare(target: int, sim) -> bool:
     var scale: float = float(state["garrison"][target])/100.0 * [0.82,1.0,1.18][int(state["difficulty"])]
     for unit in sim.units:
         if int(unit["side"]) == 1:
-            unit["troops"] = roundf(float(unit["troops"])*scale)
+            unit["troops"] = clampf(roundf(float(unit["troops"])*scale),3000.0,5000.0) if six_armies else roundf(float(unit["troops"])*scale)
             unit["initial_troops"] = unit["troops"]
-    sim.reserve_limit[0] = mini(2,floori(float(state["pool"])/72.0))
+    sim.reserve_limit[0] = mini(1 if six_armies else 2,floori(float(state["pool"])/(3000.0 if six_armies else 72.0)))
     sim.bases[0]["stock"] = minf(100.0,float(state["food"]))
     return true
 
@@ -163,15 +185,20 @@ func conclude(sim) -> bool:
     if target < 0 or not sim.finished:
         return false
     var won: bool = sim.winning_side == 0
-    for i in range(3):
-        var unit: Dictionary = sim.find_unit(i)
+    var ids: Array[int] = sim.command_ids(0)
+    for i in range(state["active"].size()):
+        var unit: Dictionary = sim.find_unit(ids[i])
         var idx: int = int(state["active"][i])
         var person: Dictionary = state["roster"][idx]
         person["hp"] = int(unit["general_hp"])
         person["dead"] = str(unit["general_state"]) == "전사"
-        person["xp"] += sim.merit(unit)
-        state["troops"][i] = maxi(0,int(unit["troops"]))
-    state["pool"] = maxi(0,int(state["pool"])-sim.reinforcements_used[0]*72)
+        var corps: Dictionary = sim.corps_report(ids[i])
+        person["xp"] += int(corps["merit"])
+        state["troops"][i] = maxi(0,floori(float(corps["troops"])))
+        if six_armies and str(unit["policy"]).ends_with(" 유지"):
+            var shape: String = str(unit["policy"]).replace(" 유지","")
+            if shape in ["횡대","종대","방진","어린진","학익진","봉시진","안행진"]: state["formations"][i] = shape
+    state["pool"] = maxi(0,int(state["pool"])-sim.reinforcements_used[0]*(3000 if six_armies else 72))
     if won:
         if target not in state["owned"]:
             state["owned"].append(target)
@@ -214,7 +241,8 @@ func load_save() -> bool:
     for key in state:
         if not data.has(key):
             return false
-    if int(data["version"]) != 1 or data["roster"].size() != 6 or data["active"].size() != 3 or data["troops"].size() != 3 or data["types"].size() != 3 or data["garrison"].size() != 6 or int(data["pending"]) != -1:
+    var slots: int = 6 if six_armies else 3
+    if int(data["version"]) != (3 if six_armies else 1) or data["roster"].size() != (9 if six_armies else 6) or data["active"].size() != slots or data["troops"].size() != slots or data["types"].size() != slots or data["garrison"].size() != 6 or int(data["pending"]) != -1:
         return false
     for key in ["gold","food","pool","turn","victories","defeats","position","difficulty"]:
         if not (data[key] is int or data[key] is float):
@@ -231,14 +259,23 @@ func load_save() -> bool:
         person["hp"] = int(person["hp"])
         person["xp"] = int(person["xp"])
     for idx in data["active"]:
-        if int(idx) < 0 or int(idx) >= OFFICERS.size():
+        if int(idx) < 0 or int(idx) >= data["roster"].size():
             return false
     for idx in data["owned"]:
         if int(idx) < 0 or int(idx) >= NODES.size():
             return false
     for value in data["troops"]:
-        if int(value) < 0 or int(value) > 220:
+        if int(value) < 0 or int(value) > (5000 if six_armies else 220):
             return false
+    if six_armies:
+        if not data["formations"] is Array or data["formations"].size()!=6: return false
+        for shape in data["formations"]:
+            if not shape in ["횡대","종대","방진","어린진","학익진","봉시진","안행진"]: return false
     data["pending"] = -1
     state = data
+    return true
+
+func set_formation(slot: int,shape: String) -> bool:
+    if not six_armies or slot<0 or slot>=state["active"].size() or state["pending"]>=0 or not shape in ["횡대","종대","방진","어린진","학익진","봉시진","안행진"]: return false
+    state["formations"][slot]=shape
     return true
