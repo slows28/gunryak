@@ -209,7 +209,7 @@ func _refresh_unit_list() -> void:
         var unit: Dictionary = sim.units[i]
         var icon := AtlasTexture.new()
         icon.atlas = PAINTED_ART
-        icon.region = _art_region(8+_portrait_index(str(unit["name"])))
+        icon.region = _art_region(_portrait_tile(str(unit["name"])))
         unit_list.add_item("%s  ·  %s / %s" % [str(unit["name"]), str(unit["type"]), str(unit["personality"])],icon)
     unit_list.fixed_icon_size = Vector2i(30,30)
     unit_list.select(clampi(selected_id, 0, 2))
@@ -970,6 +970,10 @@ func _open_briefing() -> void:
         tactic = "고지에 화력을 집중하고 측면 지원군으로 접근로를 통제하십시오."
     elif sim.scenario_id == 2:
         tactic = "보급기지 주변에 방어선을 정하고 기병을 기동 예비대로 운용하십시오."
+    elif sim.scenario_id == 3:
+        tactic = "수레 125 거리 내에 호위군을 유지하고 접근하는 적을 차단하십시오."
+    elif sim.scenario_id == 4:
+        tactic = "보병으로 성문을 파괴하고 중앙 거점을 확보하십시오."
     var story: String = ""
     if campaign_active and int(campaign.state["pending"]) >= 0:
         story = str(Campaign.NODES[int(campaign.state["pending"])]["story"])+"\n"
@@ -1036,7 +1040,7 @@ func _draw_portrait(canvas: Control) -> void:
         "장합": portrait_index = 3
     var accent: Color = COL_BLUE if str(unit["personality"]) == "신중" else (COL_RED if str(unit["personality"]) == "공격" else COL_GOLD)
     canvas.draw_rect(Rect2(0,0,49,78),Color("#26383b"))
-    canvas.draw_texture_rect_region(PAINTED_ART,Rect2(1,7,47,47),_art_region(8+portrait_index))
+    canvas.draw_texture_rect_region(PAINTED_ART,Rect2(1,7,47,47),_art_region(_portrait_tile(str(unit["name"]))))
     canvas.draw_rect(Rect2(1,1,47,76),accent,false,1.2)
     canvas.draw_string(korean_font,Vector2(4,65),str(unit["name"]),HORIZONTAL_ALIGNMENT_LEFT,-1,10,COL_TEXT)
     canvas.draw_rect(Rect2(6,69,37,5),Color("#0f1c23"))
@@ -1290,7 +1294,7 @@ func _leave_title() -> void:
     title_screen.hide()
 
 func _title_brief() -> void:
-    title_screen.hide()
+    _leave_title()
     _open_briefing()
 
 func _quit_game() -> void:
@@ -1381,7 +1385,7 @@ func _show_outcome() -> void:
         var portrait_image := TextureRect.new()
         var icon := AtlasTexture.new()
         icon.atlas = PAINTED_ART
-        icon.region = _art_region(8+_portrait_index(str(unit["name"])))
+        icon.region = _art_region(_portrait_tile(str(unit["name"])))
         portrait_image.texture = icon
         portrait_image.custom_minimum_size = Vector2(61,61)
         portrait_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -1556,3 +1560,8 @@ func _continue_campaign() -> void:
         add_child(dialog)
         dialog.confirmed.connect(dialog.queue_free)
         dialog.popup_centered()
+
+func _portrait_tile(name: String) -> int:
+    if name in ["왕평","마속","위연","장합"]:
+        return 8+_portrait_index(name)
+    return 0
