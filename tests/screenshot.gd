@@ -58,6 +58,23 @@ func _capture() -> void:
     if not _save_frame("battle_60s.png"):
         quit(1)
         return
+    # Record the real post-battle audit screen as visual evidence.
+    var simulator = game.get("sim")
+    var additional_steps: int = 0
+    while not bool(simulator.get("finished")) and additional_steps < 1500:
+        game.call("_process", 0.1)
+        additional_steps += 1
+    if not bool(simulator.get("finished")):
+        push_error("VISUAL_CAPTURE_FAIL: unable to reach post-battle report")
+        quit(1)
+        return
+    game.call("_refresh_hud")
+    game.queue_redraw()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("battle_result.png"):
+        quit(1)
+        return
     print("GUNRYAK_VISUAL_CAPTURE_PASSED")
     quit(0)
 
