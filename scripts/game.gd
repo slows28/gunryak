@@ -117,7 +117,7 @@ class RenderLayer extends Control:
 
 func _ready() -> void:
     sim.tactical_enabled = true
-    sim.set_six_armies(true)
+    sim.set_long_operation(true)
     campaign.set_six_armies(true)
     _install_korean_font()
     _build_map_layer()
@@ -392,7 +392,7 @@ func _process(delta: float) -> void:
                 map_layer.queue_redraw()
                 queue_redraw()
     if sim.started and not sim.finished and not sim.paused:
-        step_buffer += minf(delta, 0.15) * game_speed
+        step_buffer += minf(delta, 0.15) * game_speed / sim.operation_scale()
         var ticks: int = 0
         while step_buffer >= 0.1 and ticks < 10:
             sim.step(0.1)
@@ -434,10 +434,11 @@ func _refresh_hud() -> void:
         phase = "종료  " + sim.result
         phase_label.text = "03 전투 결산  |  전투 분석 및 타임라인"
     elif sim.paused:
-        phase = "일시정지"
+        phase = "일시정지  /  "+_operation_clock(sim.operation_elapsed())
+        phase_label.text=sim.operation_phase()+"  |  제한 "+_operation_clock(sim.operation_limit())
     elif sim.started:
-        phase = "작전 %d턴  /  %.0f초" % [sim.turn, sim.battle_time]
-        phase_label.text = "02 자율 교전  |  " + ("긴급 지휘력 %d / 4" % sim.command_points if sim.turn >= 6 else "초기 작전 수행 · 보고 수신")
+        phase = "작전 %d턴  /  %s" % [sim.turn, _operation_clock(sim.operation_elapsed())]
+        phase_label.text = sim.operation_phase() + "  |  " + ("긴급 지휘력 %d / 4" % sim.command_points if sim.turn >= 6 else "초기 작전 수행 · 보고 수신")
     for index in range(unit_list.item_count):
         var uid: int = int(unit_list.get_item_metadata(index))
         var leader: Dictionary = sim.find_unit(uid)
@@ -486,7 +487,7 @@ func _refresh_hud() -> void:
     elif sim.finished:
         notice_label.text = "작전실 → 전투 타임라인\n장수별 결산은 아래 전황 창\n[초기화]로 재실행"
     elif sim.turn < 6:
-        notice_label.text = "최초 5턴은 사전 명령 수행.\n이후부터 전령 전달이 가능합니다."
+        notice_label.text = "최초 5분은 사전 명령 수행.\n이후부터 전령 전달이 가능합니다."
     else:
         notice_label.text = "장수 선택 후 전령 파견\n실제 전장 이동 중 차단될 수 있습니다."
     if runtime_notice != "":
@@ -622,7 +623,7 @@ func _draw_map(_canvas: Control) -> void:
         var state: String = ("중립" if owner < 0 else ("아군" if owner == 0 else "적군")) if known else "미확인"
         _map_plate(str(site["name"])+" · "+state,site_pos+Vector2(0,-45)*marker_scale,color,maxi(11,roundi(11.0/camera_zoom)))
         if known and int(site["challenger"]) >= 0:
-            var progress: float = clampf(float(site["progress"]) / WarSim.OUTPOST_CAPTURE_SECONDS, 0.0, 1.0)
+            var progress: float = clampf(float(site["progress"]) / sim.capture_duration(), 0.0, 1.0)
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60, 4)), Color("#243138"))
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60.0 * progress, 4)), COL_BLUE if int(site["challenger"]) == 0 else COL_RED)
     for base in sim.bases:
@@ -666,7 +667,7 @@ func _draw_map(_canvas: Control) -> void:
         var age: float = maxf(0.0, sim.battle_time - float(report["time"]))
         if sim.player_can_see(report_p): continue
         map_layer.draw_arc(report_p, 12.0, 0.0, TAU, 24, Color(COL_GOLD, maxf(0.15, 0.65 - age * 0.025)), 1.5)
-        _draw_string("정찰 %.0f초 전 · %d%%" % [age,int(float(report.get("confidence",0.0))*100.0)], report_p + Vector2(-30, 19), 10, COL_GOLD)
+        _draw_string("정찰 %.0f초 전 · %d%%" % [age*sim.operation_scale(),int(float(report.get("confidence",0.0))*100.0)], report_p + Vector2(-30, 19), 10, COL_GOLD)
     for letter in sim.couriers:
         if fog_enabled and not sim.finished and int(letter["side"]) != 0 and not sim.player_can_see(letter["pos"]):
             continue
@@ -1159,7 +1160,7 @@ func _open_briefing() -> void:
     var story: String = ""
     if campaign_active and int(campaign.state["pending"]) >= 0:
         story = str(Campaign.NODES[int(campaign.state["pending"])]["story"])+"\n"
-    brief_text.text = story + "%s\n\n승리 목표: %s\n제한 시간: %.0f초\n\n권장 전략: %s\n\n1~5턴: 사전 작전 수행 / 6턴 이후: 전령 파견\n장수별 능력과 성향, 정찰 정보, 보급을 고려하십시오." % [sim.scenario_title,sim.scenario_goal,sim.scenario_limit,tactic]
+    brief_text.text = story + "%s\n\n승리 목표: %s\n제한 시간: %s (기본 배속)\n\n권장 전략: %s\n\n첫 5분: 사전 작전 수행 / 이후: 전령 파견\n장수별 능력과 성향, 정찰 정보, 보급을 고려하십시오." % [sim.scenario_title,sim.scenario_goal,_operation_clock(sim.operation_limit()),tactic]
     brief_dialog.popup_centered()
 
 func _open_analysis() -> void:
@@ -1574,7 +1575,7 @@ func _show_outcome() -> void:
     outcome_heading.text = ("승전  /  " if sim.winning_side == 0 else "패전  /  ") + sim.result
     outcome_heading.add_theme_font_size_override("font_size",25)
     outcome_heading.add_theme_color_override("font_color",COL_GOLD if sim.winning_side == 0 else COL_RED)
-    outcome_text.text = "%s  /  %.1f초  /  전령 도착 %d · 차단 %d\n긴급 지시 수락 %d · 거부 %d" % [sim.scenario_title,sim.battle_time,sim.delivered_orders,sim.intercepted_orders,sim.tactical_delivered,sim.tactical_refused]
+    outcome_text.text = "%s  /  %s  /  전령 도착 %d · 차단 %d\n긴급 지시 수락 %d · 거부 %d" % [sim.scenario_title,_operation_clock(sim.operation_elapsed()),sim.delivered_orders,sim.intercepted_orders,sim.tactical_delivered,sim.tactical_refused]
     if campaign_active:
         if not battle_recorded:
             battle_recorded = campaign.conclude(sim)
@@ -1766,7 +1767,7 @@ func _build_demo_help() -> void:
     tutorial_dialog = AcceptDialog.new()
     tutorial_dialog.title = "군략 · 첫 출전 안내"
     tutorial_dialog.ok_button_text = "확인"
-    tutorial_dialog.dialog_text = "1. 전략 지도에서 인접 지역을 선택합니다. 군량 55가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 작전실에서 부대 배치·경유점·방어선을 설정합니다.\n4. 전투 개시 후 장수는 자율적으로 판단합니다. 6턴 이후 전령 파견 가능. 긴급 보고를 열어 지원·사수·재집결·철수 지시를 내릴 수 있습니다.\n5. 숫자 1~6 장수 선택, Space 일시정지, 휠 확대, 방향키/가운데 마우스 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
+    tutorial_dialog.dialog_text = "1. 전략 지도에서 인접 지역을 선택합니다. 군량 55가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 종이 작전 지도에서 부대 말·목적지·행동·연계 대상을 지정합니다.\n4. 기본 배속 전투는 약 25분. 장수는 자율적으로 판단하며 5분 경과 후 전령 파견 가능. 긴급 보고를 열어 지원·사수·재집결·철수 지시를 내릴 수 있습니다.\n5. 숫자 1~6 장수 선택, Space 일시정지, 휠 확대, 방향키/가운데 마우스 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
     add_child(tutorial_dialog)
     retreat_dialog = ConfirmationDialog.new()
     retreat_dialog.title = "전투 철수"
@@ -1873,7 +1874,7 @@ func _refresh_situations() -> void:
     situation_ids.clear()
     for report in sim.open_situations():
         situation_ids.append(int(report["id"]))
-        situation_list.add_item("%s  |  %.0f초 남음" % [report["title"],maxf(0.0,float(report["expires"])-sim.battle_time)])
+        situation_list.add_item("%s  |  %.0f초 남음" % [report["title"],maxf(0.0,float(report["expires"])-sim.battle_time)*sim.operation_scale()])
     if situation_ids.is_empty():
         situation_selected = -1
         situation_detail.text = "현재 대응할 긴급 보고가 없습니다.\n보고는 장수의 실제 상태를 기반으로 지연 수신됩니다.\n"+situation_notice
@@ -2052,3 +2053,7 @@ func _return_to_battle() -> void:
     _refresh_hud()
     map_layer.queue_redraw()
     queue_redraw()
+
+func _operation_clock(seconds: float) -> String:
+    var whole: int = maxi(0,floori(seconds+0.0001))
+    return "%02d:%02d" % [floori(float(whole)/60.0),whole%60]
