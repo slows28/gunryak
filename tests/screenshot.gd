@@ -16,7 +16,7 @@ func _capture() -> void:
     game = MAIN_SCENE.instantiate()
     root.add_child(game)
     await process_frame
-    if game.unit_list.item_count != 6:
+    if game.general_cards.size() != 6:
         push_error("VISUAL_CAPTURE_FAIL: six independent commanders not present")
         quit(1)
         return
@@ -96,7 +96,7 @@ func _capture() -> void:
         return
     game.call("_show_enemy_roster")
     game.call("_inspect_enemy_row",0)
-    if game.observed_enemy_id<0 or game.selected_id!=own_id or game.unit_list.visible:
+    if game.observed_enemy_id<0 or game.selected_id!=own_id or game.commander_scroll.visible or not game.enemy_list.visible:
         push_error("VISUAL_CAPTURE_FAIL: enemy inspection changed friendly command authority")
         quit(1)
         return
@@ -193,8 +193,13 @@ func _capture() -> void:
         return
     game.mind_dialog.hide()
     game.call("_toggle_feed")
-    if not game.event_label.visible or game.thought_feed.visible:
-        push_error("VISUAL_CAPTURE_FAIL: traditional battle log inaccessible")
+    if not game.battle_feed.visible or not game.event_label.visible or not game.general_cards[5].visible:
+        push_error("VISUAL_CAPTURE_FAIL: battle log must keep the commander cards available")
+        quit(1)
+        return
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("commander_battle_log.png"):
         quit(1)
         return
     game.call("_toggle_feed")
@@ -249,7 +254,36 @@ func _capture() -> void:
         push_error("VISUAL_CAPTURE_FAIL: commander card did not select real leader")
         quit(1)
         return
+    var selected: Dictionary=game.sim.find_unit(game.selected_id)
+    var original_reason: String=selected["reason"]
+    var mind: Dictionary=selected["mind"]
+    var original_proposal: String=mind["proposal"]
+    var long_reason: String=("측면에서 접근하는 군단을 막고 아군 기병이 합류할 때까지 도하로를 지킨다. ").repeat(6)
+    selected["reason"]=long_reason
+    mind["proposal"]="재집결"
+    game.call("_refresh_hud")
+    await process_frame
+    await process_frame
+    var scrollbar: VScrollBar=game.commander_scroll.get_v_scroll_bar()
+    if game.decision_label.text!=long_reason or game.decision_label.get_line_count()<3 or game.decision_label.max_lines_visible!=-1 or not scrollbar.visible or not game.commander_request.text.contains("재집결"):
+        push_error("VISUAL_CAPTURE_FAIL: long judgment must wrap and leave the proposal reachable")
+        quit(1)
+        return
+    scrollbar.value=scrollbar.max_value
+    var scroll_position: int=game.commander_scroll.scroll_vertical
+    game.call("_refresh_hud")
+    if scroll_position<=0 or game.commander_scroll.scroll_vertical!=scroll_position:
+        push_error("VISUAL_CAPTURE_FAIL: periodic refresh moved the reader away from scrolled text")
+        quit(1)
+        return
+    selected["reason"]=original_reason
+    mind["proposal"]=original_proposal
     game.call("_select_general_card",0)
+    if game.commander_scroll.scroll_vertical!=0 or not game.general_cards[0].button_pressed:
+        push_error("VISUAL_CAPTURE_FAIL: switching commanders did not return the inspector to the top")
+        quit(1)
+        return
+    print("COMMANDER_DESK_SCROLL_PASS")
     var sites: Texture2D=load("res://assets/art/field_sites.svg")
     if sites==null or sites.get_size()!=Vector2(1536,384):
         push_error("VISUAL_CAPTURE_FAIL: site art unavailable")
@@ -295,10 +329,12 @@ func _capture() -> void:
     print("COMMANDER_BOARD_AND_SITES_PASS")
     print("GENERAL_REPORT_VISUAL_PASS")
 
+    game.call("_toggle_feed")
     if not game.combat_brief.text.contains("아군 손실") or not game.live_order_label.text.contains("현재:"):
         push_error("VISUAL_CAPTURE_FAIL: real battle feedback missing")
         quit(1)
         return
+    game.call("_toggle_feed")
     game.call("_focus_selected")
     await process_frame
     await RenderingServer.frame_post_draw
@@ -439,8 +475,8 @@ func _capture() -> void:
         push_error("VISUAL_CAPTURE_FAIL: high detail bridge unavailable")
         quit(1)
         return
-    if game.roster_overlay==null or game.roster_overlay.mouse_filter!=Control.MOUSE_FILTER_IGNORE:
-        push_error("VISUAL_CAPTURE_FAIL: live roster overlay must not intercept selection")
+    if not game.commander_scroll.visible or game.enemy_list.visible or game.commander_scroll.get_global_rect().intersects(game.live_order_button.get_global_rect()):
+        push_error("VISUAL_CAPTURE_FAIL: commander inspector must leave command controls accessible")
         quit(1)
         return
     game.call("_refresh_visibility")

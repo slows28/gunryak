@@ -52,8 +52,12 @@ var readiness_label: Label
 var decision_label: Label
 var event_label: Label
 var notice_label: Label
-var unit_list: ItemList
-var roster_overlay: Control
+var commander_scroll: ScrollContainer
+var inspected_commander_id: int=-1
+var commander_request: Label
+var command_outcome: Label
+var commander_observation: Label
+var enemy_intel: Label
 var mission_choice: OptionButton
 var policy_choice: OptionButton
 var start_btn: Button
@@ -83,7 +87,7 @@ var combat_brief: Label
 var mind_dialog: AcceptDialog
 var mind_report: RichTextLabel
 var mind_button: Button
-var thought_feed: Label
+var battle_feed: PanelContainer
 var general_cards: Array[Button]=[]
 var map_label_areas: Array[Rect2]=[]
 var fallen_marks: Array[Dictionary]=[]
@@ -107,8 +111,6 @@ var highlight_start: float=0.0
 var highlight_deadline: float=0.0
 var highlight_prior_speed: float=1.0
 var feed_toggle: Button
-var feed_heading: Label
-var show_general_feed: bool=true
 var battle_samples: Dictionary = {}
 var recent_losses: Dictionary = {}
 var sample_time: float = -100.0
@@ -205,7 +207,7 @@ func _ready() -> void:
     order_view=OrderMap.new()
     order_view.configure(self,korean_font)
     add_child(order_view)
-    _refresh_unit_list()
+    _ensure_friendly_selection()
     _select_unit()
     _refresh_hud()
     queue_redraw()
@@ -231,6 +233,10 @@ func _install_korean_font() -> void:
         ui_theme.set_stylebox("hover_pressed",type,_ui_box(Color("#415968"),COL_BLUE))
         ui_theme.set_stylebox("disabled",type,_ui_box(Color("#202a34")))
         ui_theme.set_stylebox("focus",type,_ui_box(Color.TRANSPARENT,COL_GOLD))
+    ui_theme.set_type_variation(&"UrgentReport",&"Button")
+    ui_theme.set_stylebox("normal","UrgentReport",_ui_box(COL_ACTIVE))
+    ui_theme.set_stylebox("hover","UrgentReport",_ui_box(Color("#be503c")))
+    ui_theme.set_stylebox("pressed","UrgentReport",_ui_box(Color("#853022")))
     ui_theme.set_stylebox("panel","ItemList",_ui_box(Color("#16212b")))
     var selected := _ui_box(Color("#304b59"))
     selected.border_color=COL_BLUE
@@ -286,38 +292,18 @@ func _build_interface() -> void:
     enemy_tab.toggle_mode=true
     fog_button.toggle_mode=true
     fog_button.tooltip_text="전체 관전과 정찰 제한 전환 · V"
-    unit_list = ItemList.new()
-    unit_list.position = Vector2(970,143)
-    unit_list.size = Vector2(286,181)
-    unit_list.add_theme_font_size_override("font_size",14)
-    unit_list.add_theme_constant_override("v_separation",3)
-    add_child(unit_list)
-    unit_list.item_selected.connect(_on_unit_selected)
-    roster_overlay=RenderLayer.new()
-    roster_overlay.position=unit_list.position
-    roster_overlay.size=unit_list.size
-    roster_overlay.mouse_filter=Control.MOUSE_FILTER_IGNORE
-    roster_overlay.painter=_draw_roster_status
-    add_child(roster_overlay)
     enemy_list=ItemList.new()
-    enemy_list.position=unit_list.position
-    enemy_list.size=unit_list.size
+    enemy_list.position=Vector2(970,143)
+    enemy_list.size=Vector2(286,181)
     enemy_list.add_theme_font_size_override("font_size",13)
     enemy_list.fixed_icon_size=Vector2i(23,23)
     enemy_list.add_theme_constant_override("v_separation",5)
     add_child(enemy_list)
     enemy_list.item_selected.connect(_inspect_enemy_row)
     enemy_list.hide()
-    _label("작전 명령",Vector2(973,467),Vector2(280,21),15,COL_MUTED)
     mission_choice = _options(Vector2(970,482),["중앙 진격","북측 확보","남측 우회","본진 방어","전열 엄호","측후방 기동","구원 지원"])
     mission_choice.item_selected.connect(_on_choices_changed)
     mission_choice.hide()
-    live_order_label = _label("",Vector2(973,487),Vector2(280,43),13,COL_TEXT)
-    live_order_label.clip_text=true
-    live_order_label.add_theme_constant_override("line_spacing",0)
-    live_order_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
-    order_status_label = _label("",Vector2(973,530),Vector2(280,20),13,COL_GOLD)
-    order_status_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
     policy_choice = _options(Vector2(970,520),["현장 판단","명령 엄수","재량 위임","횡대 유지","종대 유지","방진 유지","어린진 유지","학익진 유지","봉시진 유지","안행진 유지"])
     policy_choice.item_selected.connect(_on_choices_changed)
     policy_choice.hide()
@@ -328,19 +314,17 @@ func _build_interface() -> void:
     live_order_button.add_theme_font_size_override("font_size",16)
     mind_button=_button("장수 보고",Vector2(1144,70),Vector2(112,28),_open_mind_report)
     mind_button.tooltip_text="전체 장수의 심리와 최근 명령 · G"
-    selected_label = _label("",Vector2(1048,340),Vector2(198,26),19,COL_TEXT)
-    selected_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
-    details_label = _label("",Vector2(1048,370),Vector2(198,19),13,COL_TEXT)
-    readiness_label = _label("",Vector2(1048,391),Vector2(198,19),13,COL_TEXT)
-    readiness_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
-    decision_label=_label("",Vector2(974,416),Vector2(272,43),13,COL_TEXT)
-    decision_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    decision_label.clip_text=true
-    decision_label.max_lines_visible=2
+    selected_label = _label("",Vector2(1057,151),Vector2(190,25),20,COL_TEXT)
+    details_label = _label("",Vector2(1057,177),Vector2(190,18),13,COL_TEXT)
+    readiness_label = _label("",Vector2(1057,198),Vector2(190,18),13,COL_MUTED)
+    for label in [selected_label,details_label,readiness_label]:
+        label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    _build_commander_desk()
+    enemy_intel=_label("",Vector2(978,431),Vector2(268,104),15,COL_TEXT)
+    enemy_intel.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    enemy_intel.hide()
     feed_toggle=_button("전황 기록 보기",Vector2(1128,697),Vector2(136,24),_toggle_feed)
     feed_toggle.add_theme_font_size_override("font_size",12)
-    event_label = _label("",Vector2(26,744),Vector2(1228,53),13,COL_TEXT)
-    event_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     notice_label = _label("",Vector2(16,675),Vector2(930,21),13,COL_MUTED)
     notice_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
     highlight_button=_button("다음 주요 상황 ▶",Vector2(674,11),Vector2(128,35),_advance_highlight)
@@ -367,11 +351,8 @@ func _build_interface() -> void:
     _button("철수",Vector2(1048,651),Vector2(70,34),_ask_retreat)
     contact_button=_button("최근 교전",Vector2(316,632),Vector2(94,32),_focus_combat)
     contact_button.tooltip_text="최근 관측된 교전으로 이동 · C"
-    feed_heading=_label("아군 장수",Vector2(16,698),Vector2(180,22),15,COL_TEXT)
-    combat_brief=_label("",Vector2(26,722),Vector2(1228,24),15,COL_GOLD)
-    thought_feed=_label("",Vector2(26,747),Vector2(1228,46),12,COL_TEXT)
-    thought_feed.hide()
-    event_label.hide()
+    _label("아군 장수",Vector2(16,698),Vector2(180,22),15,COL_TEXT)
+    _build_battle_feed()
     for i in range(6):
         var card: Button=_button("",Vector2(16+i*209,730),Vector2(201,61),_select_general_card.bind(i))
         card.add_theme_font_size_override("font_size",13)
@@ -382,12 +363,10 @@ func _build_interface() -> void:
         card.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
         card.alignment=HORIZONTAL_ALIGNMENT_LEFT
         general_cards.append(card)
-    combat_brief.hide()
     _build_sector_board()
     situation_btn = _button("긴급 보고",Vector2(830,61),Vector2(120,40),func():
         _open_order_map()
         _open_situations())
-    _primary_button(situation_btn)
     warning_label = _label("",Vector2(420,640),Vector2(513,24),12,COL_GOLD)
     warning_label.hide()
     warning_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -422,61 +401,82 @@ func _options(where: Vector2, choices: Array[String]) -> OptionButton:
     add_child(element)
     return element
 
-func _refresh_unit_list() -> void:
-    unit_list.clear()
-    for i in sim.command_ids(0):
-        var unit: Dictionary = sim.find_unit(i)
-        var icon:AtlasTexture=_commander_icon(str(unit["name"]),int(unit["side"]))
-        unit_list.add_item("%s  ·  %s / %s" % [str(unit["name"]),str(unit["type"]),str(unit["personality"])],icon)
-        unit_list.set_item_metadata(unit_list.item_count-1,i)
-    unit_list.fixed_icon_size = Vector2i(25,25)
-    if unit_list.item_count > 0:
-        var row: int = maxi(0,sim.command_ids(0).find(selected_id))
-        unit_list.select(row)
-        selected_id = int(unit_list.get_item_metadata(row))
+func _build_commander_desk() -> void:
+    commander_scroll=ScrollContainer.new()
+    commander_scroll.position=Vector2(970,232)
+    commander_scroll.size=Vector2(286,314)
+    commander_scroll.horizontal_scroll_mode=ScrollContainer.SCROLL_MODE_DISABLED
+    commander_scroll.vertical_scroll_mode=ScrollContainer.SCROLL_MODE_RESERVE
+    commander_scroll.add_theme_stylebox_override("panel",_ui_box(Color("#17222c")))
+    add_child(commander_scroll)
+    var sections := VBoxContainer.new()
+    sections.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+    sections.add_theme_constant_override("separation",7)
+    commander_scroll.add_child(sections)
+    var judgment := _desk_section(sections,"현장 판단")
+    decision_label=_body_text(judgment,16,COL_TEXT)
+    var request := _desk_section(sections,"장수 건의")
+    commander_request=_body_text(request,15,COL_TEXT)
+    var orders := _desk_section(sections,"명령과 결과")
+    live_order_label=_body_text(orders,15,COL_TEXT)
+    order_status_label=_body_text(orders,14,COL_GOLD)
+    command_outcome=_body_text(orders,14,COL_TEXT)
+    var observation := _desk_section(sections,"전장 관측")
+    commander_observation=_body_text(observation,14,COL_MUTED)
 
-func _draw_roster_status(canvas: Control) -> void:
-    if not is_instance_valid(unit_list): return
-    for index in range(unit_list.item_count):
-        var uid: int=int(unit_list.get_item_metadata(index))
-        var unit: Dictionary=sim.find_unit(uid)
-        if unit.is_empty(): continue
-        var row: Rect2=unit_list.get_item_rect(index)
-        if row.end.y>canvas.size.y+1.0 or row.position.y<0.0: continue
-        var strength: float=clampf(float(unit["troops"])/maxf(1.0,float(unit["initial_troops"])),0.0,1.0)
-        var morale: float=clampf(float(unit["morale"])/100.0,0.0,1.0)
-        var shade: Color=COL_RED if bool(unit["routed"]) else COL_BLUE
-        var mind: Dictionary=unit.get("mind",{})
-        var right: float=canvas.size.x-12.0
-        var label: String=_number_text(roundi(sim.corps_report(uid)["troops"]))+"명"
-        var w: float=korean_font.get_string_size(label,HORIZONTAL_ALIGNMENT_LEFT,-1,13).x
-        canvas.draw_string(korean_font,Vector2(right-w,row.position.y+14),label,HORIZONTAL_ALIGNMENT_LEFT,-1,13,COL_TEXT)
-        var bar: Rect2=Rect2(right-64,row.position.y+19,64,3)
-        canvas.draw_rect(bar,Color("#121915"))
-        canvas.draw_rect(Rect2(bar.position,Vector2(bar.size.x*strength,bar.size.y)),shade)
-        canvas.draw_rect(Rect2(bar.position+Vector2(0,5),Vector2(bar.size.x,2)),Color("#121915"))
-        canvas.draw_rect(Rect2(bar.position+Vector2(0,5),Vector2(bar.size.x*morale,2)),COL_GOLD)
-        var mood: String=str(mind.get("mood","준비"))
-        canvas.draw_string(korean_font,Vector2(right-126,row.position.y+26),mood,HORIZONTAL_ALIGNMENT_LEFT,-1,10,_mood_color(mood))
-        if index<unit_list.item_count-1:
-            canvas.draw_line(Vector2(6,row.end.y+1),Vector2(canvas.size.x-6,row.end.y+1),Color(0.70,0.59,0.40,0.16),1.0)
+func _desk_section(sections: VBoxContainer, heading: String) -> VBoxContainer:
+    var section := VBoxContainer.new()
+    section.add_theme_constant_override("separation",2)
+    sections.add_child(section)
+    var title := _body_text(section,13,COL_BLUE)
+    title.text=heading
+    return section
+
+func _body_text(parent: Container, font_size: int, color: Color) -> Label:
+    var label := Label.new()
+    label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    label.add_theme_font_size_override("font_size",font_size)
+    label.add_theme_color_override("font_color",color)
+    parent.add_child(label)
+    return label
+
+func _build_battle_feed() -> void:
+    battle_feed=PanelContainer.new()
+    battle_feed.position=Vector2(28,470)
+    battle_feed.size=Vector2(620,146)
+    var panel := _ui_box(Color("#18242f"),COL_LINE)
+    panel.content_margin_left=13
+    panel.content_margin_right=13
+    panel.content_margin_top=9
+    panel.content_margin_bottom=9
+    battle_feed.add_theme_stylebox_override("panel",panel)
+    add_child(battle_feed)
+    var lines := VBoxContainer.new()
+    lines.add_theme_constant_override("separation",5)
+    battle_feed.add_child(lines)
+    var heading := _body_text(lines,14,COL_BLUE)
+    heading.text="전황 기록"
+    combat_brief=_body_text(lines,14,COL_GOLD)
+    event_label=_body_text(lines,13,COL_TEXT)
+    battle_feed.hide()
+
+func _ensure_friendly_selection() -> void:
+    var ids: Array[int]=sim.command_ids(0)
+    if not ids.has(selected_id):
+        selected_id=-1 if ids.is_empty() else ids[0]
 
 func _show_friendly_roster() -> void:
     observing_enemy=false
     observed_enemy_id=-1
-    unit_list.show()
-    roster_overlay.show()
-    enemy_list.hide()
     _refresh_hud()
     map_layer.queue_redraw()
+    queue_redraw()
 
 func _show_enemy_roster() -> void:
     observing_enemy=true
-    unit_list.hide()
-    roster_overlay.hide()
-    enemy_list.show()
     _refresh_hud()
     map_layer.queue_redraw()
+    queue_redraw()
 
 func _inspect_enemy_row(index: int) -> void:
     if index<0 or index>=enemy_list.item_count or enemy_list.is_item_disabled(index): return
@@ -549,10 +549,7 @@ func _select_friendly_combatant(fx:Dictionary) -> void:
     for key in ["attacker_id","defender_id"]:
         var id:int=int(fx.get(key,-1))
         if not ids.has(id): continue
-        selected_id=id
-        _show_friendly_roster()
-        unit_list.select(ids.find(id))
-        _select_unit()
+        _on_unit_selected(ids.find(id))
         return
 
 func _focus_combat() -> void:
@@ -575,10 +572,14 @@ func _focus_combat() -> void:
     _refresh_hud()
 
 func _on_unit_selected(index: int) -> void:
-    if index < 0 or index >= unit_list.item_count: return
-    selected_id = int(unit_list.get_item_metadata(index))
-    _show_friendly_roster()
+    var ids: Array[int]=sim.command_ids(0)
+    if index<0 or index>=ids.size(): return
+    selected_id=ids[index]
+    observing_enemy=false
+    observed_enemy_id=-1
     _select_unit()
+    map_layer.queue_redraw()
+    queue_redraw()
 
 func _select_unit() -> void:
     var unit: Dictionary = sim.find_unit(selected_id)
@@ -636,8 +637,6 @@ func _start() -> void:
     map_mode = "선택"
     runtime_notice = ""
     sim.start()
-    var row: int=sim.command_ids(0).find(selected_id)
-    if row>=0: unit_list.select(row)
     _select_unit()
     _refresh_hud()
 
@@ -739,7 +738,7 @@ func _reset() -> void:
     selected_id = 0
     step_buffer = 0.0
     runtime_notice = ""
-    _refresh_unit_list()
+    _ensure_friendly_selection()
     _select_unit()
     _refresh_hud()
     queue_redraw()
@@ -821,16 +820,6 @@ func _refresh_hud() -> void:
         phase = "작전 %d턴" % sim.turn
         phase_label.text = sim.operation_phase() + "  |  " + ("긴급 지휘력 %d / 4" % sim.command_points if sim.turn >= 6 else "초기 작전 수행 · 보고 수신")
     turn_label.text=phase
-    for index in range(unit_list.item_count):
-        var uid: int = int(unit_list.get_item_metadata(index))
-        var leader: Dictionary = sim.find_unit(uid)
-        if leader.is_empty(): continue
-        var state: String = _field_action(leader)
-        var psyche: Dictionary=leader.get("mind",{})
-        unit_list.set_item_text(index,"%d %s  %s" % [index+1,str(leader["name"]),state])
-        unit_list.set_item_tooltip(index,"%s명 · 병사 사기 %d · 장수 %s\n%s\n%s" % [_number_text(roundi(sim.corps_report(uid)["troops"])),roundi(leader["morale"]),str(psyche.get("mood","전투 준비")),str(psyche.get("reason","")),str(psyche.get("concern",""))])
-        unit_list.set_item_custom_fg_color(index,COL_MUTED if float(leader["troops"]) <= 0.0 else (COL_RED if bool(leader["routed"]) else COL_TEXT))
-    if is_instance_valid(roster_overlay): roster_overlay.queue_redraw()
     _refresh_enemy_roster()
     var enemy_text: String = "정찰 제한" if fog_enabled and not sim.finished else _number_text(sim.total_troops(1))
     status_label.text = "아군 %s   /   적군 %s\n전령 %d 이동 · %d 도착 · %d 차단" % [_number_text(sim.total_troops(0)),enemy_text,sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
@@ -842,10 +831,12 @@ func _refresh_hud() -> void:
         var transport: Dictionary = sim.convoy_status()
         status_label.tooltip_text += "\n수레 %s · 진행 %d%% · 내구도 %d%% · 호위 %d개" % [str(transport["state"]),roundi(float(transport["progress"])*100.0),roundi(sim.convoy["hp"]),int(transport["guards"])]
     if is_instance_valid(situation_btn):
-        var count: int = sim.open_situations().size()
-        situation_btn.text = "보고 %d" % count if count > 0 else "긴급 보고"
-        situation_btn.disabled = not sim.started or sim.finished
-        situation_btn.add_theme_color_override("font_color",COL_GOLD if count>0 else COL_TEXT)
+        var active: bool=sim.started and not sim.finished
+        var count: int=sim.open_situations().size() if active else 0
+        situation_btn.text="긴급 보고 %d" % count if count>0 else "긴급 보고"
+        situation_btn.disabled=not active
+        situation_btn.theme_type_variation=&"UrgentReport" if count>0 else &""
+        situation_btn.tooltip_text="대응할 보고 %d건" % count if count>0 else "대응할 보고가 없습니다."
     start_btn.disabled = sim.started or sim.finished
     pause_btn.disabled = not sim.started or sim.finished
     pause_btn.text = "재개" if sim.paused else "일시정지"
@@ -859,79 +850,11 @@ func _refresh_hud() -> void:
     pause_btn.visible=sim.started
     live_order_button.disabled=sim.finished
     live_order_button.text="작전 지도 열기" if not sim.started else "작전 지도 · 전령 지시"
-    var unit: Dictionary = sim.find_unit(selected_id)
-    if not unit.is_empty():
-        var ally: Dictionary=sim.find_unit(int(unit.get("assigned_link",-1)))
-        var dispatch: String=dispatch_line(selected_id)
-        var third_line: String=dispatch if not dispatch.is_empty() else "연계: "+(str(ally["name"]) if not ally.is_empty() else "자동 / 없음")
-        live_order_label.text="%s → %s\n현재: %s" % [str(unit["mission"]),_goal_name(unit["goal"]),_field_action(unit)]
-        order_status_label.text=third_line
-        order_status_label.tooltip_text=dispatch
-        var leader_state: String = "부장 지휘" if bool(unit["active_deputy"]) else str(unit["general_state"])
-        var corps: Dictionary = sim.corps_report(selected_id)
-        selected_label.text = "%s · %s · %s명" % [str(unit["name"]),leader_state,_number_text(roundi(corps["troops"]))]
-        var ammo_text: String = " · 화살 %d" % int(unit.get("ammo", 100.0)) if str(unit["type"]) == "궁병" else ""
-        var psyche: Dictionary=unit.get("mind",{})
-        var readiness: String="사기 %d · 응집 %d" % [int(unit["morale"]),int(unit["cohesion"])]
-        if int(unit["rations"])<35: readiness="군량 %d · %s" % [int(unit["rations"]),readiness]
-        elif str(unit["type"])=="궁병" and int(unit["ammo"])<35: readiness="화살 %d · %s" % [int(unit["ammo"]),readiness]
-        details_label.text = "%s · %s" % [str(psyche.get("mood","준비")),str(unit["formation"])]
-        readiness_label.text=readiness
-        details_label.modulate=_mood_color(str(psyche.get("mood","준비")))
-        decision_label.text = "판단: "+str(unit["reason"])
-        var suggestion: String=str(psyche.get("proposal",""))
-        var target:Dictionary=sim.find_unit(int(unit.get("contact_target_id",-1)))
-        if not target.is_empty() and _visible_unit(target):
-            decision_label.text+="\n교전: "+str(target["name"])+" · 손실 "+_number_text(roundi(float(corps["casualties_taken"])))
-        elif not suggestion.is_empty(): decision_label.text+="\n건의: "+suggestion
-        else: decision_label.text+="\n우려: "+str(psyche.get("concern",""))
-        decision_label.tooltip_text=str(unit["reason"])+"\n"+str(psyche.get("observed",""))+"\n우려: "+str(psyche.get("concern",""))+"\n최근 명령: "+str(psyche.get("last_order",""))
-    if not unit.is_empty():
-        details_label.tooltip_text = "%s\n사기 %d · 응집 %d · 피로 %d\n식량 %d · 화살 %d\n%s" % [str(unit["name"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"]),str(unit["reason"])]
-        if sim.six_armies:
-            details_label.tooltip_text += "\n협동 타격 %d · 상성 우위 타격 %d · 측후방 피해 %d" % [roundi(unit["linked_hits"]),roundi(unit["counter_damage"]),roundi(unit["flank_damage"])]
-            if float(unit.get("bridge_y",-1.0))>=0.0:
-                details_label.tooltip_text += "\n도하 예정: "+_bridge_name(float(unit["bridge_y"]))
-            if str(unit["mission"])=="측후방 기동":
-                var stages: Array[String] = ["측면 기동","정면 접촉 대기","협동 공격"]
-                details_label.tooltip_text += "\n"+stages[clampi(int(unit["flank_phase"]),0,2)]+" · 완료 %d · 공격 %d · 중단 %d" % [int(unit["flank_completed"]),int(unit["flank_commits"]),int(unit["flank_aborts"])]
-    if observing_enemy:
-        order_status_label.text=""
-        order_status_label.tooltip_text=""
-        readiness_label.text=""
-        details_label.modulate=Color.WHITE
-        var enemy: Dictionary=sim.find_unit(observed_enemy_id)
-        if not enemy.is_empty() and _visible_unit(enemy):
-            live_order_label.text="적군 관측 · %s\n%s / %s / %s명" % [str(enemy["name"]),str(enemy["type"]),_field_action(enemy),_number_text(roundi(float(enemy["troops"])))]
-            order_status_label.text="사기 %d · 응집 %d" % [roundi(float(enemy["morale"])),roundi(float(enemy["cohesion"]))]
-            selected_label.text="적장 · "+str(enemy["name"])
-            details_label.text="%s · %s" % [_field_action(enemy),str(enemy["formation"])]
-            if not fog_enabled:
-                readiness_label.text="가한 피해 %s / 손실 %s" % [_number_text(roundi(float(enemy["damage_dealt"]))),_number_text(roundi(float(enemy["casualties_taken"])))]
-            decision_label.text="적군 관측 · 명령 불가"
-            details_label.tooltip_text=details_label.text
-            decision_label.tooltip_text=decision_label.text
-        else:
-            live_order_label.text="적군 관측\n군단을 선택하여 위치와 활동 확인"
-            selected_label.text="관측할 적군 선택"
-            details_label.text=""
-            details_label.tooltip_text=""
-            decision_label.text=""
-            decision_label.tooltip_text=""
-        live_order_button.text="아군 작전 지도"
-    if is_instance_valid(combat_brief): combat_brief.text=_battle_brief()
-    if is_instance_valid(thought_feed): thought_feed.text=_latest_general_reports()
+    _refresh_commander_desk()
+    if battle_feed.visible: _refresh_battle_feed()
     _refresh_general_cards()
     _refresh_sector_board()
     if is_instance_valid(mind_dialog) and mind_dialog.visible: _refresh_mind_report()
-    var start_line: int = maxi(0, sim.events.size() - 3)
-    var lines: String = ""
-    for i in range(start_line, sim.events.size()):
-        if not fog_enabled or sim.finished or _public_event(sim.events[i]):
-            lines += sim.events[i] + "\n"
-    if sim.finished:
-        lines = sim.result+"\n장수 6개 군단의 상세 전과는 결산 화면에서 확인하십시오."
-    event_label.text = lines
     if not sim.started:
         notice_label.text = sim.scenario_goal + "\n작전실: 병력·부장·배치·경유점\n지도 모드: " + map_mode
     elif sim.finished:
@@ -946,14 +869,142 @@ func _refresh_hud() -> void:
     elif not battle_warning.is_empty():
         notice_label.text = battle_warning
 
+func _refresh_commander_desk() -> void:
+    var hero_top: float=333.0 if observing_enemy else 143.0
+    selected_label.position.y=hero_top+7.0
+    details_label.position.y=hero_top+35.0
+    readiness_label.position.y=hero_top+56.0
+    portrait.position.y=hero_top+8.0
+    portrait.queue_redraw()
+    commander_scroll.visible=not observing_enemy
+    enemy_list.visible=observing_enemy
+    enemy_intel.visible=observing_enemy
+    if observing_enemy:
+        _refresh_enemy_intel()
+        return
+    var unit: Dictionary=sim.find_unit(selected_id)
+    if unit.is_empty():
+        selected_label.text="아군 장수 없음"
+        details_label.text=""
+        readiness_label.text=""
+        commander_scroll.hide()
+        live_order_button.disabled=true
+        return
+    if inspected_commander_id!=selected_id:
+        commander_scroll.scroll_vertical=0
+        inspected_commander_id=selected_id
+    var corps: Dictionary=sim.corps_report(selected_id)
+    var mind: Dictionary=unit.get("mind",{})
+    var mood: String=str(mind.get("mood","준비"))
+    var leader_state: String="부장 지휘" if bool(unit["active_deputy"]) else str(unit["general_state"])
+    selected_label.text="%s  ·  %s명" % [str(unit["name"]),_number_text(roundi(corps["troops"]))]
+    details_label.text="%s · %s · %s" % [leader_state,mood,str(unit["formation"])]
+    details_label.modulate=_mood_color(mood)
+    readiness_label.text="사기 %d · 응집 %d" % [int(unit["morale"]),int(unit["cohesion"])]
+    if int(unit["rations"])<35:
+        readiness_label.text+=" · 군량 %d" % int(unit["rations"])
+    elif str(unit["type"])=="궁병" and int(unit["ammo"])<35:
+        readiness_label.text+=" · 화살 %d" % int(unit["ammo"])
+    details_label.tooltip_text="%s · %s\n사기 %d · 응집 %d · 피로 %d\n군량 %d · 화살 %d" % [
+        str(unit["name"]),str(unit["type"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"])]
+    if sim.six_armies:
+        details_label.tooltip_text+="\n협동 타격 %d · 상성 우위 타격 %d · 측후방 피해 %d" % [
+            roundi(unit["linked_hits"]),roundi(unit["counter_damage"]),roundi(unit["flank_damage"])]
+        if float(unit.get("bridge_y",-1.0))>=0.0:
+            details_label.tooltip_text+="\n도하 예정 "+_bridge_name(float(unit["bridge_y"]))
+        if str(unit["mission"])=="측후방 기동":
+            var stages: Array[String]=["측면 기동","정면 접촉 대기","협동 공격"]
+            details_label.tooltip_text+="\n"+stages[clampi(int(unit["flank_phase"]),0,2)]+" · 완료 %d · 공격 %d · 중단 %d" % [
+                int(unit["flank_completed"]),int(unit["flank_commits"]),int(unit["flank_aborts"])]
+    decision_label.text=str(unit["reason"])
+    var proposal: String=str(mind.get("proposal",""))
+    var concern: String=str(mind.get("concern",""))
+    commander_request.text="건의 없음" if proposal.is_empty() else proposal
+    if not concern.is_empty() and concern not in ["없음","-"]:
+        commander_request.text+="\n우려 "+concern
+    live_order_label.text="%s → %s\n현재: %s" % [str(unit["mission"]),_goal_name(unit["goal"]),_field_action(unit)]
+    var dispatch: Dictionary=sim.map_dispatches.get(selected_id,{})
+    order_status_label.text=dispatch_line(selected_id)
+    var delivered: bool=dispatch.get("status","")=="도착"
+    if delivered and bool(unit["has_destination"]) and dispatch["mission"]==unit["mission"]:
+        if (dispatch["destination"] as Vector2).is_equal_approx(unit["order_destination"]):
+            order_status_label.text+="\n목적지 도달" if bool(unit["destination_reached"]) else "\n목적지 미도달"
+    order_status_label.visible=not order_status_label.text.is_empty()
+    var result_lines: Array[String]=[]
+    var last_order: String=str(mind.get("last_order",""))
+    if not last_order.is_empty() and not (delivered and last_order=="수령: "+str(dispatch["mission"])):
+        result_lines.append(last_order)
+    var response: String=_latest_command_response(selected_id)
+    if not response.is_empty():
+        result_lines.append(response)
+    var ally: Dictionary=sim.find_unit(int(unit.get("assigned_link",-1)))
+    if not ally.is_empty():
+        result_lines.append("연계 "+str(ally["name"]))
+    command_outcome.text="\n".join(result_lines)
+    command_outcome.visible=not result_lines.is_empty()
+    var observed: String=str(mind.get("observed",""))
+    var loss: String="누적 손실 "+_number_text(roundi(float(corps["casualties_taken"])))+"명"
+    var target: Dictionary=sim.find_unit(int(unit.get("contact_target_id",-1)))
+    if not target.is_empty() and _visible_unit(target):
+        commander_observation.text="상대 %s · %s" % [str(target["name"]),loss]
+    else:
+        commander_observation.text=loss
+    if not observed.is_empty():
+        commander_observation.text+="\n"+observed
+
+func _refresh_enemy_intel() -> void:
+    var enemy: Dictionary=sim.find_unit(observed_enemy_id)
+    selected_label.text="관측할 적군 선택"
+    details_label.text=""
+    details_label.tooltip_text=""
+    details_label.modulate=Color.WHITE
+    readiness_label.text=""
+    enemy_intel.text="관측 목록에서 적군을 선택하십시오."
+    live_order_button.text="아군 작전 지도"
+    if enemy.is_empty() or not _visible_unit(enemy): return
+    selected_label.text=str(enemy["name"])+" · "+_number_text(roundi(float(enemy["troops"])))+"명"
+    details_label.text="%s · %s · %s" % [str(enemy["type"]),_field_action(enemy),str(enemy["formation"])]
+    readiness_label.text="사기 %d · 응집 %d" % [roundi(float(enemy["morale"])),roundi(float(enemy["cohesion"]))]
+    enemy_intel.text=""
+    if not fog_enabled:
+        enemy_intel.text="가한 피해 %s · 손실 %s" % [
+            _number_text(roundi(float(enemy["damage_dealt"]))),_number_text(roundi(float(enemy["casualties_taken"])))]
+
+func _latest_command_response(id: int) -> String:
+    for index in range(sim.situation_reports.size()-1,-1,-1):
+        var report: Dictionary=sim.situation_reports[index]
+        var reporter: int=int(report["unit_id"])
+        var executor: int=int(report.get("executor",reporter))
+        var status: String=str(report["status"])
+        if status in ["대기","미대응","시간 경과"] or (id!=reporter and id!=executor): continue
+        var response: String=str(report.get("response",""))
+        var result: String=status if response.is_empty() else "%s · %s" % [response,status]
+        if id==reporter and reporter!=executor:
+            result+=" ("+str(sim.find_unit(executor).get("name","지원군"))+")"
+        elif id==executor and reporter!=executor:
+            result+=" ("+str(sim.find_unit(reporter).get("name","아군"))+" 지원)"
+        var action: String=str(report.get("action_seen",""))
+        if not action.is_empty():
+            result+="\n관측 행동 "+action
+        return result
+    return ""
+
 func _toggle_feed() -> void:
-    show_general_feed=not show_general_feed
-    thought_feed.hide()
-    combat_brief.visible=not show_general_feed
-    for card in general_cards: card.visible=show_general_feed
-    event_label.visible=not show_general_feed
-    feed_toggle.text="전황 기록 보기" if show_general_feed else "장수 카드 보기"
-    feed_heading.text="아군 장수" if show_general_feed else "전황 기록"
+    battle_feed.visible=not battle_feed.visible
+    feed_toggle.text="전황 기록 닫기" if battle_feed.visible else "전황 기록 보기"
+    if battle_feed.visible:
+        _refresh_battle_feed()
+
+func _refresh_battle_feed() -> void:
+    combat_brief.text=_battle_brief()
+    var start_line: int = maxi(0, sim.events.size() - 3)
+    var lines: Array[String]=[]
+    for i in range(start_line, sim.events.size()):
+        if not fog_enabled or sim.finished or _public_event(sim.events[i]):
+            lines.append(sim.events[i])
+    if sim.finished:
+        lines=[sim.result,"군단별 상세 전과는 결산 화면에서 확인하십시오."]
+    event_label.text="\n".join(lines)
 
 func dispatch_line(id: int) -> String:
     var dispatch: Dictionary=sim.map_dispatches.get(id,{})
@@ -1000,7 +1051,6 @@ func _frame_milestone(event: Dictionary) -> void:
     var id: int=int(event.get("unit_id",-1))
     var row: int=sim.command_ids(0).find(id)
     if row>=0:
-        unit_list.select(row)
         _on_unit_selected(row)
     camera_center=event["point"]
     camera_zoom=1.4
@@ -1009,12 +1059,8 @@ func _frame_milestone(event: Dictionary) -> void:
     queue_redraw()
 
 func _select_general_card(index: int) -> void:
-    var ids: Array[int]=sim.command_ids(0)
-    if index>=ids.size(): return
-    selected_id=ids[index]
-    _show_friendly_roster()
-    unit_list.select(index)
-    _select_unit()
+    if index<0 or index>=sim.command_ids(0).size(): return
+    _on_unit_selected(index)
     _focus_selected()
 
 func _fit_card_line(value:String,width:float) -> String:
@@ -1031,7 +1077,7 @@ func _refresh_general_cards() -> void:
         if i>=ids.size():
             card.hide()
             continue
-        card.visible=show_general_feed
+        card.show()
         var u: Dictionary=sim.find_unit(ids[i])
         var mind: Dictionary=u.get("mind",{})
         var mood: String=str(mind.get("mood","준비"))
@@ -1039,9 +1085,10 @@ func _refresh_general_cards() -> void:
         var suggestion: String=str(mind.get("proposal",""))
         var pending: bool=sim.map_dispatches.get(ids[i],{}).get("status","")=="이동 중" and not sim.finished
         var headline: String="%s · %s" % [str(u["name"]),_field_action(u)]
-        var state: String=mood
-        if pending: state+=" · 전령 이동"
-        if not suggestion.is_empty(): state+=" · 건의"
+        var strength: String=_number_text(roundi(sim.corps_report(ids[i])["troops"]))+"명"
+        var state: String="%s · %s" % [strength,mood]
+        if pending: state+=" · 전령"
+        elif not suggestion.is_empty(): state+=" · 건의"
         var detail: String=suggestion if not suggestion.is_empty() else reason
         card.text="\n".join([_fit_card_line(headline,137.0),_fit_card_line(state,137.0),_fit_card_line(detail,137.0)])
         if card.icon==null or str(card.get_meta("general_name",""))!=str(u["name"]):
@@ -1104,23 +1151,6 @@ func _mood_color(mood: String) -> Color:
     if mood in ["불안","초조","동요","긴장","지침"]: return COL_GOLD
     if mood=="자신감": return Color("#a9d5a5")
     return COL_MUTED
-
-func _latest_general_reports() -> String:
-    var reports: Array[Dictionary]=[]
-    for id in sim.command_ids(0):
-        var u: Dictionary=sim.find_unit(id)
-        var m: Dictionary=u.get("mind",{})
-        var history: Array=m.get("history",[])
-        if history.is_empty(): continue
-        var last: Dictionary=history.back()
-        reports.append({"time":last["time"],"name":u["name"],"text":last["text"],"category":last["category"]})
-    reports.sort_custom(func(a:Dictionary,b:Dictionary)->bool: return float(a["time"])>float(b["time"]))
-    var lines: Array[String]=[]
-    for i in range(mini(3,reports.size())):
-        var row: Dictionary=reports[i]
-        lines.append("[%s] %s · %s" % [_operation_clock(float(row["time"])*sim.operation_scale()),str(row["name"]),str(row["text"])])
-    if lines.is_empty(): return "장수의 판단과 명령 반응이 이곳에 실시간 기록됩니다."
-    return "\n".join(lines)
 
 func _build_mind_report() -> void:
     mind_dialog=AcceptDialog.new()
@@ -1280,8 +1310,7 @@ func _map_select(mouse_pos: Vector2) -> void:
             accept_event()
             return
         var row: int = sim.command_ids(0).find(nearest_id)
-        if row >= 0 and row < unit_list.item_count:
-            unit_list.select(row)
+        if row >= 0:
             _on_unit_selected(row)
             accept_event()
 
@@ -1296,8 +1325,9 @@ func _draw() -> void:
     draw_rect(Rect2(MAP_TOP_LEFT,MAP_SIZE),Color("#19232d"))
     draw_rect(Rect2(MAP_TOP_LEFT,MAP_SIZE).grow(1),COL_LINE,false)
     draw_rect(Rect2(961,61,303,632),COL_PANEL)
-    draw_rect(Rect2(970,333,286,132),Color("#263747"))
-    draw_rect(Rect2(970,333,3,132),COL_BLUE if not observing_enemy else COL_RED)
+    var hero_top: float=333.0 if observing_enemy else 143.0
+    draw_rect(Rect2(970,hero_top,286,85),Color("#263747"))
+    draw_rect(Rect2(970,hero_top,3,85),COL_RED if observing_enemy else COL_BLUE)
     draw_line(Vector2(970,601),Vector2(1256,601),COL_LINE,1.0)
     draw_line(Vector2(16,697),Vector2(1264,697),COL_LINE,1.0)
     _draw_force_balance()
@@ -1989,7 +2019,7 @@ func _change_scenario(index: int) -> void:
         map_mode = "선택"
         selected_id = 0
         runtime_notice = ""
-        _refresh_unit_list()
+        _ensure_friendly_selection()
         _select_unit()
         planning_dialog.hide()
         queue_redraw()
@@ -2013,7 +2043,7 @@ func _swap_general() -> void:
         plan_status.text = "캠페인 장수 교체는 전략 지도에서 수행하십시오."
         return
     if sim.swap_generals(selected_id,plan_donor.get_selected_id()):
-        _refresh_unit_list()
+        _ensure_friendly_selection()
         _select_unit()
         planning_dialog.hide()
 
@@ -2228,7 +2258,7 @@ func _draw_minimap() -> void:
 
 func _draw_portrait(canvas: Control) -> void:
     var unit: Dictionary=sim.find_unit(observed_enemy_id if observing_enemy else selected_id)
-    if unit.is_empty(): return
+    if unit.is_empty() or (observing_enemy and not _visible_unit(unit)): return
     canvas.draw_rect(Rect2(0,0,68,68),Color("#142427"))
     canvas.draw_texture_rect(_commander_icon(str(unit["name"]),int(unit["side"])),Rect2(1,1,66,66),false)
     canvas.draw_rect(Rect2(0,0,68,68),Color("#8d896e"),false,1.2)
@@ -2508,10 +2538,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
         if is_instance_valid(order_view) and order_view.visible: return
         if event.keycode >= KEY_1 and event.keycode <= KEY_6 and not title_screen.visible and not strategy_view.visible:
             var index: int = int(event.keycode-KEY_1)
-            if index < unit_list.item_count:
-                unit_list.select(index)
-                _on_unit_selected(index)
-                _focus_selected()
+            _select_general_card(index)
             return
         match event.keycode:
             KEY_SPACE: _pause()
@@ -2871,7 +2898,7 @@ func _launch_campaign_battle(target: int) -> bool:
     selected_id = 0
     step_buffer = 0.0
     runtime_notice = ""
-    _refresh_unit_list()
+    _ensure_friendly_selection()
     _select_unit()
     _refresh_hud()
     queue_redraw()
@@ -3225,10 +3252,7 @@ func _open_order_map() -> void:
 
 func _return_to_battle() -> void:
     sim.paused=order_pause_before
-    var row: int=sim.command_ids(0).find(selected_id)
-    if row>=0: unit_list.select(row)
     _select_unit()
-    _refresh_hud()
     map_layer.queue_redraw()
     queue_redraw()
 

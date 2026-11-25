@@ -3037,7 +3037,7 @@ func issue_map_order(id: int,mission: String,destination: Vector2,partner: int=-
     if started:
         if not request_order(id,mission,"현장 판단",partner,destination): return false
         couriers.back()["map_dispatch"] = true
-        map_dispatches[id] = {"mission":mission,"status":"이동 중","destination":destination,"time":operation_elapsed()}
+        map_dispatches[id] = {"mission":mission,"status":"이동 중","destination":_field_point(destination),"time":operation_elapsed()}
         return true
     if not select_unit_mission(id,mission,"현장 판단",partner): return false
     unit["has_destination"]=true

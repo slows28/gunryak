@@ -359,7 +359,7 @@ func _run() -> void:
     var game: Control = Main.instantiate()
     root.add_child(game)
     await process_frame
-    check(game.unit_list.item_count==6,"six commander UI entries")
+    check(game.general_cards.size()==6 and game.sim.command_ids(0).size()==6,"six commander cards map to six independent units")
     game.call("_on_unit_selected",5)
     check(game.selected_id==8,"last commander selection maps to correct unit ID")
     game.call("_on_unit_selected",-1)
@@ -413,7 +413,8 @@ func _run() -> void:
     map_sim.turn=6
     game.call("_open_order_map")
     check(game.order_view.visible and map_sim.paused,"midbattle map pauses simulation")
-    var next_dest:=Vector2(1000,800)
+    var next_dest:=Vector2(12,800)
+    var reachable_dest:=Vector2(18,800)
     check(map_sim.issue_map_order(1,"지역 사수",next_dest,-1),"midbattle destination order dispatched")
     check(map_sim.map_dispatches[1]["status"]=="이동 중" and map_sim.map_order_issue(1,"지역 사수",next_dest,-1).contains("이미"),"dispatch tracking and duplicate courier preflight")
     game.call("_refresh_hud")
@@ -421,11 +422,29 @@ func _run() -> void:
     check(map_unit["order_destination"]==dest,"order not applied before courier delivery")
     for letter in map_sim.couriers: letter["pos"]=map_unit["pos"]
     map_sim._update_couriers(0.1)
-    check(map_unit["order_destination"]==next_dest and map_unit["mission"]=="지역 사수","courier delivers actual map order")
+    check(map_unit["order_destination"]==reachable_dest and map_unit["mission"]=="지역 사수","courier delivers actual map order")
     check(map_sim.map_dispatches[1]["status"]=="도착","courier status resolves only on actual delivery")
     game.order_view.hide()
     game.call("_return_to_battle")
     check(not map_sim.paused,"return restores battle clock")
+    check(game.order_status_label.text.contains("전령 도착") and game.order_status_label.text.contains("목적지 미도달"),
+        "inspector distinguishes courier delivery from reaching the destination")
+    map_unit["destination_reached"]=true
+    game.call("_refresh_hud")
+    check(game.order_status_label.text.ends_with("목적지 도달"),"inspector shows verified arrival")
+    check(game.situation_btn.theme_type_variation==&"" and not game.situation_btn.disabled,"idle reports button is neutral and accessible")
+    map_sim.situation_reports.append({"id":91,"unit_id":1,"title":"전선 압박","status":"미대응","pos":map_unit["pos"]})
+    game.call("_refresh_hud")
+    check(game.situation_btn.theme_type_variation==&"UrgentReport" and game.situation_btn.text.ends_with(" 1"),
+        "only an open live report highlights the reports button")
+    check(map_sim.respond_situation(91,"현장 판단"),"a commander can acknowledge the active report")
+    game.call("_refresh_hud")
+    check(game.situation_btn.theme_type_variation==&"" and game.command_outcome.text.contains("재량 유지"),
+        "acknowledgment clears the highlight and appears in the selected commander's result")
+    map_sim.situation_reports.append({"id":92,"unit_id":map_sim.command_ids(0)[0],"executor":1,
+        "status":"실행 중","response":"지원","action_seen":"긴급 지원"})
+    game.call("_refresh_hud")
+    check(game.command_outcome.text.contains("관측 행동 긴급 지원"),"an actual response state is distinguishable from delivery")
     game.call("_begin_campaign")
     check(game.strategy_view.slot_choice.item_count==6,"six strategic UI slots")
     game.queue_free()
