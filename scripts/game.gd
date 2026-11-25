@@ -57,6 +57,10 @@ var inspected_commander_id: int=-1
 var commander_request: Label
 var command_outcome: Label
 var commander_observation: Label
+var combat_exchange: Label
+var combat_focus_pair:=Vector2i(-1,-1)
+var combat_anchor_step: int=-1
+var combat_anchors: Dictionary={}
 var enemy_intel: Label
 var mission_choice: OptionButton
 var policy_choice: OptionButton
@@ -319,6 +323,8 @@ func _build_interface() -> void:
     readiness_label = _label("",Vector2(1057,198),Vector2(190,18),13,COL_MUTED)
     for label in [selected_label,details_label,readiness_label]:
         label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    combat_exchange=_label("",Vector2(978,229),Vector2(268,22),13,COL_GOLD)
+    combat_exchange.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
     _build_commander_desk()
     enemy_intel=_label("",Vector2(978,431),Vector2(268,104),15,COL_TEXT)
     enemy_intel.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
@@ -350,7 +356,7 @@ func _build_interface() -> void:
     _button("초기화",Vector2(970,651),Vector2(70,34),_reset)
     _button("철수",Vector2(1048,651),Vector2(70,34),_ask_retreat)
     contact_button=_button("최근 교전",Vector2(316,632),Vector2(94,32),_focus_combat)
-    contact_button.tooltip_text="최근 관측된 교전으로 이동 · C"
+    contact_button.tooltip_text="가장 최근에 관측한 교전으로 이동 · 다시 누르면 다른 교전 · C"
     _label("아군 장수",Vector2(16,698),Vector2(180,22),15,COL_TEXT)
     _build_battle_feed()
     for i in range(6):
@@ -403,8 +409,8 @@ func _options(where: Vector2, choices: Array[String]) -> OptionButton:
 
 func _build_commander_desk() -> void:
     commander_scroll=ScrollContainer.new()
-    commander_scroll.position=Vector2(970,232)
-    commander_scroll.size=Vector2(286,314)
+    commander_scroll.position=Vector2(970,256)
+    commander_scroll.size=Vector2(286,290)
     commander_scroll.horizontal_scroll_mode=ScrollContainer.SCROLL_MODE_DISABLED
     commander_scroll.vertical_scroll_mode=ScrollContainer.SCROLL_MODE_RESERVE
     commander_scroll.add_theme_stylebox_override("panel",_ui_box(Color("#17222c")))
@@ -552,24 +558,52 @@ func _select_friendly_combatant(fx:Dictionary) -> void:
         _on_unit_selected(ids.find(id))
         return
 
-func _focus_combat() -> void:
-    for i in range(sim.visual_effects.size()-1,-1,-1):
-        var fx: Dictionary=sim.visual_effects[i]
-        if sim.battle_time-float(fx["time"])>0.9: continue
-        var origin:Vector2=fx.get("visual_from",fx["from"])
-        var target:Vector2=fx.get("visual_to",fx["to"])
-        var origin_visible:bool=not fog_enabled or sim.player_can_see(origin)
-        var target_visible:bool=not fog_enabled or sim.player_can_see(target)
+func _recent_fights() -> Array[Dictionary]:
+    var fights: Array[Dictionary]=[]
+    var seen: Dictionary={}
+    for index in range(sim.visual_effects.size()-1,-1,-1):
+        var fx: Dictionary=sim.visual_effects[index]
+        if sim.battle_time-float(fx["time"])>0.9: break
+        var a: int=int(fx.get("attacker_id",-1))
+        var b: int=int(fx.get("defender_id",-1))
+        var origin: Vector2=fx.get("visual_from",fx["from"])
+        var target: Vector2=fx.get("visual_to",fx["to"])
+        var origin_visible: bool=not fog_enabled or sim.player_can_see(origin)
+        var target_visible: bool=not fog_enabled or sim.player_can_see(target)
         if not origin_visible and not target_visible: continue
-        _select_friendly_combatant(fx)
-        camera_center=origin.lerp(target,0.5) if origin_visible and target_visible else (origin if origin_visible else target)
-        camera_zoom=1.8
-        _clamp_camera()
-        map_layer.queue_redraw()
-        queue_redraw()
+        var key:=Vector2i(mini(a,b),maxi(a,b)) if origin_visible and target_visible else (
+            Vector2i(-1,a) if origin_visible else Vector2i(-1,b))
+        if seen.has(key): continue
+        seen[key]=true
+        fights.append({"key":key,"fx":fx,"point":origin.lerp(target,0.5) if origin_visible and target_visible else (
+            origin if origin_visible else target)})
+    return fights
+
+func _focus_combat() -> void:
+    var fights: Array[Dictionary]=_recent_fights()
+    if fights.is_empty():
+        combat_focus_pair=Vector2i(-1,-1)
+        runtime_notice="아직 관측된 교전이 없습니다."
+        _refresh_hud()
         return
-    runtime_notice="아직 관측된 교전이 없습니다."
+    var index: int=0
+    for previous in range(fights.size()):
+        if fights[previous]["key"]==combat_focus_pair:
+            index=(previous+1)%fights.size()
+            break
+    var fight: Dictionary=fights[index]
+    combat_focus_pair=fight["key"]
+    _select_friendly_combatant(fight["fx"])
+    camera_center=fight["point"]
+    camera_zoom=1.8
+    _clamp_camera()
+    if fights.size()>1:
+        runtime_notice="관측한 교전 %d곳 · 다시 누르면 다른 교전으로 이동" % fights.size()
+    else:
+        runtime_notice=""
     _refresh_hud()
+    map_layer.queue_redraw()
+    queue_redraw()
 
 func _on_unit_selected(index: int) -> void:
     var ids: Array[int]=sim.command_ids(0)
@@ -877,6 +911,7 @@ func _refresh_commander_desk() -> void:
     portrait.position.y=hero_top+8.0
     portrait.queue_redraw()
     commander_scroll.visible=not observing_enemy
+    combat_exchange.visible=not observing_enemy
     enemy_list.visible=observing_enemy
     enemy_intel.visible=observing_enemy
     if observing_enemy:
@@ -888,6 +923,7 @@ func _refresh_commander_desk() -> void:
         details_label.text=""
         readiness_label.text=""
         commander_scroll.hide()
+        combat_exchange.hide()
         live_order_button.disabled=true
         return
     if inspected_commander_id!=selected_id:
@@ -895,6 +931,14 @@ func _refresh_commander_desk() -> void:
         inspected_commander_id=selected_id
     var corps: Dictionary=sim.corps_report(selected_id)
     var mind: Dictionary=unit.get("mind",{})
+    var exchange: Vector2=_recent_corps_exchange(selected_id)
+    if exchange.length_squared()>0.0:
+        combat_exchange.text="최근 %d초 · 가한 피해 %s · 손실 %s" % [
+            roundi(sim.COMBAT_HISTORY_SECONDS*sim.operation_scale()),_number_text(roundi(exchange.x)),_number_text(roundi(exchange.y))]
+        combat_exchange.add_theme_color_override("font_color",COL_GOLD)
+    else:
+        combat_exchange.text="피로 %d · 화살 %d%%" % [int(unit["fatigue"]),int(unit["ammo"])] if unit["type"]=="궁병" else "피로 %d · 군량 %d%%" % [int(unit["fatigue"]),int(unit["rations"])]
+        combat_exchange.add_theme_color_override("font_color",COL_MUTED)
     var mood: String=str(mind.get("mood","준비"))
     var leader_state: String="부장 지휘" if bool(unit["active_deputy"]) else str(unit["general_state"])
     selected_label.text="%s  ·  %s명" % [str(unit["name"]),_number_text(roundi(corps["troops"]))]
@@ -949,8 +993,52 @@ func _refresh_commander_desk() -> void:
         commander_observation.text="상대 %s · %s" % [str(target["name"]),loss]
     else:
         commander_observation.text=loss
+    var notes: String=_latest_engagement_note(selected_id)
+    if not notes.is_empty():
+        commander_observation.text+="\n"+notes
     if not observed.is_empty():
         commander_observation.text+="\n"+observed
+
+func _recent_corps_exchange(commander_id: int) -> Vector2:
+    var members: Dictionary={commander_id:true}
+    for member in sim.units:
+        if int(member.get("parent_id",-1))==commander_id:
+            members[int(member["id"])]=true
+    var exchange:=Vector2.ZERO
+    for frame in sim.combat_history:
+        if sim.battle_time-float(frame["time"])>sim.COMBAT_HISTORY_SECONDS: continue
+        for entry in frame["contacts"]:
+            var losses: float=float(entry["damage"])
+            if members.has(int(entry["attacker_id"])): exchange.x+=losses
+            if members.has(int(entry["defender_id"])): exchange.y+=losses
+    return exchange
+
+func _engagement_note(entry: Dictionary) -> String:
+    if bool(entry.get("braced",false)): return "방진으로 돌격 저지"
+    if bool(entry.get("ambush",false)): return "매복 기습"
+    if bool(entry.get("screened",false)):
+        return "아군 전열 너머 사격" if entry["kind"]=="화살" else "보병 엄호"
+    if bool(entry.get("rear",false)): return "후방 타격"
+    if bool(entry.get("flank",false)): return "측면 타격"
+    if bool(entry.get("linked",false)): return "협동 타격"
+    return ""
+
+func _latest_engagement_note(commander_id: int) -> String:
+    for index in range(sim.visual_effects.size()-1,-1,-1):
+        var entry: Dictionary=sim.visual_effects[index]
+        if sim.battle_time-float(entry["time"])>sim.COMBAT_HISTORY_SECONDS: break
+        var attacker_id: int=int(entry.get("attacker_id",-1))
+        var defender_id: int=int(entry.get("defender_id",-1))
+        if commander_id!=attacker_id and commander_id!=defender_id: continue
+        var counterpart: Dictionary=sim.find_unit(defender_id if commander_id==attacker_id else attacker_id)
+        if counterpart.is_empty() or not _visible_unit(counterpart): continue
+        var note: String=_engagement_note(entry)
+        if note.is_empty(): continue
+        var attacked: bool=commander_id==attacker_id
+        if bool(entry.get("braced",false)):
+            return "%s 방진에 돌격 저지" % str(counterpart["name"]) if attacked else "%s 돌격을 방진으로 저지" % str(counterpart["name"])
+        return "공격 · "+note if attacked else "피격 · "+note
+    return ""
 
 func _refresh_enemy_intel() -> void:
     var enemy: Dictionary=sim.find_unit(observed_enemy_id)
@@ -1027,6 +1115,9 @@ func _collect_journal() -> void:
         journal_button.text="상황 기록 %d" % journal_events.size()
 
 func _clear_journal() -> void:
+    combat_focus_pair=Vector2i(-1,-1)
+    combat_anchors.clear()
+    combat_anchor_step=-1
     journal_events.clear()
     journal_keys.clear()
     if is_instance_valid(journal_button): journal_button.text="상황 기록"
@@ -1542,7 +1633,9 @@ func _draw_map(_canvas: Control) -> void:
         var soldiers: Array[Dictionary]=_visible_soldier_batch(visible_units,field_view)
         _draw_depth_scene(soldiers,_visible_trees(),visible_units)
     for unit in visible_units:
-        if field_view.has_point(unit["pos"]): _draw_unit(unit)
+        if field_view.has_point(unit["pos"]):
+            _draw_unit(unit)
+            _draw_combat_movement(unit)
     _draw_combat_effects()
     _draw_loss_markers()
     var label_areas: Array[Rect2] = map_label_areas
@@ -1607,24 +1700,33 @@ func _draw_depth_scene(soldiers:Array[Dictionary],trees:Array[Dictionary],visibl
             ti+=1
         else:
             var item:Dictionary=soldiers[si]
-            _draw_soldier(item["point"],item["unit"],item["accent"],int(item["index"]),item["target"])
+            _draw_soldier(item["point"],item["unit"],item["accent"],int(item["index"]),item["target"],float(item.get("bow_age",-1.0)))
             si+=1
 
 func _draw_contact_fronts(visible_units: Array[Dictionary],field_view: Rect2) -> void:
     if not sim.started or sim.finished: return
+    if combat_anchor_step!=sim.step_count:
+        combat_anchor_step=sim.step_count
+        combat_anchors.clear()
     var known: Dictionary={}
     for u in visible_units: known[int(u["id"])]=u
     var drawn: Dictionary={}
     for u in visible_units:
-        var target: Dictionary=known.get(int(u.get("contact_target_id",-1)),{})
-        if target.is_empty() or str(u["type"])=="궁병" or str(target["type"])=="궁병": continue
+        var hit: Dictionary=sim.combat_contacts.get(int(u["id"]),{})
+        if hit.is_empty() or hit["kind"]=="화살": continue
+        var target: Dictionary=known.get(int(hit["defender_id"]),{})
+        if target.is_empty(): continue
         var a: int=int(u["id"])
         var b: int=int(target["id"])
         var key:=Vector2i(mini(a,b),maxi(a,b))
         if drawn.has(key): continue
         drawn[key]=true
-        var center: Vector2=(u["pos"] as Vector2).lerp(target["pos"],0.5)
-        if not field_view.has_point(center): continue
+        var midpoint: Vector2=(u["pos"] as Vector2).lerp(target["pos"],0.5)
+        if not field_view.has_point(midpoint): continue
+        if not combat_anchors.has(key):
+            combat_anchors[key]=sim.visual_contact_pair(u,target)
+        var pair: Array[Vector2]=combat_anchors[key]
+        var center: Vector2=pair[0].lerp(pair[1],0.5)
         var normal: Vector2=((target["pos"] as Vector2)-(u["pos"] as Vector2)).normalized()
         if normal.length_squared()<0.1: continue
         var lateral: Vector2=normal.orthogonal()
@@ -1649,6 +1751,8 @@ func _draw_contact_fronts(visible_units: Array[Dictionary],field_view: Rect2) ->
             var front_text: String="접전"
             if pressure>0.12:
                 front_text=str(pressed["name"])+" 전열 밀림"
+            elif target["type"]=="궁병":
+                front_text=str(target["name"])+" 근접 압박"
             _map_plate(front_text,center+Vector2(0,20),color,11)
 
 func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) -> Array[Dictionary]:
@@ -1657,6 +1761,11 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         contact_cache.clear()
         formation_render_cache.clear()
         contact_cache_step=sim.step_count
+    var volleys: Dictionary={}
+    for fx in sim.visual_effects:
+        var age: float=render_clock-float(fx["time"])
+        if fx["kind"]=="화살" and age>=0.0 and age<FrontView.VOLLEY_RECOVERY+FrontView.volley_lane_delay(2) and _combat_effect_visible(fx):
+            volleys[int(fx["attacker_id"])]=fx
     for unit in visible_units:
         if not field_view.has_point(unit["pos"]): continue
         var accent: Color=COL_BLUE if int(unit["side"])==0 else COL_RED
@@ -1682,6 +1791,17 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         # True frontage anchors come first; at medium zoom only thin out
         # representative soldiers layered around those anchors.
         var core: int=clampi(ceili(float(unit["troops"])/180.0),1,24)
+        var volley: Dictionary=volleys.get(id,{})
+        var volley_lanes: Array[Vector2]=[]
+        var volley_offset:=Vector2.ZERO
+        var volley_age: float=-1.0
+        if not volley.is_empty() and not bool(unit["routed"]):
+            var origin: Vector2=volley.get("visual_from",volley["from"])
+            var destination: Vector2=volley.get("visual_to",volley["to"])
+            volley_lanes=[origin,destination]
+            if volley.has("arrow_lanes"): volley_lanes=volley["arrow_lanes"]
+            volley_age=render_clock-float(volley["time"])
+            volley_offset=(volley["from"] as Vector2)-(unit["pos"] as Vector2)
         for index in range(slots.size()):
             if sim.six_armies and camera_zoom<1.10 and index>=core and (index-core)%2==1: continue
             var point: Vector2=slots[index]
@@ -1696,12 +1816,32 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             var event_age: float=render_clock-float(unit.get("last_visual",-100.0))-float(index%5)*0.026
             if local_target!=Vector2.INF and event_age>=0.0 and event_age<=0.30:
                 point=FrontView.advance_toward_contact(point,local_target,sin(clampf(event_age/0.30,0.0,1.0)*PI),str(unit["type"]))
+            var bow_age: float=-1.0
+            if not volley_lanes.is_empty():
+                var shot_position: Vector2=slots[index]+volley_offset
+                var lane: int=_nearest_volley_lane(shot_position,volley_lanes)
+                var release_age: float=volley_age-FrontView.volley_lane_delay(lane)
+                var shot_target: Vector2=volley_lanes[lane*2+1]
+                if shot_position.distance_squared_to(shot_target)<=173.0*173.0 and FrontView.bow_phase(release_age)!=FrontView.BowPhase.IDLE:
+                    bow_age=release_age
+                    local_target=shot_target
+                    point+=volley_offset*(1.0-smoothstep(FrontView.VOLLEY_RELEASE,FrontView.VOLLEY_RECOVERY,bow_age))
             if sim.in_open_water(point): point=slots[index]
             point=Vector2(clampf(point.x,0.0,sim.field_size.x),clampf(point.y,0.0,sim.field_size.y))
-            batch.append({"point":point,"unit":unit,"accent":accent,"index":index,"target":local_target})
+            batch.append({"point":point,"unit":unit,"accent":accent,"index":index,"target":local_target,"bow_age":bow_age})
     batch.sort_custom(func(a:Dictionary,b:Dictionary)->bool: return (a["point"] as Vector2).y<(b["point"] as Vector2).y)
     return batch
 
+
+func _nearest_volley_lane(point: Vector2, lanes: Array[Vector2]) -> int:
+    var selected: int=0
+    var closest: float=INF
+    for lane in range(0,lanes.size(),2):
+        var distance: float=point.distance_squared_to(lanes[lane])
+        if distance<closest:
+            selected=lane>>1
+            closest=distance
+    return selected
 
 func _draw_formation_footprint(slots: Array[Vector2], fill: Color, outline: Color, width: float) -> void:
     var hull: PackedVector2Array = Geometry2D.convex_hull(PackedVector2Array(slots))
@@ -2297,13 +2437,11 @@ func _soldier_pose(unit: Dictionary, index: int, now: float) -> int:
     if not routed and now>=float(unit.get("last_hit",-100.0)) and now-float(unit.get("last_hit",-100.0))<0.09 and index%7==0:
         return 5
     var age: float = now-float(unit.get("last_visual",-100.0))
-    var interval: float = 0.9 if kind=="궁병" else 0.55
-    var engaged: bool = int(unit.get("contact_troops",0))>0
-    if kind=="궁병" and float(unit.get("ammo",0.0))<=0.0: engaged=false
-    if not routed and age>=0.0 and age<0.27:
-        return 3 if age<0.11 else 4
-    if not routed and engaged and age>=interval-0.19 and age<=interval+0.1:
-        return 2
+    if kind!="궁병" and not routed:
+        if age>=0.0 and age<0.27:
+            return 3 if age<0.11 else 4
+        if int(unit.get("contact_troops",0))>0 and age>=0.36 and age<=0.65:
+            return 2
     if moving:
         var cadence: float = 7.0 if kind=="기병" else (4.8 if routed else 3.6)
         return posmod(floori(now*sim.operation_scale()*cadence+float(index%5)*0.23),2)
@@ -2312,7 +2450,7 @@ func _soldier_pose(unit: Dictionary, index: int, now: float) -> int:
 func _soldier_motion_region(base: Rect2,pose: int) -> Rect2:
     return Rect2(base.position+Vector2(pose*288,0),base.size)
 
-func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, target: Vector2=Vector2.INF) -> void:
+func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, target: Vector2=Vector2.INF, bow_age: float=-1.0) -> void:
     var direction: Vector2 = unit["facing"]
     if target!=Vector2.INF and not bool(unit["routed"]) and p.distance_squared_to(target)>0.1:
         direction=(target-p).normalized()
@@ -2326,6 +2464,23 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     var delay: float=float(index%5)*0.026
     var pose: int = _soldier_pose(unit,index,render_clock-delay)
     if not visual_contact and pose in [2,3,4]: pose=-1
+    var aiming: FrontView.BowPhase=FrontView.bow_phase(bow_age)
+    var tilt: float=0.0
+    if aiming!=FrontView.BowPhase.IDLE:
+        moving=false
+        match aiming:
+            FrontView.BowPhase.LIFT:
+                pose=4
+                tilt=lerpf(0.16,-0.08,bow_age/0.08)
+            FrontView.BowPhase.DRAW:
+                pose=2
+                tilt=-0.08
+            FrontView.BowPhase.RELEASE:
+                pose=3
+                tilt=lerpf(-0.11,0.06,smoothstep(FrontView.VOLLEY_RELEASE,FrontView.VOLLEY_RELEASE+0.075,bow_age))
+            FrontView.BowPhase.LOWER:
+                pose=4
+                tilt=lerpf(0.06,0.19,smoothstep(FrontView.VOLLEY_RELEASE+0.075,FrontView.VOLLEY_RECOVERY,bow_age))
     var phase: float = render_clock*sim.operation_scale()*(13.0 if kind==2 else 9.0)+index*1.7
     var hit: bool = sim.battle_time-float(unit.get("last_hit",-100.0))<0.16 and index%4==0
     if moving:
@@ -2346,10 +2501,16 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     if absf(direction.y)>absf(direction.x)*1.10: column=1 if direction.y>0.0 else 2
     var region: Rect2=Rect2(column*96,(int(unit["side"])*3+kind)*96,96,96)
     var mirror: float = -1.0 if region.position.x==0.0 and direction.x<0.0 else 1.0
-    map_layer.draw_set_transform(map_offset+p*camera_zoom,0.0,Vector2(mirror,1.0)*camera_zoom)
+    var rotation: float=tilt*mirror if column==0 else tilt*0.35
+    map_layer.draw_set_transform(map_offset+p*camera_zoom,rotation,Vector2(mirror,1.0)*camera_zoom)
     var art: Texture2D = SOLDIER_MOTION if pose>=0 else SOLDIER_ART
     var source: Rect2 = _soldier_motion_region(region,pose) if pose>=0 else region
     map_layer.draw_texture_rect_region(art,Rect2(Vector2(-extent.x*0.5,-extent.y*0.90),extent),source,shade)
+    if aiming==FrontView.BowPhase.DRAW and column==0 and camera_zoom>=1.35:
+        var draw: float=smoothstep(0.08,FrontView.VOLLEY_RELEASE,bow_age)
+        var hand:=Vector2(lerpf(0.25,-0.8,draw),-5.9)
+        var tip:=hand+Vector2(4.85,-0.45)
+        map_layer.draw_line(hand,tip,Color("#ead4a2"),0.63,true)
     map_layer.draw_set_transform(map_offset,0.0,Vector2.ONE*camera_zoom)
 
 # Aggregate real casualties, never invent floating damage from decorative effects.
@@ -2412,40 +2573,35 @@ func _draw_loss_markers() -> void:
         _draw_string(caption,Vector2.ZERO,14,color)
     map_layer.draw_set_transform(offset,0.0,Vector2.ONE*camera_zoom)
 
+func _combat_effect_visible(fx: Dictionary) -> bool:
+    if not fog_enabled or sim.finished: return true
+    var from: Vector2=fx.get("visual_from",fx["from"])
+    var to: Vector2=fx.get("visual_to",fx["to"])
+    return sim.player_can_see(from) and sim.player_can_see(to)
+
 func _draw_combat_effects() -> void:
     for fx in sim.visual_effects:
         var age: float = maxf(0.0,render_clock-float(fx["time"]))
-        if age > 0.9:
+        if age>(1.10 if fx["kind"]=="화살" else 0.9) or not _combat_effect_visible(fx):
             continue
         var p: Vector2 = fx["from"]
         var target: Vector2 = fx["to"]
-        if fog_enabled and not sim.finished and not sim.player_can_see(p) and not sim.player_can_see(target):
-            continue
         p=fx.get("visual_from",p)
         target=fx.get("visual_to",target)
         var alpha: float = clampf(1.0-age,0.0,1.0)
         match str(fx["kind"]):
             "화살":
-                # One real volley event, several representative arrows; no extra damage.
-                var direction: Vector2=(target-p).normalized()
-                var lateral: Vector2=direction.orthogonal()
-                for k in range(7):
-                    var travel: float=clampf((age-float(k%3)*0.035)/0.48,0.0,1.0)
-                    if age<float(k%3)*0.035 or travel>=1.0: continue
-                    var spread: float=(float(k)-3.0)*3.3
-                    var arrow: Vector2=p.lerp(target,travel)+lateral*spread+Vector2(0,-sin(travel*PI)*16.0)
-                    var tail: Vector2=arrow-direction*9.0
-                    map_layer.draw_line(tail,arrow,Color(0.22,0.18,0.12,alpha*0.8),1.8,true)
-                    map_layer.draw_line(tail,arrow,Color(0.91,0.80,0.56,alpha),0.8,true)
-                    map_layer.draw_line(arrow-direction*2.5+lateral*1.5,arrow,Color(0.95,0.93,0.80,alpha),1.0,true)
-                if age>=0.48:
-                    _paint_fx(1,target,22.0,alpha*0.65)
+                _draw_volley(fx,p,target,age)
             "돌격":
-                var contact: Vector2=p.lerp(target,0.70)
-                _paint_fx(3,contact,34.0+age*22.0,alpha*0.65)
-                for k in range(6):
-                    var ray: Vector2=Vector2.from_angle(float(k)*TAU/6.0+float(fx["time"]))*(7.0+age*18.0)
-                    map_layer.draw_line(contact+ray*0.6,contact+ray,Color(0.95,0.76,0.42,alpha*0.75),1.1,true)
+                if bool(fx.get("braced",false)):
+                    _draw_charge_stop(p,target,age,alpha)
+                else:
+                    var contact: Vector2=p.lerp(target,0.70)
+                    _paint_fx(3,contact,34.0+age*22.0,alpha*0.65)
+                    var axis: Vector2=(target-p).normalized()
+                    for k in range(5):
+                        var start: Vector2=contact+axis.orthogonal()*(float(k)-2.0)*4.0
+                        map_layer.draw_line(start,start+axis*(8.0+age*22.0),Color(COL_GOLD,alpha*0.75),1.5,true)
             _:
                 var impact: Vector2=(p+target)*0.5
                 _paint_fx(4,impact,26.0,alpha*0.65)
@@ -2454,6 +2610,70 @@ func _draw_combat_effects() -> void:
                 for k in range(9):
                     var ray: Vector2=Vector2.from_angle(float(k)*TAU/9.0+float(fx["time"]))*(4.0+age*15.0)
                     map_layer.draw_line(impact+ray*0.45,impact+ray,Color(1.0,0.86,0.56,alpha*0.76),1.0,true)
+        if detailed_map and camera_zoom>=1.15 and age<0.75:
+            var note: String=_engagement_note(fx)
+            if not note.is_empty():
+                _map_plate(note,p.lerp(target,0.5)+Vector2(0,-30.0),COL_GOLD,11)
+
+func _draw_volley(fx: Dictionary, origin: Vector2, target: Vector2, age: float) -> void:
+    var lanes: Array[Vector2]=[origin,target]
+    if fx.has("arrow_lanes"): lanes=fx["arrow_lanes"]
+    for i in range(0,lanes.size(),2):
+        var from: Vector2=lanes[i]
+        var to: Vector2=lanes[i+1]
+        if fog_enabled and not sim.finished and (not sim.player_can_see(from) or not sim.player_can_see(to)): continue
+        var direction: Vector2=(to-from).normalized()
+        var lateral: Vector2=direction.orthogonal()
+        var launch: Vector2=from+direction*2.4+Vector2(0,-6.0)
+        var impact: Vector2=to+Vector2(0,-3.4)
+        var range_length: float=launch.distance_to(impact)
+        var flight: float=clampf(range_length/390.0,0.18,0.46)
+        var rise: float=clampf(range_length*0.12,5.0,18.0)
+        var airborne: float=FrontView.arrow_age(age,i>>1)
+        for j in range(3):
+            var elapsed: float=airborne-float(j)*0.032
+            var progress: float=elapsed/flight
+            if progress<0.0 or progress>=1.0: continue
+            var arrow: Vector2=FrontView.arrow_position(launch,impact,progress,rise)+lateral*(float(j)-1.0)*2.0
+            var tangent: Vector2=(impact-launch+Vector2(0,-4.0*rise*(1.0-2.0*progress))).normalized()
+            var tail: Vector2=arrow-tangent*8.0
+            var alpha: float=lerpf(1.0,0.58,progress)
+            map_layer.draw_line(tail,arrow,Color(Color("#302720"),alpha),2.0,true)
+            map_layer.draw_line(tail,arrow,Color(COL_GOLD,alpha),0.95,true)
+            if camera_zoom>=1.35:
+                map_layer.draw_line(tail,tail+tangent*2.0+lateral*1.3,Color(COL_TEXT,alpha),0.7,true)
+        if airborne>=flight and airborne<=flight+0.16:
+            _paint_fx(1,impact,13.0,(1.0-(airborne-flight)/0.16)*0.52)
+
+func _draw_charge_stop(origin: Vector2, target: Vector2, age: float, alpha: float) -> void:
+    var axis: Vector2=(target-origin).normalized()
+    var across: Vector2=axis.orthogonal()
+    _paint_fx(3,target-axis*8.0,24.0+age*16.0,alpha*0.40)
+    for i in range(3):
+        var guard: Vector2=target+across*(float(i)-1.0)*8.0
+        map_layer.draw_polyline(PackedVector2Array([guard-across*3.0,guard-axis*4.0,guard+across*3.0]),Color(COL_BLUE,alpha),1.8,true)
+
+func _draw_combat_movement(unit: Dictionary) -> void:
+    if not sim.started or sim.finished or camera_zoom<0.8: return
+    var retreat: bool=bool(unit["routed"]) or str(unit["action"]) in ["후퇴","전술 철수"]
+    var rallying: bool=bool(unit["rallying"]) or str(unit["action"]) in ["재집결","전술 재집결"]
+    if not retreat and not rallying: return
+    var p: Vector2=unit["pos"]
+    var shade: Color=COL_RED if retreat else COL_GOLD
+    var k: float=1.0/camera_zoom
+    if float(unit["motion_speed"])>4.0:
+        var previous: Vector2=previous_centers.get(int(unit["id"]),p)
+        var direction: Vector2=(p-previous).normalized()
+        if direction==Vector2.ZERO: return
+        for i in range(2):
+            var tip: Vector2=p+direction*(22.0+float(i)*9.0)*k
+            var back: Vector2=tip-direction*7.0*k
+            var lateral: Vector2=direction.orthogonal()*5.0*k
+            map_layer.draw_polyline(PackedVector2Array([back-lateral,tip,back+lateral]),Color(shade,0.74),1.6*k,true)
+    elif rallying:
+        for i in range(4):
+            map_layer.draw_arc(p,23.0*k,float(i)*PI*0.5,float(i)*PI*0.5+0.54,7,Color(shade,0.65),1.6*k,true)
+
 
 func _setup_sound() -> void:
     sound_player = AudioStreamPlayer.new()
@@ -2526,12 +2746,19 @@ func _update_audio_and_warning() -> void:
     last_warning = warning
     if sim.paused or sim.finished or sim.visual_effects.is_empty():
         return
-    var fx: Dictionary = sim.visual_effects.back()
-    if float(fx["time"]) > last_audio_event:
-        last_audio_event = float(fx["time"])
-        if sim.battle_time-last_audio_clock > 0.23 and (not fog_enabled or sim.player_can_see(fx["from"])):
-            _play_combat_audio(fx)
-            last_audio_clock = sim.battle_time
+    var sounding: Dictionary={}
+    var latest: float=last_audio_event
+    for fx in sim.visual_effects:
+        var release_at: float=float(fx["time"])
+        if fx["kind"]=="화살": release_at+=FrontView.VOLLEY_RELEASE
+        if release_at>sim.battle_time or release_at<=latest: continue
+        sounding=fx
+        latest=release_at
+    if sounding.is_empty(): return
+    last_audio_event=latest
+    if sim.battle_time-last_audio_clock>0.23 and (not fog_enabled or sim.player_can_see(sounding["from"])):
+        _play_combat_audio(sounding)
+        last_audio_clock=sim.battle_time
 
 func _unhandled_key_input(event: InputEvent) -> void:
     if event is InputEventKey and event.pressed and not event.echo:
@@ -2770,6 +2997,9 @@ func _show_outcome() -> void:
         stats.text = "피해 %d   손실 %d   이탈 %d   판단 %d   공적 %d" % [int(corps["damage_dealt"]),int(corps["casualties_taken"]),int(corps["deserted"]),int(corps["decisions"]),int(corps["merit"])]
         stats.add_theme_font_size_override("font_size",14)
         info.add_child(stats)
+        var contact_summary := _body_text(info,12,COL_MUTED)
+        contact_summary.text="돌격 저지 %d회 · 후방 손실 %s명 · 패주 %d회" % [
+            int(corps["brace_stops"]),_number_text(roundi(corps["rear_losses"])),int(corps["rout_count"])]
     campaign_next.visible = campaign_active
     campaign_next.text = "전략 지도로 돌아가기"
     outcome_comparison.queue_redraw()

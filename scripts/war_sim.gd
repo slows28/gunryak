@@ -60,6 +60,9 @@ var hill: Rect2 = Rect2(400, 213, 108, 89)
 var timeline: Array[Dictionary] = []
 var visual_effects: Array[Dictionary] = []
 var front_shifts: Dictionary = {}
+var combat_contacts: Dictionary = {}
+var combat_history: Array[Dictionary] = []
+const COMBAT_HISTORY_SECONDS: float = 2.0
 var dust_effects: Array[Dictionary] = []
 const DUST_LIFE: float = 1.8
 const DUST_LIMIT: int = 180
@@ -90,6 +93,8 @@ func reset() -> void:
     structures.clear()
     visual_effects.clear()
     front_shifts.clear()
+    combat_contacts.clear()
+    combat_history.clear()
     dust_effects.clear()
     troop_history.clear()
     sample_at = 0.0
@@ -173,7 +178,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "form_remaining": 0.0, "form_duration": 1.0, "motion_speed": 0.0, "dust_distance": 0.0, "troops": people, "initial_troops": people,
         "morale": 100.0, "out_supply": 0.0, "supplied": true,
         "action": "대기", "reason": "초기 배치", "ai_cooldown": 0.0,
-        "contact_target_id":-1,
+        "contact_target_id":-1, "brace_stops":0, "rear_losses":0.0, "last_arrow_hit":-100.0,
         "charge": 0.0, "last_raid": -999.0, "contact_troops": 0,
         "front_pressure": 0.0, "pushed_distance": 0.0,
         "decisions": 0, "reforms_completed": 0, "damage_dealt": 0.0,
@@ -1155,19 +1160,21 @@ func visual_contact_pair(attacker: Dictionary,defender: Dictionary) -> Array[Vec
     return pair
 
 func _combat(dt: float) -> void:
+    if dt<=0.0: return
     # Precompute strikes before taking losses. Both sides resolve simultaneously.
     var damage_entries: Array[Dictionary] = []
     var targets: Dictionary = {}
+    var requested_losses: Dictionary = {}
+    combat_contacts={}
+    while not combat_history.is_empty() and battle_time-float(combat_history.front()["time"])>COMBAT_HISTORY_SECONDS:
+        combat_history.pop_front()
     for unit in units:
-        unit["contact_troops"] = 0
-        unit["contact_target_id"]=-1
         if six_armies and float(unit["troops"])>0.0 and not bool(unit["routed"]):
             targets[int(unit["id"])]=_combat_target(unit)
     for unit in units:
-        if float(unit["troops"]) <= 0.0:
-            continue
-        if bool(unit["routed"]):
-            continue
+        unit["contact_troops"]=0
+        unit["contact_target_id"]=-1
+        if float(unit["troops"])<=0.0 or bool(unit["routed"]): continue
         var enemy: Dictionary = targets.get(int(unit["id"]),{}) if six_armies else _combat_target(unit)
         if enemy.is_empty():
             continue
@@ -1180,17 +1187,21 @@ func _combat(dt: float) -> void:
         var contacts: int = formation_contacts(unit, enemy, reach)
         if contacts == 0:
             continue
-        unit["contact_troops"] = contacts
+        var bow: bool=unit_type=="궁병"
+        var lane_screened: bool=false
         var attack: float = 0.0
         match unit_type:
             "보병": attack = 2.4
             "궁병": attack = 1.8
             "기병": attack = 2.6
 
-        if unit_type == "궁병":
-            if float(unit["ammo"]) <= 0.0:
-                continue
-            var ammo_used: float = minf(float(unit["ammo"]), dt * (0.60 if long_operation else 0.85))
+        if bow:
+            if float(unit["ammo"])<=0.0: continue
+            var ammo_needed: float=dt*(0.60 if long_operation else 0.85)
+            var ammo_used: float=minf(float(unit["ammo"]),ammo_needed)
+            if long_operation:
+                lane_screened=_bow_lane_screened(unit,enemy,targets)
+                attack*=_bow_effectiveness(unit,contacts,distance,ammo_used/ammo_needed,lane_screened)
             unit["ammo"] = maxf(0.0, float(unit["ammo"]) - ammo_used)
             unit["shots_used"] = float(unit["shots_used"]) + ammo_used
             # Close fighting degrades bow effectiveness; cover blocks some shots.
@@ -1205,6 +1216,7 @@ func _combat(dt: float) -> void:
             if terrain_at(pos) == "고지" and terrain_at(ep) != "고지":
                 attack *= 1.11
 
+        unit["contact_troops"]=contacts
         unit["contact_target_id"]=int(enemy["id"])
         var direction: Vector2 = (pos - ep).normalized()
         var facing: Vector2 = enemy["facing"]
@@ -1227,13 +1239,18 @@ func _combat(dt: float) -> void:
         if str(unit["next_formation"]) != "":
             attack *= 0.78
         var shock: float = 0.0
+        var braced: bool=false
         if unit_type == "기병" and distance < 70.0 and float(unit["charge_cooldown"]) <= 0.0:
             shock = _charge_impact(unit, enemy)
+            braced=long_operation and shock>0.0 and _braced_for_charge(enemy,direction)
+            if braced: shock*=0.48
             if shock > 0.0:
                 unit["charges"] = int(unit["charges"]) + 1
                 unit["charge_cooldown"] = 4.5
                 unit["charge"] = 0.0
                 unit["charge_speed"] = 0.0
+                if long_operation:
+                    unit["fatigue"]=minf(100.0,float(unit["fatigue"])+(5.0 if braced else 3.0))
                 _log("%s: 기병 충격 돌격" % str(unit["name"]))
         var ambush: bool = false
         if float(unit["ambush_ready"]) >= 3.0 and distance <= 110.0 and _in_forest(pos):
@@ -1285,37 +1302,65 @@ func _combat(dt: float) -> void:
             guard["screened_damage"]+=saved
             guard["screen_events"]+=1
         var guarding:bool=long_operation and unit_type!="궁병" and _guarding_archer_in_contact(enemy,unit)
-        damage_entries.append({"guarding":guarding, "target":int(enemy["id"]), "source":int(unit["id"]), "damage":maxf(0.0, damage + shock), "flank":flank or rear, "shock":shock, "ambush":ambush, "counter":counter, "linked":link})
-        if shock > 0.0 or battle_time - float(unit["last_visual"]) >= (0.9 if unit_type == "궁병" else 0.55):
-            unit["last_visual"] = battle_time
-            var contact_pair: Array[Vector2]=visual_contact_pair(unit,enemy)
-            visual_effects.append({"from":pos,"to":ep,"attacker_id":int(unit["id"]),"defender_id":int(enemy["id"]),"visual_from":contact_pair[0],"visual_to":contact_pair[1],"side":int(unit["side"]),"kind":"돌격" if shock > 0.0 else ("화살" if unit_type == "궁병" else "근접"),"time":battle_time})
-            if visual_effects.size() > 100:
-                visual_effects.pop_front()
+        var damage_requested: float=maxf(0.0,damage+shock)
+        if damage_requested<=0.0: continue
+        var source_id: int=int(unit["id"])
+        var target_id: int=int(enemy["id"])
+        var attack_kind: String="돌격" if shock>0.0 else ("화살" if bow else "근접")
+        var entry: Dictionary={
+            "defender_id":target_id,"attacker_id":source_id,"damage":damage_requested,"flank":flank or rear,"rear":rear,
+            "shock":shock,"braced":braced,"screened":lane_screened or not guard.is_empty(),"linked":link,
+            "ambush":ambush,"counter":counter,"guarding":guarding,"kind":attack_kind,"contacts":contacts,
+            "from":pos,"to":ep,"time":battle_time,"side":unit["side"]
+        }
+        if shock>0.0 or battle_time-float(unit["last_visual"])>=(0.9 if bow else 0.55):
+            var pair: Array[Vector2]=visual_contact_pair(unit,enemy)
+            entry["visual_from"]=pair[0]
+            entry["visual_to"]=pair[1]
+            if bow and long_operation: entry["arrow_lanes"]=_bow_visual_lanes(unit,enemy,pair)
+        damage_entries.append(entry)
+        requested_losses[target_id]=float(requested_losses.get(target_id,0.0))+damage_requested
+    # A shared casualty budget allocates simultaneous losses in proportion to
+    # each attack. Unit array order cannot claim all of a nearly broken unit.
+    for target_id in requested_losses:
+        var capacity: float=float(find_unit(target_id)["troops"])
+        requested_losses[target_id]=minf(1.0,capacity/float(requested_losses[target_id]))
     for entry in damage_entries:
-        var defender: Dictionary = find_unit(int(entry["target"]))
-        if defender.is_empty() or float(defender["troops"]) <= 0.0:
-            continue
-        var actual_damage: float = minf(float(defender["troops"]), float(entry["damage"]))
+        var defender: Dictionary=find_unit(int(entry["defender_id"]))
+        var remaining: float=float(defender["troops"])
+        if remaining<=0.0: continue
+        var allocation: float=float(requested_losses[entry["defender_id"]])
+        var actual_damage: float=minf(remaining,float(entry["damage"])*allocation)
+        if remaining-actual_damage<0.000001: actual_damage=remaining
+        entry["damage"]=actual_damage
+        combat_contacts[int(entry["attacker_id"])]=entry
         defender["troops"] = maxf(0.0, float(defender["troops"]) - actual_damage)
         defender["casualties_taken"] = float(defender["casualties_taken"]) + actual_damage
         if bool(entry.get("guarding",false)) and actual_damage>0.0:
             defender["guard_intercept_damage"]+=actual_damage
             defender["guard_intercept_ticks"]+=1
-        if actual_damage > 0.0:
-            defender["last_hit"] = battle_time
-        var shock_damage: float = float(entry["shock"])/(ARMY_SCALE if six_armies else 1.0)
+        defender["last_hit"]=battle_time
+        if entry["kind"]=="화살": defender["last_arrow_hit"]=battle_time
+        if bool(entry["braced"]): defender["brace_stops"]+=1
+        if bool(entry["rear"]): defender["rear_losses"]+=actual_damage
+        var shock_damage: float=float(entry["shock"])*allocation/(ARMY_SCALE if six_armies else 1.0)
         var pressure_damage: float = actual_damage/(ARMY_SCALE if six_armies else 1.0)
         if shock_damage > 0.0 or bool(entry["ambush"]):
             defender["morale"] = maxf(0.0, float(defender["morale"]) - shock_damage * 1.1 - (6.0 if bool(entry["ambush"]) else 0.0))
             defender["cohesion"] = maxf(0.0, float(defender["cohesion"]) - shock_damage * 1.6)
         _general_exposure(defender, pressure_damage, bool(entry["flank"]), shock_damage)
-        defender["cohesion"] = maxf(0.0, float(defender["cohesion"]) - pressure_damage * (0.85 if bool(entry["flank"]) else 0.38))
+        var disarray: float=0.85 if bool(entry["flank"]) else 0.38
+        if long_operation and bool(entry["rear"]): disarray=1.06
+        defender["cohesion"]=maxf(0.0,float(defender["cohesion"])-pressure_damage*disarray)
         if bool(entry["flank"]):
             defender["flank_hits"] = float(defender["flank_hits"]) + actual_damage
-        var source: Dictionary = find_unit(int(entry["source"]))
+        var source: Dictionary = find_unit(int(entry["attacker_id"]))
         if not source.is_empty():
             source["damage_dealt"] = float(source["damage_dealt"]) + actual_damage
+            if entry.has("visual_from"):
+                source["last_visual"]=battle_time
+                visual_effects.append(entry)
+                if visual_effects.size()>100: visual_effects.pop_front()
             if six_armies:
                 if bool(entry["linked"]): source["linked_hits"] += actual_damage
                 if float(entry["counter"])>1.01: source["counter_damage"] += actual_damage
@@ -1327,6 +1372,61 @@ func _combat(dt: float) -> void:
             for ally in units:
                 if int(ally["side"]) == int(defender["side"]) and float(ally["troops"]) > 0.0 and (ally["pos"] as Vector2).distance_to(defender["pos"]) < 180.0:
                     ally["morale"] = maxf(0.0, float(ally["morale"]) - 12.0)
+    if not combat_contacts.is_empty():
+        combat_history.append({"time":battle_time,"contacts":combat_contacts.values()})
+
+func _bow_effectiveness(unit: Dictionary, contacts: int, distance: float, ammo_fraction: float, screened: bool) -> float:
+    var full_ranks: int=clampi(ceili(float(unit["troops"])/180.0),1,24) if six_armies else 12
+    var frontage: float=lerpf(0.52,1.0,clampf(float(contacts)/full_ranks,0.0,1.0))
+    var range_factor: float=lerpf(1.0,0.76,smoothstep(90.0,220.0,distance))
+    var movement: float=lerpf(1.0,0.80,smoothstep(8.0,42.0,float(unit["motion_speed"])))
+    return frontage*range_factor*movement*ammo_fraction*(0.76 if screened else 1.0)
+
+func _bow_lane_screened(archer: Dictionary, enemy: Dictionary, targets: Dictionary) -> bool:
+    var origin: Vector2=archer["pos"]
+    var destination: Vector2=enemy["pos"]
+    var axis: Vector2=destination-origin
+    var span: float=axis.length()
+    if span<55.0: return false
+    var direction: Vector2=axis/span
+    for ally in units:
+        if ally["side"]!=archer["side"] or ally["type"]=="궁병" or bool(ally["routed"]): continue
+        var attacking: Dictionary=targets.get(int(ally["id"]),{})
+        if attacking.is_empty() or attacking["id"]!=enemy["id"]: continue
+        var offset: Vector2=(ally["pos"] as Vector2)-origin
+        var depth: float=offset.dot(direction)
+        if depth<15.0 or depth>span-5.0 or absf(offset.dot(direction.orthogonal()))>28.0: continue
+        if _river_separates(ally["pos"],destination): continue
+        if formation_contacts(ally,enemy,30.0)>0: return true
+    return false
+
+func _braced_for_charge(unit: Dictionary, direction: Vector2) -> bool:
+    return unit["type"]=="보병" and unit["formation"]=="방진" and unit["next_formation"]=="" and (
+        float(unit["motion_speed"])<8.0 and float(unit["cohesion"])>=62.0 and float(unit["morale"])>=38.0
+        and direction.dot(unit["facing"])>=0.42 and not bool(unit["routed"]))
+
+# Choose actual firing files from different parts of the front for the volley
+# effect. Only files with a defending slot in range can contribute a lane.
+func _bow_visual_lanes(archer: Dictionary, defender: Dictionary, fallback: Array[Vector2]) -> Array[Vector2]:
+    var firing: Array[Vector2]=formation_slots(archer)
+    var receiving: Array[Vector2]=formation_slots(defender)
+    var lanes: Array[Vector2]=[fallback[0],fallback[1]]
+    if firing.is_empty() or receiving.is_empty(): return lanes
+    var lateral: Vector2=((defender["pos"] as Vector2)-(archer["pos"] as Vector2)).normalized().orthogonal()
+    firing.sort_custom(func(a: Vector2,b: Vector2)->bool: return a.dot(lateral)<b.dot(lateral))
+    for slot in [firing.front(),firing.back()]:
+        if (slot as Vector2).distance_squared_to(fallback[0])<14.0*14.0: continue
+        var nearest: Vector2=Vector2.INF
+        var distance_squared: float=173.0*173.0
+        for target in receiving:
+            var d: float=(slot as Vector2).distance_squared_to(target)
+            if d<distance_squared:
+                nearest=target
+                distance_squared=d
+        if nearest!=Vector2.INF:
+            lanes.append(slot)
+            lanes.append(nearest)
+    return lanes
 
 
 # Neutral strategic positions are optional field objectives. An uncontested unit
@@ -1586,6 +1686,7 @@ func _update_battle_condition(dt: float) -> void:
         var p: Vector2 = unit["pos"]
         var enemy: Dictionary = _nearest_visible_enemy(unit)
         var safe: bool = enemy.is_empty() or p.distance_to(enemy["pos"]) > 110.0
+        if long_operation and battle_time-float(unit["last_arrow_hit"])<1.2: safe=false
         var recovery: bool = str(unit["action"]) in ["재집결", "휴식", "방어", "거점 방어", "거리 유지", "긴급 방어", "전술 재집결","지정 지역 사수","예비 대기","협동 대기"]
         if safe and recovery:
             unit["fatigue"] = maxf(0.0, float(unit["fatigue"]) - dt * 2.1)
@@ -2640,10 +2741,11 @@ func _deploy_detachments() -> void:
     _log("군단 편성: 본대와 별동대 전개")
 
 func corps_report(id: int) -> Dictionary:
-    var report: Dictionary = {"troops":0.0,"damage_dealt":0.0,"casualties_taken":0.0,"deserted":0.0,"decisions":0,"merit":0}
+    var report: Dictionary = {"troops":0.0,"damage_dealt":0.0,"casualties_taken":0.0,"deserted":0.0,"decisions":0,"merit":0,
+        "brace_stops":0,"rear_losses":0.0,"rout_count":0}
     for member in units:
         if int(member["id"]) != id and int(member.get("parent_id",-1)) != id: continue
-        for key in ["troops","damage_dealt","casualties_taken","deserted","decisions"]:
+        for key in ["troops","damage_dealt","casualties_taken","deserted","decisions","brace_stops","rear_losses","rout_count"]:
             report[key] += member[key]
         report["merit"] += merit(member)
     return report
@@ -2959,6 +3061,9 @@ func _tactical_target(unit: Dictionary,nearest: Dictionary) -> Dictionary:
         var score: float=110.0-d*0.6+45.0*(tactical_matchup(unit,enemy,flank)-1.0)
         if not _physical_screen(enemy,unit).is_empty(): score-=35.0
         if str(enemy["next_formation"])!="": score+=12.0
+        if long_operation:
+            if bool(enemy["routed"]): score-=24.0
+            if int(unit["contact_target_id"])==int(enemy["id"]) and str(unit["type"])!="궁병": score+=13.0
         if score<=score_best: continue
         if long_operation and str(unit["type"])!="궁병" and _river_separates(p,ep): continue
         if formation_contacts(unit,enemy,reach)<=0: continue

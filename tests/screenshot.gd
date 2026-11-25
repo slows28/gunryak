@@ -2,6 +2,7 @@ extends SceneTree
 ## Captures real Godot-rendered UI frames (not mockups).
 ## Requires a real graphics display such as Xvfb; DO NOT use --headless.
 const MAIN_SCENE = preload("res://main.tscn")
+const FrontView = preload("res://scripts/front_view.gd")
 const OUT_DIR = "res://test_results/screenshots"
 var game: Control
 
@@ -650,8 +651,120 @@ func _capture() -> void:
     if not _save_frame("escort_overview.png"):
         quit(1)
         return
+    if not await _capture_combat_drill():
+        quit(1)
+        return
     print("GUNRYAK_VISUAL_CAPTURE_PASSED")
     quit(0)
+
+func _capture_combat_drill() -> bool:
+    # Run two real engagements at a known location. Time and damage come from
+    # WarSim. Positioning the units makes simultaneous fronts reproducible.
+    game.queue_free()
+    await process_frame
+    game=MAIN_SCENE.instantiate()
+    root.add_child(game)
+    await process_frame
+    game.set_process(false)
+    game.call("_leave_title")
+    game.call("_start")
+    game.sim.battle_time=10.0
+    game.sim.forests.clear()
+    for unit in game.sim.units:
+        unit["troops"]=0.0
+    var rider: Dictionary=game.sim.find_unit(2)
+    rider["pos"]=Vector2(990,780)
+    rider["troops"]=rider["initial_troops"]
+    rider["facing"]=Vector2.RIGHT
+    rider["charge"]=63.0
+    rider["charge_speed"]=75.0
+    rider["charge_dir"]=Vector2.RIGHT
+    var square: Dictionary=game.sim.find_unit(3)
+    square["pos"]=Vector2(1025,780)
+    square["type"]="보병"
+    square["formation"]="방진"
+    square["facing"]=Vector2.LEFT
+    square["troops"]=square["initial_troops"]
+    var archer: Dictionary=game.sim.find_unit(1)
+    archer["pos"]=Vector2(960,1010)
+    archer["facing"]=Vector2.RIGHT
+    archer["troops"]=archer["initial_troops"]
+    var target: Dictionary=game.sim.find_unit(4)
+    target["pos"]=Vector2(1095,1010)
+    target["troops"]=target["initial_troops"]
+    game.sim._combat(0.1)
+    var attacks: Dictionary=game.sim.combat_contacts
+    if not bool(attacks.get(2,{}).get("braced",false)) or attacks.get(1,{}).get("arrow_lanes",[]).size()<4:
+        push_error("VISUAL_CAPTURE_FAIL: real drill did not generate a brace and multiple arrow lanes")
+        return false
+    game.contact_button.pressed.emit()
+    var first_pair: Vector2i=game.combat_focus_pair
+    var first_center: Vector2=game.camera_center
+    game.contact_button.pressed.emit()
+    if game.combat_focus_pair==first_pair or first_center.is_equal_approx(game.camera_center):
+        push_error("VISUAL_CAPTURE_FAIL: contact button did not cycle through simultaneous visible fights")
+        return false
+    game.call("_on_unit_selected",game.sim.command_ids(0).find(2))
+    var exchange: Vector2=game.call("_recent_corps_exchange",2)
+    if not is_equal_approx(exchange.x,float(rider["damage_dealt"])) or not is_equal_approx(exchange.y,float(rider["casualties_taken"])):
+        push_error("VISUAL_CAPTURE_FAIL: recent exchange is inconsistent with the actual combat")
+        return false
+    if not game.combat_exchange.text.contains("최근 8초") or not game.commander_observation.text.contains("방진에 돌격 저지"):
+        push_error("VISUAL_CAPTURE_FAIL: selected commander does not explain the actual brace encounter")
+        return false
+    game.camera_center=Vector2(1032,896)
+    game.camera_zoom=1.52
+    game.render_clock=game.sim.battle_time+0.32
+    game.detailed_map=true
+    game.call("_clamp_camera")
+    game.map_layer.queue_redraw()
+    game.queue_redraw()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    print("COMBAT_DRILL_PASS")
+    if not _save_frame("combat_drill.png"):
+        return false
+    return await _capture_bow_motion(archer,target)
+
+func _capture_bow_motion(archer: Dictionary, target: Dictionary) -> bool:
+    var release: float=FrontView.VOLLEY_RELEASE+FrontView.volley_lane_delay(1)
+    if FrontView.bow_phase(0.04)!=FrontView.BowPhase.LIFT or FrontView.bow_phase(0.14)!=FrontView.BowPhase.DRAW or (
+        FrontView.bow_phase(FrontView.VOLLEY_RELEASE)!=FrontView.BowPhase.RELEASE or FrontView.bow_phase(0.38)!=FrontView.BowPhase.LOWER
+    ) or not is_zero_approx(FrontView.arrow_age(release,1)) or FrontView.arrow_age(release-0.01,1)>=0.0:
+        push_error("VISUAL_CAPTURE_FAIL: arrow must appear on the release pose of its own shooting lane")
+        return false
+    var p: Vector2=archer["pos"]
+    var q: Vector2=target["pos"]
+    var lanes: Array[Vector2]=game.sim.combat_contacts[int(archer["id"])]["arrow_lanes"]
+    var lane: int=game.call("_nearest_volley_lane",lanes[0],lanes)
+    if lane!=0 or FrontView.arrow_position(p,q,0.5,8.0).y>=p.lerp(q,0.5).y:
+        push_error("VISUAL_CAPTURE_FAIL: volley travel does not use its source and curved flight")
+        return false
+    game.call("_on_unit_selected",game.sim.command_ids(0).find(int(archer["id"])))
+    game.camera_center=p.lerp(q,0.46)
+    game.camera_zoom=2.8
+    game.call("_clamp_camera")
+    var view:=Rect2(Vector2.ZERO,game.sim.field_size)
+    var samples: Array[float]=[0.03,0.09,0.15,0.21,0.255,0.31,0.37,0.43,0.50,0.58,0.66,0.76]
+    var shooters: Array[Dictionary]=[archer]
+    for i in range(samples.size()):
+        game.render_clock=game.sim.battle_time+samples[i]
+        var batch: Array[Dictionary]=game.call("_visible_soldier_batch",shooters,view)
+        var firing: bool=false
+        for soldier in batch:
+            if FrontView.bow_phase(float(soldier["bow_age"]))==FrontView.BowPhase.RELEASE:
+                firing=true
+                break
+        if i==4 and not firing:
+            push_error("VISUAL_CAPTURE_FAIL: no real archer enters the release pose")
+            return false
+        game.map_layer.queue_redraw()
+        await process_frame
+        await RenderingServer.frame_post_draw
+        if not _save_frame("archer_motion_%02d.png" % i):
+            return false
+    print("ARCHER_MOTION_PASS")
+    return true
 
 func _save_frame(filename: String) -> bool:
     var png: Image = root.get_texture().get_image()

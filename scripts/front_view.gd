@@ -2,6 +2,27 @@ extends RefCounted
 ## Tactical display model. The sector dashboard never changes battle state.
 ## All opponent data is subject to the player's current observation rules.
 
+enum BowPhase { IDLE, LIFT, DRAW, RELEASE, LOWER }
+
+const VOLLEY_RELEASE: float=0.24
+const VOLLEY_RECOVERY: float=0.46
+
+static func bow_phase(age: float) -> BowPhase:
+    if age<0.0 or age>=VOLLEY_RECOVERY: return BowPhase.IDLE
+    if age<0.08: return BowPhase.LIFT
+    if age<VOLLEY_RELEASE: return BowPhase.DRAW
+    if age<VOLLEY_RELEASE+0.075: return BowPhase.RELEASE
+    return BowPhase.LOWER
+
+static func volley_lane_delay(lane: int) -> float:
+    return float(lane)*0.038
+
+static func arrow_age(volley_age: float, lane: int) -> float:
+    return volley_age-volley_lane_delay(lane)-VOLLEY_RELEASE
+
+static func arrow_position(origin: Vector2, target: Vector2, progress: float, rise: float) -> Vector2:
+    return origin.lerp(target,progress)+Vector2(0,-4.0*rise*progress*(1.0-progress))
+
 static func sector_for(p: Vector2, extent: Vector2) -> int:
     return clampi(floori(p.y/maxf(1.0,extent.y/3.0)),0,2)
 
