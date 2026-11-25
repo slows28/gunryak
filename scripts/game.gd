@@ -31,6 +31,18 @@ var start_btn: Button
 var pause_btn: Button
 var speed_btn: Button
 var apply_btn: Button
+var planning_dialog: AcceptDialog
+var timeline_dialog: AcceptDialog
+var timeline_view: TextEdit
+var plan_status: Label
+var plan_scenario: OptionButton
+var plan_donor: OptionButton
+var plan_deputy: OptionButton
+var plan_priority: OptionButton
+var plan_fog: CheckButton
+var map_mode: String = "선택"
+var fog_enabled: bool = true
+var plan_actions: Array[Button] = []
 
 func _ready() -> void:
     _install_korean_font()
@@ -62,6 +74,7 @@ func _build_interface() -> void:
     pause_btn = _button("일시정지", Vector2(554, 25), Vector2(102, 37), _pause)
     speed_btn = _button("속도 ×1", Vector2(662, 25), Vector2(100, 37), _speed)
     _button("초기화", Vector2(768, 25), Vector2(88, 37), _reset)
+    _button("작전실", Vector2(862, 25), Vector2(76, 37), _open_planning)
     status_label = _label("", Vector2(948, 15), Vector2(312, 66), 12, COL_GOLD)
     _label("출전 장수", Vector2(958, 106), Vector2(270, 28), 20, COL_TEXT)
     _label("장수 선택 → 임무·진형 방침 설정", Vector2(958, 136), Vector2(291, 22), 12, COL_MUTED)
@@ -89,6 +102,7 @@ func _build_interface() -> void:
     event_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     notice_label = _label("", Vector2(947, 697), Vector2(303, 93), 13, COL_MUTED)
     notice_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    _build_planning_dialog()
 
 func _label(message: String, where: Vector2, extent: Vector2, font_size: int, color: Color) -> Label:
     var element := Label.new()
@@ -164,6 +178,7 @@ func _apply_order() -> void:
     queue_redraw()
 
 func _start() -> void:
+    map_mode = "선택"
     sim.start()
     _refresh_hud()
 
@@ -179,6 +194,7 @@ func _speed() -> void:
 
 func _reset() -> void:
     sim.reset()
+    map_mode = "선택"
     selected_id = 0
     step_buffer = 0.0
     runtime_notice = ""
@@ -228,7 +244,8 @@ func _refresh_hud() -> void:
         phase = "일시정지"
     elif sim.started:
         phase = "작전 %d턴  /  %.0f초" % [sim.turn, sim.battle_time]
-    status_label.text = "%s\n아군 %d : 적군 %d\n전령 이동 %d · 도착 %d · 차단 %d" % [phase, sim.total_troops(0), sim.total_troops(1), sim.couriers.size(), sim.delivered_orders, sim.intercepted_orders]
+    var enemy_text: String = "미확인" if fog_enabled and not sim.finished else str(sim.total_troops(1))
+    status_label.text = "%s | %s\n아군 %d : 적군 %s\n전령 이동 %d · 도착 %d · 차단 %d" % [phase, sim.scenario_title, sim.total_troops(0), enemy_text, sim.couriers.size(), sim.delivered_orders, sim.intercepted_orders]
     start_btn.disabled = sim.started or sim.finished
     pause_btn.disabled = not sim.started or sim.finished
     pause_btn.text = "재개" if sim.paused else "일시정지"
@@ -249,9 +266,9 @@ func _refresh_hud() -> void:
             lines += report_line + "\n"
     event_label.text = lines
     if not sim.started:
-        notice_label.text = "① 장수별 작전 설정\n② 전투 개시\n③ 지도에서 아군 클릭 가능"
+        notice_label.text = sim.scenario_goal + "\n작전실: 병력·부장·배치·경유점\n지도 모드: " + map_mode
     elif sim.finished:
-        notice_label.text = "장수별 결산은 아래 전황 창\n[초기화]로 재실행 가능합니다."
+        notice_label.text = "작전실 → 전투 타임라인\n장수별 결산은 아래 전황 창\n[초기화]로 재실행"
     elif sim.turn < 6:
         notice_label.text = "최초 5턴은 사전 명령 수행.\n이후부터 전령 전달이 가능합니다."
     else:
@@ -263,6 +280,20 @@ func _gui_input(event: InputEvent) -> void:
     if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
         var mouse_pos: Vector2 = event.position
         if not Rect2(MAP_TOP_LEFT, MAP_SIZE).has_point(mouse_pos):
+            return
+        if not sim.started and map_mode != "선택":
+            var field_pos: Vector2 = mouse_pos - MAP_TOP_LEFT
+            var applied: bool = false
+            match map_mode:
+                "배치": applied = sim.place_unit(selected_id, field_pos)
+                "경유점": applied = sim.add_waypoint(selected_id, field_pos)
+                "방어선": applied = sim.set_defense_line(selected_id, field_pos)
+            runtime_notice = "작전 계획 반영: " + map_mode if applied else "설정 불가: 배치 범위·거리 또는 경유점 한도 확인"
+            if map_mode != "경유점" and applied:
+                map_mode = "선택"
+            _refresh_hud()
+            queue_redraw()
+            accept_event()
             return
         for i in range(mini(3, sim.units.size())):
             var unit: Dictionary = sim.units[i]
@@ -286,9 +317,12 @@ func _draw() -> void:
     for y in [131.0, 282.0, 435.0]:
         draw_line(_screen(Vector2(5, y)), _screen(Vector2(895, y)), Color(Color("#8e906f"), 0.39), 13.0)
         draw_line(_screen(Vector2(5, y)), _screen(Vector2(895, y)), Color(Color("#c1b393"), 0.34), 2.0)
-    draw_rect(Rect2(_screen(Vector2(325, 80)), Vector2(125, 90)), Color(Color("#335443"), 0.72))
-    draw_rect(Rect2(_screen(Vector2(450, 360)), Vector2(130, 125)), Color(Color("#335443"), 0.72))
-    draw_rect(Rect2(_screen(Vector2(400, 213)), Vector2(108, 89)), Color(Color("#817b61"), 0.45))
+    for forest in sim.forests:
+        draw_rect(Rect2(_screen(forest.position), forest.size), Color(Color("#335443"), 0.72))
+    draw_rect(Rect2(_screen(sim.hill.position), sim.hill.size), Color(Color("#817b61"), 0.45))
+    if not sim.started:
+        draw_rect(Rect2(_screen(Vector2(35,22)),Vector2(235,530)),Color(COL_BLUE,0.07))
+        draw_rect(Rect2(_screen(Vector2(35,22)),Vector2(235,530)),Color(COL_BLUE,0.4),false,1.5)
     draw_circle(_screen(Vector2(52, 285)), 32.0, Color(Color("#72c0d4"), 0.13))
     draw_circle(_screen(Vector2(844, 285)), 32.0, Color(Color("#f08a70"), 0.13))
     draw_rect(Rect2(_screen(Vector2(20, 252)), Vector2(60, 67)), Color(Color("#3b91b2"), 0.4))
@@ -296,12 +330,14 @@ func _draw() -> void:
     _map_text("아군 본진", Vector2(14, 241), COL_BLUE, 13)
     _map_text("적군 본진", Vector2(810, 241), COL_RED, 13)
     _map_text("북쪽 길", Vector2(428, 114), Color("#e6d8ad"), 12)
-    _map_text("중앙 고지", Vector2(413, 264), Color("#e6d8ad"), 12)
-    _map_text("남쪽 숲", Vector2(490, 397), Color("#d3e4ca"), 12)
+    _map_text("고지", sim.hill.get_center(), Color("#e6d8ad"), 12)
+    for forest in sim.forests:
+        _map_text("숲", forest.get_center(), Color("#d3e4ca"), 12)
     # Capture sites show control, contested progress and victory holds directly.
     for site in sim.outposts:
         var site_pos: Vector2 = _screen(site["pos"])
-        var owner: int = int(site["owner"])
+        var known: bool = not fog_enabled or sim.finished or sim.player_can_see(site["pos"])
+        var owner: int = int(site["owner"]) if known else -1
         var color: Color = COL_BLUE if owner == 0 else (COL_RED if owner == 1 else COL_GOLD)
         draw_arc(site_pos, WarSim.OUTPOST_RADIUS, 0.0, TAU, 44, Color(color.r, color.g, color.b, 0.24), 1.5)
         draw_colored_polygon(PackedVector2Array([
@@ -309,14 +345,16 @@ func _draw() -> void:
             site_pos + Vector2(9, -3),
             site_pos + Vector2(0, 6),
             site_pos + Vector2(-9, -3)]), color)
-        var state: String = "중립" if owner < 0 else ("아군" if owner == 0 else "적군")
+        var state: String = ("중립" if owner < 0 else ("아군" if owner == 0 else "적군")) if known else "미확인"
         _draw_string(str(site["name"]) + " " + state, site_pos + Vector2(-45, -18), 12, COL_TEXT)
-        if int(site["challenger"]) >= 0:
+        if known and int(site["challenger"]) >= 0:
             var progress: float = clampf(float(site["progress"]) / WarSim.OUTPOST_CAPTURE_SECONDS, 0.0, 1.0)
             draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60, 4)), Color("#243138"))
             draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60.0 * progress, 4)), COL_BLUE if int(site["challenger"]) == 0 else COL_RED)
     for base in sim.bases:
         if not bool(base["alive"]):
+            continue
+        if fog_enabled and not sim.finished and int(base["side"]) != 0 and not sim.player_can_see(base["pos"]):
             continue
         var p: Vector2 = _screen(base["pos"])
         var side: int = int(base["side"])
@@ -327,6 +365,8 @@ func _draw() -> void:
         draw_rect(Rect2(p - Vector2(7, 7), Vector2(14, 14)), accent)
         _draw_string("보급 %s · %d" % [str(base["state"]), int(base.get("stock", 100.0))], p + Vector2(-40, 24), 12, Color("#f6f4e8"))
     for commander in sim.commanders:
+        if fog_enabled and not sim.finished and int(commander["side"]) != 0 and not sim.player_can_see(commander["pos"]):
+            continue
         var p: Vector2 = _screen(commander["pos"])
         var accent: Color = COL_BLUE if int(commander["side"]) == 0 else COL_RED
         draw_colored_polygon(PackedVector2Array([p + Vector2(0, -15), p + Vector2(12, 0), p + Vector2(0, 15), p + Vector2(-12, 0)]), accent)
@@ -335,6 +375,8 @@ func _draw() -> void:
             draw_line(p, _screen(commander["goal"]), Color(accent.r, accent.g, accent.b, 0.6), 1.5)
     for scout in sim.scouts:
         if not bool(scout["alive"]):
+            continue
+        if fog_enabled and not sim.finished and int(scout["side"]) != 0 and not sim.player_can_see(scout["pos"]):
             continue
         var scout_p: Vector2 = _screen(scout["pos"])
         var scout_color: Color = COL_BLUE if int(scout["side"]) == 0 else COL_RED
@@ -348,21 +390,43 @@ func _draw() -> void:
         var report_p: Vector2 = _screen(report["pos"])
         var age: float = maxf(0.0, sim.battle_time - float(report["time"]))
         draw_arc(report_p, 12.0, 0.0, TAU, 24, Color(COL_GOLD, maxf(0.15, 0.65 - age * 0.025)), 1.5)
-        _draw_string("정찰 %.0f초 전" % age, report_p + Vector2(-30, 19), 10, COL_GOLD)
+        _draw_string("정찰 %.0f초 전 · %d%%" % [age,int(float(report.get("confidence",0.0))*100.0)], report_p + Vector2(-30, 19), 10, COL_GOLD)
     for letter in sim.couriers:
+        if fog_enabled and not sim.finished and int(letter["side"]) != 0 and not sim.player_can_see(letter["pos"]):
+            continue
         var p: Vector2 = _screen(letter["pos"])
         draw_circle(p, 5.0, COL_GOLD)
         _draw_string("전령", p + Vector2(-14, -11), 12, COL_GOLD)
     # Draw real maneuver waypoints so an aggressive flanking decision is visible.
     for unit in sim.units:
-        if float(unit["troops"]) > 0.0 and str(unit["action"]) in ["측면 우회", "거점 점령", "거점 방어", "재집결", "전열 지원", "탄약 보충", "보급 복귀", "패주", "정보 확인", "명령 수행"]:
+        if not _visible_unit(unit):
+            continue
+        if fog_enabled and not sim.finished and int(unit["side"]) != 0:
+            continue
+        if float(unit["troops"]) > 0.0 and str(unit["action"]) in ["측면 우회", "거점 점령", "거점 방어", "재집결", "전열 지원", "탄약 보충", "보급 복귀", "패주", "정보 확인", "명령 수행", "계획 경유", "방어선 사수"]:
             var start_point: Vector2 = _screen(unit["pos"])
             var flank_waypoint: Vector2 = _screen(unit["goal"])
             draw_line(start_point, flank_waypoint, Color(COL_GOLD, 0.58), 1.4)
             draw_arc(flank_waypoint, 8.0, 0.0, TAU, 24, COL_GOLD, 1.3)
+    if not sim.started:
+        var selected: Dictionary = sim.find_unit(selected_id)
+        if not selected.is_empty():
+            var previous: Vector2 = _screen(selected["pos"])
+            var step_number: int = 1
+            for waypoint in selected["waypoints"]:
+                var point: Vector2 = _screen(waypoint)
+                draw_line(previous, point, COL_GOLD, 2.0)
+                draw_circle(point, 9.0, COL_GOLD, false, 2.0)
+                _draw_string(str(step_number),point+Vector2(-3,4),11,COL_TEXT)
+                previous = point
+                step_number += 1
+            if bool(selected["defense_set"]):
+                var anchor: Vector2 = _screen(selected["defense_anchor"])
+                draw_arc(anchor, 28.0,0.0,TAU,32,COL_BLUE,2.0)
+                _draw_string("사수",anchor+Vector2(-12,4),11,COL_BLUE)
     var label_areas: Array[Rect2] = []
     for unit in sim.units:
-        if float(unit["troops"]) > 0.0:
+        if float(unit["troops"]) > 0.0 and _visible_unit(unit):
             _draw_unit(unit, label_areas)
     draw_rect(map_rect, Color(Color("#cad8d7"), 0.42), false, 1.5)
 
@@ -450,3 +514,161 @@ func _map_text(value: String, pos: Vector2, shade: Color, font_size: int) -> voi
 func _draw_string(value: String, where: Vector2, font_size: int, shade: Color) -> void:
     if korean_font != null:
         draw_string(korean_font, where, value, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, shade)
+
+
+func _visible_unit(unit: Dictionary) -> bool:
+    return int(unit["side"]) == 0 or not fog_enabled or sim.finished or sim.player_can_see(unit["pos"], sim.terrain_at(unit["pos"]) == "숲" or float(unit["ambush_ready"]) >= 3.0)
+
+func _build_planning_dialog() -> void:
+    planning_dialog = AcceptDialog.new()
+    planning_dialog.title = "군략 · 작전실"
+    planning_dialog.ok_button_text = "닫기"
+    add_child(planning_dialog)
+    var root := VBoxContainer.new()
+    root.custom_minimum_size = Vector2(560, 0)
+    planning_dialog.add_child(root)
+    plan_status = Label.new()
+    plan_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    root.add_child(plan_status)
+    plan_scenario = _plan_option(root,"전장 시나리오",["북남 요충지","중앙 고지 쟁탈","보급로 사수"])
+    plan_scenario.item_selected.connect(_change_scenario)
+    plan_donor = _plan_option(root,"다른 장수 / 병력 제공 부대",["왕평 부대","마속 부대","위연 부대"])
+    var troop_row := HBoxContainer.new()
+    root.add_child(troop_row)
+    _plan_button(troop_row,"병력 10명 받기",_transfer_in)
+    _plan_button(troop_row,"병력 10명 보내기",_transfer_out)
+    _plan_button(troop_row,"장수 교체",_swap_general)
+    plan_deputy = _plan_option(root,"부장",["통솔형 부장","공격형 부장","책략형 부장"])
+    plan_deputy.item_selected.connect(_change_deputy)
+    plan_priority = _plan_option(root,"보급 우선순위",["낮음","보통","높음"])
+    plan_priority.item_selected.connect(_change_priority)
+    var map_row := HBoxContainer.new()
+    root.add_child(map_row)
+    _plan_button(map_row,"초기 배치",func(): _set_map_mode("배치"))
+    _plan_button(map_row,"경유점 추가",func(): _set_map_mode("경유점"))
+    _plan_button(map_row,"방어선 지정",func(): _set_map_mode("방어선"))
+    _plan_button(map_row,"계획 삭제",_clear_route)
+    var mode_row := HBoxContainer.new()
+    root.add_child(mode_row)
+    _plan_button(mode_row,"지도 선택 모드",func(): _set_map_mode("선택"))
+    plan_fog = CheckButton.new()
+    plan_fog.text = "책사 시야 제한"
+    plan_fog.button_pressed = fog_enabled
+    mode_row.add_child(plan_fog)
+    plan_fog.toggled.connect(_toggle_fog)
+    var timeline_btn := Button.new()
+    timeline_btn.text = "전투 타임라인 보기 (전체 기록)"
+    root.add_child(timeline_btn)
+    timeline_btn.pressed.connect(_open_timeline)
+    timeline_dialog = AcceptDialog.new()
+    timeline_dialog.title = "전투 타임라인"
+    timeline_dialog.ok_button_text = "닫기"
+    add_child(timeline_dialog)
+    timeline_view = TextEdit.new()
+    timeline_view.editable = false
+    timeline_view.custom_minimum_size = Vector2(780,500)
+    timeline_dialog.add_child(timeline_view)
+
+func _plan_option(parent: VBoxContainer, caption: String, options: Array[String]) -> OptionButton:
+    var label := Label.new()
+    label.text = caption
+    parent.add_child(label)
+    var option := OptionButton.new()
+    for item in options:
+        option.add_item(item)
+    parent.add_child(option)
+    return option
+
+func _plan_button(parent: HBoxContainer, caption: String, handler: Callable) -> void:
+    var btn := Button.new()
+    btn.text = caption
+    btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    parent.add_child(btn)
+    btn.pressed.connect(handler)
+    if caption != "지도 선택 모드":
+        plan_actions.append(btn)
+
+func _open_planning() -> void:
+    var unit: Dictionary = sim.find_unit(selected_id)
+    if unit.is_empty():
+        return
+    plan_scenario.select(sim.scenario_id)
+    plan_scenario.disabled = sim.started and not sim.finished
+    plan_donor.clear()
+    for i in range(3):
+        var candidate: Dictionary = sim.find_unit(i)
+        plan_donor.add_item(str(candidate["name"]) + " 부대",i)
+    plan_donor.select((selected_id+1)%3)
+    plan_deputy.select(int(unit["deputy_index"]))
+    plan_deputy.disabled = sim.started
+    plan_priority.select(int(unit["supply_priority"]))
+    plan_priority.disabled = sim.finished
+    plan_fog.set_pressed_no_signal(fog_enabled)
+    for btn in plan_actions:
+        btn.disabled = sim.started
+    _refresh_plan_status()
+    planning_dialog.popup_centered()
+
+func _refresh_plan_status() -> void:
+    var unit: Dictionary = sim.find_unit(selected_id)
+    plan_status.text = "%s / %s\n%s 부대 · %d명 · 경유점 %d개 · 부장 %s" % [sim.scenario_title,sim.scenario_goal,str(unit["name"]),int(unit["troops"]),unit["waypoints"].size(),sim.deputy_name(unit)]
+
+func _change_scenario(index: int) -> void:
+    if sim.set_scenario(index):
+        map_mode = "선택"
+        selected_id = 0
+        runtime_notice = ""
+        _refresh_unit_list()
+        _select_unit()
+        planning_dialog.hide()
+        queue_redraw()
+
+func _transfer_in() -> void:
+    if sim.transfer_troops(selected_id,plan_donor.get_selected_id(),10):
+        _refresh_plan_status()
+        _refresh_hud()
+    else:
+        plan_status.text = "병력 조정 불가: 최소 40명 / 최대 220명"
+
+func _transfer_out() -> void:
+    if sim.transfer_troops(plan_donor.get_selected_id(),selected_id,10):
+        _refresh_plan_status()
+        _refresh_hud()
+    else:
+        plan_status.text = "병력 조정 불가: 최소 40명 / 최대 220명"
+
+func _swap_general() -> void:
+    if sim.swap_generals(selected_id,plan_donor.get_selected_id()):
+        _refresh_unit_list()
+        _select_unit()
+        planning_dialog.hide()
+
+func _change_deputy(index: int) -> void:
+    sim.set_deputy(selected_id,index)
+    _refresh_plan_status()
+
+func _change_priority(index: int) -> void:
+    sim.set_supply_priority(selected_id,index)
+    _refresh_plan_status()
+
+func _set_map_mode(mode: String) -> void:
+    map_mode = mode
+    runtime_notice = "지도에서 위치를 클릭하세요: " + mode if mode != "선택" else ""
+    planning_dialog.hide()
+    _refresh_hud()
+    queue_redraw()
+
+func _clear_route() -> void:
+    sim.clear_plan(selected_id)
+    _refresh_plan_status()
+    queue_redraw()
+
+func _open_timeline() -> void:
+    planning_dialog.hide()
+    timeline_view.text = sim.timeline_text() if sim.finished or not fog_enabled else "시야 제한 중에는 전체 타임라인을 공개하지 않습니다. 전투 종료 후 확인하거나 전체 관전 모드로 전환하세요."
+    timeline_dialog.popup_centered()
+
+func _toggle_fog(value: bool) -> void:
+    fog_enabled = value
+    _refresh_hud()
+    queue_redraw()
