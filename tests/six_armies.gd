@@ -211,6 +211,40 @@ func _run() -> void:
         rear["has_destination"]=false
         rear["routed"]=true
         check(escort_sim._escort_rearguard(0)!=rear_id,"routed army cannot be assigned protection")
+    # Verify the information shown on the battlefield against actual movement.
+    var cargo_sim:=WarSim.new()
+    cargo_sim.set_long_operation(true)
+    cargo_sim.set_scenario(3)
+    var wagon_origin:Vector2=cargo_sim.convoy["pos"]
+    for u in cargo_sim.units:
+        u["pos"]=Vector2(200,1500) if int(u["side"])==0 else Vector2(2500,1500)
+    check(cargo_sim.convoy_status()["state"]=="호위 대기","cargo reports unguarded wait")
+    cargo_sim._update_convoy(0.1)
+    check(cargo_sim.convoy["pos"]==wagon_origin and float(cargo_sim.convoy["unguarded_seconds"])>0.0,"unguarded wagon actually waits")
+    var cargo_guard:Dictionary=cargo_sim.find_unit(0)
+    cargo_guard["pos"]=wagon_origin+Vector2(30,0)
+    cargo_sim.started=true
+    cargo_sim._update_convoy(0.1)
+    check(float(cargo_sim.convoy_status()["progress"])>0.0 and cargo_sim.convoy_status()["state"]=="호위 이동","cargo progress reflects actual movement")
+    var cargo_enemy:Dictionary=cargo_sim.find_unit(3)
+    cargo_enemy["pos"]=cargo_sim.convoy["pos"]
+    var stopped:Vector2=cargo_sim.convoy["pos"]
+    cargo_sim._update_convoy(0.1)
+    check(cargo_sim.convoy_status()["state"]=="교전 정체" and cargo_sim.convoy["pos"]==stopped and float(cargo_sim.convoy["hp"])<100.0,"cargo contested state matches halt and damage")
+    cargo_guard["pos"]=cargo_sim.commanders[0]["pos"]
+    check(cargo_sim.commander_guard_count(0)>0,"commander protection uses actual capture radius")
+    cargo_guard["routed"]=true
+    check(cargo_sim.commander_guard_count(0)==0,"routed guard does not protect commander")
+    var route_preview_sim:=WarSim.new()
+    route_preview_sim.set_long_operation(true)
+    var route_preview_unit:Dictionary=route_preview_sim.find_unit(2)
+    route_preview_unit["pos"]=Vector2(800,650)
+    route_preview_unit["goal"]=Vector2(1600,650)
+    route_preview_sim._committed_bridge_route(route_preview_unit,route_preview_unit["pos"],route_preview_unit["goal"])
+    var preview_bridge:float=float(route_preview_unit["bridge_y"])
+    var preview:Array[Vector2]=route_preview_sim.committed_route_preview(route_preview_unit)
+    check(preview.size()==3 and preview[0].y==preview_bridge and preview[1].y==preview_bridge and preview.back()==route_preview_unit["goal"],"route preview reflects actual committed bridge and destination")
+    check(float(route_preview_unit["bridge_y"])==preview_bridge,"route preview does not mutate army route")
     # Actual damage suffered by an intervening infantry line is measured
     # separately from damage reduction to an attacked archer.
     var screen_sim:=WarSim.new()
@@ -289,6 +323,8 @@ func _run() -> void:
         print("ROUTE_ROW "+JSON.stringify({"scenario":scenario,"crossings":bridge_count,"blocked_steps":water_count,"water_ticks":water_ticks,"flank_commits":commits,"flank_aborts":aborts,"guard_damage":guard_damage}))
         check(water_ticks==0,"no ground army center enters river in actual scenario "+str(scenario))
         print("COOPERATION_ROW "+JSON.stringify({"scenario":scenario,"linked_damage":linked,"counter_damage":counter,"flank_damage":flanking,"maneuver_distance":maneuver,"support_seconds":support,"flank_completed":completed,"screened_damage":screened,"enemy_replans":sim.enemy_replans}))
+        if scenario==3:
+            print("ESCORT_ROW "+JSON.stringify({"progress":sim.convoy_status()["progress"],"hp":sim.convoy["hp"],"guarded":sim.convoy_status()["guards"],"moving_seconds":float(sim.convoy.get("moving_seconds",0.0))*sim.operation_scale(),"blocked_seconds":float(sim.convoy.get("blocked_seconds",0.0))*sim.operation_scale(),"unguarded_seconds":float(sim.convoy.get("unguarded_seconds",0.0))*sim.operation_scale(),"commander_guards":sim.commander_guard_count(0)}))
         print("SIX_ARMY_ROW "+JSON.stringify({"scenario":scenario,"seconds":sim.operation_elapsed(),"model_seconds":sim.battle_time,"winner":sim.winning_side,"blue":sim.total_troops(0),"red":sim.total_troops(1),"delivered":sim.delivered_orders,"intercepted":sim.intercepted_orders,"issued":issued,"result":sim.result}))
     var model := Campaign.new()
     model.set_six_armies(true)
