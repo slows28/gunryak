@@ -141,6 +141,7 @@ func open(mid_battle:bool=false)->void:
 func _select(id:int)->void:
     var u:Dictionary=sim.find_unit(id)
     if u.is_empty(): return
+    if draft_dirty and selected_id==id: return
     if draft_dirty and selected_id!=id:
         feedback.text="현재 부대의 미확정 지시를 먼저 확정하거나 취소하십시오."
         for i in range(roster.item_count):
@@ -154,13 +155,16 @@ func _select(id:int)->void:
     var idx:int=ACTIONS.find(str(u["mission"]))
     action_choice.select(maxi(0,idx))
     partner_choice.clear()
-    partner_choice.add_item("자동 / 없음",-1)
+    partner_choice.add_item("자동 / 없음")
+    partner_choice.set_item_metadata(0,-1)
+    partner_choice.select(0)
     var assigned:int=int(u.get("assigned_link",-1))
     for other in sim.command_ids(0):
         if other==id: continue
         var friend:Dictionary=sim.find_unit(other)
         if float(friend["troops"])<=0: continue
-        partner_choice.add_item(str(friend["name"])+" 군단",other)
+        partner_choice.add_item(str(friend["name"])+" 군단")
+        partner_choice.set_item_metadata(partner_choice.item_count-1,other)
         if other==assigned: partner_choice.select(partner_choice.item_count-1)
     has_destination=bool(u.get("has_destination",false))
     destination=u.get("order_destination",u["pos"]) if has_destination else u["pos"]
@@ -176,7 +180,7 @@ func _apply()->void:
         feedback.text="먼저 지도에서 목적지를 지정하십시오."
         return
     var action:String=ACTIONS[action_choice.selected]
-    var partner:int=partner_choice.get_selected_id()
+    var partner:int=int(partner_choice.get_item_metadata(partner_choice.selected))
     if sim.issue_map_order(selected_id,action,destination,partner):
         feedback.text="전령 파견 완료 · 도착까지 기존 지시 유지" if in_battle else "작전 지시 확정 · "+str(sim.find_unit(selected_id)["name"])+" / "+action
         draft_dirty=false
@@ -211,7 +215,7 @@ func _gui_input(event:InputEvent)->void:
                     best=d
                     drag_id=id
             if drag_id>=0:
-                _select(drag_id)
+                if selected_id!=drag_id: _select(drag_id)
                 if selected_id!=drag_id:
                     drag_id=-1
                     drag_origin=Vector2.ZERO
@@ -250,6 +254,11 @@ func _draw()->void:
     if sim==null: return
     draw_rect(MAP.grow(5),Color("#816447"))
     draw_rect(MAP,PAPER)
+    for band in range(10):
+        draw_rect(MAP.grow(-float(band)*2.4),Color(0.32,0.20,0.08,0.028),false,3.0)
+    for i in range(6):
+        var fold_x:float=MAP.position.x+MAP.size.x*(float(i)+0.5)/6.0
+        draw_line(Vector2(fold_x,MAP.position.y),Vector2(fold_x+1,MAP.end.y),Color(0.38,0.27,0.14,0.045),1.0)
     var rng:=RandomNumberGenerator.new()
     rng.seed=41+sim.scenario_id
     for i in range(1100):
@@ -270,12 +279,28 @@ func _draw()->void:
         for x in range(-12,13,4): draw_line(p+Vector2(x,-8),p+Vector2(x,8),INK,0.8)
     for forest in sim.forests:
         var area:Rect2=forest
-        for i in range(27):
+        var center:Vector2=_point(area.get_center())
+        var radius:Vector2=area.size/sim.field_size*MAP.size*0.54
+        var outline:=PackedVector2Array()
+        for j in range(18):
+            var angle:float=TAU*float(j)/18.0
+            var rough:float=0.76+rng.randf()*0.24
+            outline.append(center+Vector2(cos(angle)*radius.x,sin(angle)*radius.y)*rough)
+        draw_colored_polygon(outline,Color(0.34,0.38,0.20,0.15))
+        for i in range(34):
             var p:Vector2=_point(area.position+Vector2(rng.randf()*area.size.x,rng.randf()*area.size.y))
             var h:float=rng.randf_range(5,11)
             draw_polyline(PackedVector2Array([p+Vector2(-h*0.5,0),p+Vector2(0,-h),p+Vector2(h*0.5,0),p+Vector2(-h*0.5,0)]),Color("#626d49"),1.2,true)
             draw_line(p,p+Vector2(0,3),INK,1)
     var hill:Rect2=sim.hill
+    for ring in range(3):
+        var contour:=PackedVector2Array()
+        var hcenter:Vector2=_point(hill.get_center())
+        var hsize:Vector2=hill.size/sim.field_size*MAP.size*(0.24+ring*0.12)
+        for j in range(25):
+            var angle:float=TAU*float(j)/24.0
+            contour.append(hcenter+Vector2(cos(angle)*hsize.x,sin(angle)*hsize.y)*(0.86+0.13*sin(angle*3.0)))
+        draw_polyline(contour,Color(0.42,0.32,0.19,0.26),1.0,true)
     for i in range(10):
         var p:Vector2=_point(hill.position+Vector2(rng.randf()*hill.size.x,rng.randf()*hill.size.y))
         draw_polyline(PackedVector2Array([p+Vector2(-15,7),p+Vector2(-6,-6),p+Vector2(1,-17),p+Vector2(10,-1),p+Vector2(18,7)]),Color("#817055"),1.7,true)
