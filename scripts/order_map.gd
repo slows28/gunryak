@@ -137,6 +137,7 @@ func _button(t:String,p:Vector2,s:Vector2,callback:Callable)->Button:
     b.add_theme_stylebox_override("normal",_panel_style("#2b2a24","#957b4b"))
     b.add_theme_stylebox_override("hover",_panel_style("#51432c","#e7c77d"))
     b.add_theme_stylebox_override("pressed",_panel_style("#655135","#f1d79b"))
+    b.add_theme_stylebox_override("hover_pressed",_panel_style("#655135","#f1d79b"))
     add_child(b)
     return b
 
@@ -151,7 +152,8 @@ func open(mid_battle:bool=false)->void:
     for id in sim.command_ids(0):
         var u:Dictionary=sim.find_unit(id)
         var portrait: AtlasTexture=_portrait(str(u["name"]))
-        roster.add_item("%s · %s\n%s명"%[u["name"],u["type"],_troop_text(int(u["troops"]))],portrait)
+        roster.add_item("%s  %s명"%[u["name"],_troop_text(int(u["troops"]))],portrait)
+        roster.set_item_tooltip(roster.item_count-1,str(u["type"])+" · "+str(u["mission"]))
         roster.set_item_metadata(roster.item_count-1,id)
     feedback.text="부대 말을 끌거나 지도에 목적지를 찍고 행동 및 연계 대상을 지정하십시오."
     if mid_battle: feedback.text="전투 중 명령은 6턴부터 전령으로 전달됩니다. 확정 전까지 기존 작전 유지."
@@ -198,7 +200,7 @@ func _select(id:int)->void:
 
 func _update_destination()->void:
     destination_label.text="지도에서 목표를 선택" if not has_destination else _destination_text(destination)
-    if has_destination: progress_label.text="목표 지정 완료   ›   행동·연계 선택   ›   지시 확정"
+    progress_label.text="목표 지정 완료   ›   행동·연계 선택   ›   지시 확정" if has_destination else "군단 선택   ›   목적지 지정   ›   행동과 연계   ›   지시 확정"
 
 func _apply()->void:
     if not has_destination:
@@ -209,6 +211,7 @@ func _apply()->void:
     if sim.issue_map_order(selected_id,action,destination,partner):
         feedback.text="전령 파견 완료 · 도착까지 기존 지시 유지" if in_battle else "작전 지시 확정 · "+str(sim.find_unit(selected_id)["name"])+" / "+action
         draft_dirty=false
+        progress_label.text="전령 파견 · 도착 대기" if in_battle else "작전 지시 확정 · 전투 개시 가능"
         queue_redraw()
     else: feedback.text="지시 불가 · 전령 허용 턴, 부대 상태 또는 기존 전령 확인"
 
@@ -304,6 +307,12 @@ func _draw()->void:
     draw_polyline(river,Color("#596d63"),19,true)
     draw_polyline(river,Color("#8ba49a"),14,true)
     draw_polyline(river,Color("#c4c8a9"),3,true)
+    for bank_offset in [-9.0,9.0]:
+        var bank_line:=PackedVector2Array()
+        for i in range(river.size()):
+            var rp:Vector2=river[i]
+            bank_line.append(rp+Vector2(bank_offset+sin(float(i)*0.72)*1.1,0))
+        draw_polyline(bank_line,Color("#4b675c"),0.85,true)
     for y in [390.0,850.0,1300.0]:
         var p:Vector2=_point(Vector2(sim.river_x(y),y))
         draw_rect(Rect2(p-Vector2(13,8),Vector2(26,16)),Color("#a88a57"))
@@ -333,6 +342,7 @@ func _draw()->void:
         draw_polyline(contour,Color(0.42,0.32,0.19,0.26),1.0,true)
     var hc:Vector2=_point(hill.get_center())
     _art(0,Rect2(hc-Vector2(90,92),Vector2(180,142)),Color(1,1,1,0.96))
+    _ink("고지",hc+Vector2(39,-32),11,INK)
     draw_rect(Rect2(MAP.position,Vector2(MAP.size.x*0.30,MAP.size.y)),Color(0.20,0.35,0.45,0.05))
     for site in sim.outposts:
         var p:Vector2=_point(site["pos"])
@@ -368,7 +378,9 @@ func _draw()->void:
         if not u.is_empty(): _piece(u,drag_position,true)
     _ink("北",MAP.position+Vector2(775,30),17,INK)
     draw_line(MAP.position+Vector2(783,40),MAP.position+Vector2(783,64),INK,2)
-    _ink("한중 방면  /  군사지도",MAP.position+Vector2(14,25),14,INK)
+    _plate("한중 방면  /  군사지도",MAP.position+Vector2(99,20),14,Color("#eddbad"))
+    _ink("북로",_point(Vector2(sim.field_size.x*0.65,sim.road_y(sim.field_size.x*0.65,0)) )+Vector2(0,-12),12,INK)
+    _ink("남로",_point(Vector2(sim.field_size.x*0.65,sim.road_y(sim.field_size.x*0.65,2)) )+Vector2(0,-12),12,INK)
     var u:Dictionary=sim.find_unit(selected_id)
     if not u.is_empty():
         var portrait:AtlasTexture=_portrait(str(u["name"]))
