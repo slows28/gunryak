@@ -6,6 +6,7 @@ const Campaign = preload("res://scripts/campaign.gd")
 const CampaignView = preload("res://scripts/campaign_view.gd")
 const OrderMap = preload("res://scripts/order_map.gd")
 const PAINTED_ART = preload("res://assets/art/painted_atlas.webp")
+const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const PAINTED_FX = preload("res://assets/art/painted_fx.webp")
 const TITLE_ART = preload("res://assets/art/title_art.webp")
 const MAP_TOP_LEFT: Vector2 = Vector2(24, 101)
@@ -194,21 +195,21 @@ func _build_interface() -> void:
     _button("작전 지도",Vector2(862,16),Vector2(76,43),_open_order_map)
     status_label = _label("",Vector2(955,9),Vector2(307,64),14,COL_TEXT)
     objective_label = _label("",Vector2(26,77),Vector2(412,22),13,COL_GOLD)
-    _label("군단 지휘",Vector2(956,101),Vector2(270,29),21,COL_GOLD)
-    _label("01  장수 선택",Vector2(956,132),Vector2(295,19),12,COL_MUTED)
+    _label("軍  /  전황 관측",Vector2(956,101),Vector2(270,29),21,COL_GOLD)
+    _label("아군 군단  ·  6개 지휘 부대",Vector2(956,132),Vector2(295,19),12,COL_MUTED)
     unit_list = ItemList.new()
     unit_list.position = Vector2(950,154)
-    unit_list.size = Vector2(306,186)
+    unit_list.size = Vector2(306,204)
     unit_list.add_theme_font_size_override("font_size",13)
-    unit_list.add_theme_constant_override("v_separation",2)
+    unit_list.add_theme_constant_override("v_separation",3)
     add_child(unit_list)
     unit_list.item_selected.connect(_on_unit_selected)
-    _label("02  현재 작전",Vector2(956,344),Vector2(267,20),13,COL_GOLD)
+    _label("02  현재 작전",Vector2(956,365),Vector2(267,20),13,COL_GOLD)
     mission_choice = _options(Vector2(950,363),["중앙 진격","북측 확보","남측 우회","본진 방어","전열 엄호","측후방 기동","구원 지원"])
     mission_choice.size.x = 306
     mission_choice.item_selected.connect(_on_choices_changed)
     mission_choice.hide()
-    live_order_label = _label("",Vector2(956,370),Vector2(292,80),15,COL_TEXT)
+    live_order_label = _label("",Vector2(956,389),Vector2(292,65),15,COL_TEXT)
     live_order_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     policy_choice = _options(Vector2(950,420),["현장 판단","명령 엄수","재량 위임","횡대 유지","종대 유지","방진 유지","어린진 유지","학익진 유지","봉시진 유지","안행진 유지"])
     policy_choice.size.x = 306
@@ -277,7 +278,7 @@ func _refresh_unit_list() -> void:
         icon.region = _art_region(_portrait_tile(str(unit["name"])))
         unit_list.add_item("%s  ·  %s / %s" % [str(unit["name"]),str(unit["type"]),str(unit["personality"])],icon)
         unit_list.set_item_metadata(unit_list.item_count-1,i)
-    unit_list.fixed_icon_size = Vector2i(24,24)
+    unit_list.fixed_icon_size = Vector2i(28,28)
     if unit_list.item_count > 0:
         var row: int = maxi(0,sim.command_ids(0).find(selected_id))
         unit_list.select(row)
@@ -576,9 +577,9 @@ func _draw() -> void:
     draw_rect(Rect2(21,685,907,110),COL_PANEL)
     draw_rect(Rect2(940,685,324,110),COL_PANEL)
     for frame in [Rect2(21,98,906,576),Rect2(940,94,324,581),Rect2(21,685,907,110),Rect2(940,685,324,110)]:
-        draw_rect(frame,Color("#88734f"),false,1.2)
+        _bronze_frame(frame)
     draw_line(Vector2(950,550),Vector2(1254,550),Color("#526862"),1.0)
-    draw_line(Vector2(950,340),Vector2(1254,340),Color("#706049"),1.0)
+    draw_line(Vector2(950,362),Vector2(1254,362),Color("#706049"),1.0)
     _draw_minimap()
 
 func _draw_map(_canvas: Control) -> void:
@@ -617,7 +618,7 @@ func _draw_map(_canvas: Control) -> void:
         var color: Color = COL_BLUE if owner == 0 else (COL_RED if owner == 1 else COL_GOLD)
         map_layer.draw_arc(site_pos, WarSim.OUTPOST_RADIUS, 0.0, TAU, 44, Color(color.r,color.g,color.b,0.20),1.2,true)
         var marker_scale: float = maxf(1.0,0.75/camera_zoom)
-        _paint_tile(45,Rect2(site_pos-Vector2(23,38)*marker_scale,Vector2(46,49)*marker_scale))
+        _field_art(7,Rect2(site_pos-Vector2(42,65)*marker_scale,Vector2(84,84)*marker_scale))
         _paint_tile(40 if owner < 0 else 38+owner,Rect2(site_pos+Vector2(10,-25)*marker_scale,Vector2(24,30)*marker_scale))
         map_layer.draw_circle(site_pos+Vector2(10,-6),3.5,color)
         var state: String = ("중립" if owner < 0 else ("아군" if owner == 0 else "적군")) if known else "미확인"
@@ -766,11 +767,11 @@ func _draw_unit(unit: Dictionary) -> void:
             map_layer.draw_line(p,p+(unit["facing"] as Vector2)*8*k,accent,1.5*k,true)
         return
     var slots: Array[Vector2] = _visual_slots(unit)
-    if sim.six_armies and slots.size()>2:
+    if sim.six_armies and slots.size()>2 and int(unit["id"])==selected_id and side==0:
         var hull: PackedVector2Array = Geometry2D.convex_hull(PackedVector2Array(slots))
         if hull.size()>3:
-            map_layer.draw_colored_polygon(hull,Color(accent,0.12))
-            map_layer.draw_polyline(hull,Color(accent,0.50),1.6,true)
+            map_layer.draw_colored_polygon(hull,Color(accent,0.045))
+            map_layer.draw_polyline(hull,Color(COL_GOLD,0.35),1.2,true)
     slots.sort_custom(func(a: Vector2,b: Vector2) -> bool: return a.y < b.y)
     var slot_index: int = 0
     for spot in slots:
@@ -780,12 +781,12 @@ func _draw_unit(unit: Dictionary) -> void:
         point += Vector2(sin(float(slot_index)*7.3),cos(float(slot_index)*5.7))*scatter
         _draw_soldier(point, unit, accent, slot_index)
         slot_index += 1
-    var flag_extent: Vector2 = Vector2(23,30) if unit.has("parent_id") else Vector2(36,47)
+    var flag_extent: Vector2 = Vector2(23,30) if unit.has("parent_id") else Vector2(39,52)
     _paint_tile(38+side,Rect2(p-Vector2(flag_extent.x*0.5,flag_extent.y+7),flag_extent),Color(1,1,1,accent.a))
     var forward: Vector2 = unit["facing"]
     map_layer.draw_line(p + forward*22.0, p + forward*35.0, Color(accent,0.8), 1.8)
-    if str(unit["formation"]) == "방진":
-        map_layer.draw_rect(Rect2(p-Vector2(25,25),Vector2(50,50)),Color(accent,0.24),false,1.3)
+    if str(unit["formation"]) == "방진" and side==0 and int(unit["id"])==selected_id:
+        map_layer.draw_rect(Rect2(p-Vector2(25,25),Vector2(50,50)),Color(accent,0.20),false,1.0)
     if side == 0 and int(unit["id"]) == selected_id:
         map_layer.draw_arc(p, 39.0, 0.0, TAU, 48, COL_GOLD, 1.8)
     if float(unit.get("front_pressure", 0.0)) > 0.10:
@@ -1254,7 +1255,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> v
             row = 3
             frame = frame%2
         tile = 16+row*4+frame
-    var extent: float = (16.0 if kind==2 else 14.0) if sim.six_armies else (23.0 if kind == 2 else 19.0)
+    var extent: float = (17.0 if kind==2 else 15.0) if sim.six_armies else (23.0 if kind == 2 else 19.0)
     var phase: float = render_clock*(17.0 if kind == 2 else 10.0)+index*1.7
     var attacking: bool = int(unit.get("contact_troops",0)) > 0 and not bool(unit["routed"])
     var hit: bool = sim.battle_time-float(unit.get("last_hit",-100.0)) < 0.16 and index%4 == 0
@@ -1268,7 +1269,8 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> v
     var shade: Color = Color(1.0,0.72,0.62,accent.a) if hit else Color(1,1,1,accent.a)
     if str(unit["formation"]) == "방진" and not moving:
         extent *= 0.93
-    map_layer.draw_circle(p+Vector2(2.5,2.5),5.5 if kind == 2 else 4.0,Color(0.03,0.04,0.03,0.32))
+    map_layer.draw_set_transform(MAP_SIZE*0.5-camera_center*camera_zoom+(p+Vector2(3.5,3.5))*camera_zoom,0.0,Vector2(1.0,0.52)*camera_zoom)
+    map_layer.draw_circle(Vector2.ZERO,7.0 if kind==2 else 5.0,Color(0.03,0.04,0.03,0.37))
     var map_offset: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
     var mirror: float = -1.0 if direction.x < 0.0 else 1.0
     map_layer.draw_set_transform(map_offset+p*camera_zoom,0.0,Vector2(mirror,1.0)*camera_zoom)
@@ -1928,7 +1930,8 @@ func _map_plate(value: String,p: Vector2,accent: Color,fs: int) -> void:
     var k: float = maxf(1.0,float(fs)/11.0)
     var w: float = korean_font.get_string_size(value,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+12.0*k
     var rect := Rect2(p-Vector2(w*0.5,11*k),Vector2(w,18*k))
-    map_layer.draw_rect(rect,Color(0.06,0.11,0.12,0.75))
+    map_layer.draw_rect(rect,Color(0.09,0.08,0.055,0.87))
+    map_layer.draw_rect(rect,Color("#bba16b"),false,k)
     map_layer.draw_rect(Rect2(rect.position,Vector2(2,18)*k),accent)
     _draw_string(value,p+Vector2(-w*0.5+6*k,2*k),fs,COL_TEXT)
 
@@ -1947,7 +1950,11 @@ func _refresh_visibility() -> void:
 # More visible soldiers per actual manpower, with separate ranks and spacing.
 # Contact simulation retains twelve authoritative tactical slots per detachment.
 func _visual_slots(unit: Dictionary) -> Array[Vector2]:
-    if sim.six_armies: return sim.formation_slots(unit)
+    if sim.six_armies:
+        # Visual detail uses the same formation geometry; combat still uses authoritative slots.
+        if str(unit["next_formation"])!="": return sim.formation_slots(unit)
+        var count: int=clampi(ceili(float(unit["troops"])/120.0),1,40)
+        return sim.army_slots(unit,count,10.0)
     var result: Array[Vector2] = []
     var count: int = clampi(ceili(float(unit["troops"])/3.0),1,64)
     var front: Vector2 = unit["facing"]
@@ -2057,3 +2064,14 @@ func _return_to_battle() -> void:
 func _operation_clock(seconds: float) -> String:
     var whole: int = maxi(0,floori(seconds+0.0001))
     return "%02d:%02d" % [floori(float(whole)/60.0),whole%60]
+
+func _field_art(tile:int,rect:Rect2,tint:Color=Color.WHITE)->void:
+    var region:=Rect2(float(tile%4)*256.0,float(floori(float(tile)/4.0))*256.0,256,256)
+    map_layer.draw_texture_rect_region(FIELDCRAFT,rect,region,tint)
+
+func _bronze_frame(rect:Rect2)->void:
+    draw_rect(rect,Color("#b09560"),false,1.4)
+    draw_rect(rect.grow(-3),Color("#51452f"),false,1.0)
+    for corner in [rect.position,Vector2(rect.end.x,rect.position.y),rect.end,Vector2(rect.position.x,rect.end.y)]:
+        var d:=Vector2(1 if corner.x==rect.position.x else -1,1 if corner.y==rect.position.y else -1)
+        draw_polyline(PackedVector2Array([corner+Vector2(d.x*16,0),corner+Vector2(d.x*4,d.y*4),corner+Vector2(0,d.y*16)]),Color("#dfbd78"),1.5,true)
