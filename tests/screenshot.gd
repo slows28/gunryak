@@ -102,6 +102,45 @@ func _capture() -> void:
     if not _save_frame("battle_focus.png"):
         quit(1)
         return
+    # Validate all 18 atlas cells and all four facing choices without mutating units.
+    var atlas: Texture2D = load("res://assets/art/soldier_sprites.svg")
+    if atlas==null or atlas.get_width()!=288 or atlas.get_height()!=576:
+        push_error("VISUAL_CAPTURE_FAIL: soldier atlas dimensions invalid")
+        quit(1)
+        return
+    var atlas_pixels: Image = atlas.get_image()
+    for side in range(2):
+        for kind in range(3):
+            for column in range(3):
+                var cell := Rect2i(column*96,(side*3+kind)*96,96,96)
+                if atlas_pixels.get_region(cell).get_used_rect().size.x<20:
+                    push_error("VISUAL_CAPTURE_FAIL: empty soldier sprite cell")
+                    quit(1)
+                    return
+                var sample: Dictionary = {"side":side,"type":["보병","궁병","기병"][kind],"facing":[Vector2.RIGHT,Vector2.DOWN,Vector2.UP][column]}
+                var region: Rect2 = game.call("_soldier_region",sample)
+                if region!=Rect2(cell):
+                    push_error("VISUAL_CAPTURE_FAIL: incorrect soldier facing atlas region")
+                    quit(1)
+                    return
+    var left_sample: Dictionary={"side":1,"type":"기병","facing":Vector2.LEFT}
+    if game.call("_soldier_region",left_sample)!=Rect2(0,480,96,96):
+        push_error("VISUAL_CAPTURE_FAIL: wrong mirrored profile")
+        quit(1)
+        return
+    var saved_zoom: float=game.camera_zoom
+    game.camera_zoom=2.5
+    game.call("_clamp_camera")
+    game.map_layer.queue_redraw()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("soldier_detail.png"):
+        quit(1)
+        return
+    game.camera_zoom=saved_zoom
+    game.call("_clamp_camera")
+    game.map_layer.queue_redraw()
+    print("SOLDIER_ATLAS_PASS: 18 populated cells, all facing regions checked")
     # Same simulation tick, same camera: compare quiet and detailed presentation.
     var frozen_time: float = game.sim.battle_time
     game.call("_toggle_map_detail")
