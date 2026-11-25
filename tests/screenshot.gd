@@ -207,6 +207,24 @@ func _capture() -> void:
                 push_error("VISUAL_CAPTURE_FAIL: overlapping allocated map labels")
                 quit(1)
                 return
+    if game.forest_instances.is_empty() or game.forest_textures.size()!=5:
+        push_error("VISUAL_CAPTURE_FAIL: separate forest layer missing")
+        quit(1)
+        return
+    var previous_y: float=-INF
+    for tree in game.forest_instances:
+        var point:Vector2=tree["pos"]
+        if point.y<previous_y or game.sim.terrain_at(point)=="하천":
+            push_error("VISUAL_CAPTURE_FAIL: invalid forest instance order or location")
+            quit(1)
+            return
+        for lane in range(3):
+            if absf(point.y-game.sim.road_y(point.x,lane))<34.0:
+                push_error("VISUAL_CAPTURE_FAIL: tree on road")
+                quit(1)
+                return
+        previous_y=point.y
+    print("FOREST_DEPTH_LAYER_PASS: "+str(game.forest_instances.size())+" trees")
     print("MAP_LABEL_LAYOUT_PASS")
     print("COMMANDER_BOARD_AND_SITES_PASS")
     print("GENERAL_REPORT_VISUAL_PASS")
