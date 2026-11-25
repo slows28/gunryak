@@ -113,6 +113,8 @@ func strategic_tick(target: int) -> void:
                     break
         if exposed >= 0:
             state["owned"].erase(exposed)
+            if int(state["position"]) == exposed:
+                state["position"] = 0
             state["history"].append(NODES[exposed]["name"]+" — 위군 반격으로 상실")
 
 func prepare(target: int, sim) -> bool:
@@ -138,8 +140,9 @@ func prepare(target: int, sim) -> bool:
         u["troops"] = float(state["troops"][i])
         u["initial_troops"] = u["troops"]
         u["general_hp"] = float(person["hp"])
+        u["general_risk"] = (100.0-float(person["hp"]))/1.4
         u["general_state"] = "부상" if int(person["hp"]) < 55 else "건재"
-        var level: int = mini(10,int(person["xp"])/100)
+        var level: int = mini(10,floori(float(person["xp"])/100.0))
         for j in range(5):
             var key: String = ["leadership","martial","intelligence","judgment","loyalty"][j]
             u[key] = minf(100.0,float(officer["stats"][j])+level)
@@ -150,7 +153,7 @@ func prepare(target: int, sim) -> bool:
         if int(unit["side"]) == 1:
             unit["troops"] = roundf(float(unit["troops"])*scale)
             unit["initial_troops"] = unit["troops"]
-    sim.reserve_limit[0] = mini(2,int(state["pool"])/72)
+    sim.reserve_limit[0] = mini(2,floori(float(state["pool"])/72.0))
     sim.bases[0]["stock"] = minf(100.0,float(state["food"]))
     return true
 
@@ -213,13 +216,28 @@ func load_save() -> bool:
     if int(data["version"]) != 1 or data["roster"].size() != 6 or data["active"].size() != 3 or data["troops"].size() != 3 or data["types"].size() != 3 or data["garrison"].size() != 6 or int(data["pending"]) != -1:
         return false
     for key in ["gold","food","pool","turn","victories","defeats","position","difficulty"]:
+        if not (data[key] is int or data[key] is float):
+            return false
         data[key] = int(data[key])
+        if int(data[key]) < 0:
+            return false
+    if int(data["difficulty"]) > 2 or int(data["position"]) >= NODES.size():
+        return false
     for key in ["owned","active","troops","garrison"]:
         for i in range(data[key].size()):
             data[key][i] = int(data[key][i])
     for person in data["roster"]:
         person["hp"] = int(person["hp"])
         person["xp"] = int(person["xp"])
+    for idx in data["active"]:
+        if int(idx) < 0 or int(idx) >= OFFICERS.size():
+            return false
+    for idx in data["owned"]:
+        if int(idx) < 0 or int(idx) >= NODES.size():
+            return false
+    for value in data["troops"]:
+        if int(value) < 0 or int(value) > 220:
+            return false
     data["pending"] = -1
     state = data
     return true
