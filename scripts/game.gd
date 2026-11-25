@@ -447,6 +447,13 @@ func _refresh_hud() -> void:
         unit_list.set_item_custom_fg_color(index,COL_MUTED if float(leader["troops"]) <= 0.0 else (COL_RED if bool(leader["routed"]) else COL_TEXT))
     var enemy_text: String = "미확인" if fog_enabled and not sim.finished else str(sim.total_troops(1))
     status_label.text = "%s\n아군 %d  /  적군 %s\n전령 %d 이동 · %d 도착 · %d 차단" % [phase,sim.total_troops(0),enemy_text,sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
+    var own_guards: int = sim.commander_guard_count(0)
+    status_label.tooltip_text = "책사 보호 반경 내 전투부대 %d개" % own_guards
+    if own_guards == 0 and sim.started and not sim.finished:
+        status_label.tooltip_text += " · 호위 없음: 적 접근 시 포획 위험"
+    if not sim.convoy.is_empty():
+        var transport: Dictionary = sim.convoy_status()
+        status_label.tooltip_text += "\n수레 %s · 진행 %d%% · 내구도 %d%% · 호위 %d개" % [str(transport["state"]),roundi(float(transport["progress"])*100.0),roundi(sim.convoy["hp"]),int(transport["guards"])]
     if is_instance_valid(situation_btn):
         var count: int = sim.open_situations().size()
         situation_btn.text = "보고 %d" % count if count > 0 else "긴급 보고"
@@ -474,6 +481,11 @@ func _refresh_hud() -> void:
         details_label.tooltip_text = "%s\n사기 %d · 응집 %d · 피로 %d\n식량 %d · 화살 %d\n%s" % [str(unit["name"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"]),str(unit["reason"])]
         if sim.six_armies:
             details_label.tooltip_text += "\n협동 타격 %d · 상성 우위 타격 %d · 측후방 피해 %d" % [roundi(unit["linked_hits"]),roundi(unit["counter_damage"]),roundi(unit["flank_damage"])]
+            if float(unit.get("bridge_y",-1.0))>=0.0:
+                details_label.tooltip_text += "\n도하 예정: "+_bridge_name(float(unit["bridge_y"]))
+            if str(unit["mission"])=="측후방 기동":
+                var stages: Array[String] = ["측면 기동","정면 접촉 대기","협동 공격"]
+                details_label.tooltip_text += "\n"+stages[clampi(int(unit["flank_phase"]),0,2)]+" · 완료 %d · 공격 %d · 중단 %d" % [int(unit["flank_completed"]),int(unit["flank_commits"]),int(unit["flank_aborts"])]
     var start_line: int = maxi(0, sim.events.size() - 4)
     var lines: String = ""
     for i in range(start_line, sim.events.size()):
@@ -651,7 +663,15 @@ func _draw_map(_canvas: Control) -> void:
         var p: Vector2 = _screen(commander["pos"])
         var accent: Color = COL_BLUE if int(commander["side"]) == 0 else COL_RED
         _paint_tile(41,Rect2(p-Vector2(15,20),Vector2(30,36)))
-        _draw_string("책사", p + Vector2(-14, -21), 13, COL_TEXT)
+        if int(commander["side"])==0 and sim.started and not sim.finished:
+            var guarded: bool = sim.commander_guard_count(0)>0
+            var guard_color: Color = COL_BLUE if guarded else COL_RED
+            var scale_factor: float = maxf(1.0,0.75/camera_zoom)
+            _map_plate("책사 · "+("호위" if guarded else "노출"),p+Vector2(0,-29)*scale_factor,guard_color,maxi(11,roundi(11.0/camera_zoom)))
+            if not guarded:
+                map_layer.draw_arc(p,76.0,0,TAU,44,Color(COL_RED,0.45),1.5/camera_zoom,true)
+        else:
+            _draw_string("책사", p + Vector2(-14, -21), 13, COL_TEXT)
         if commander["pos"] != commander["goal"]:
             map_layer.draw_line(p, _screen(commander["goal"]), Color(accent.r, accent.g, accent.b, 0.6), 1.5)
     for scout in sim.scouts:
@@ -707,6 +727,7 @@ func _draw_map(_canvas: Control) -> void:
                 map_layer.draw_arc(anchor, 28.0,0.0,TAU,32,COL_BLUE,2.0)
                 _draw_string("사수",anchor+Vector2(-12,4),11,COL_BLUE)
     _draw_cooperation_links()
+    _draw_selected_bridge_route()
     _draw_fortifications()
     for report in sim.open_situations():
         var rp: Vector2 = report["pos"]
@@ -715,10 +736,16 @@ func _draw_map(_canvas: Control) -> void:
         _draw_string("!",rp+Vector2(31,-33),21,COL_GOLD)
     if not sim.convoy.is_empty():
         var wagon: Vector2 = sim.convoy["pos"]
-        _paint_tile(44,Rect2(wagon-Vector2(17,15),Vector2(34,30)))
-        map_layer.draw_rect(Rect2(wagon+Vector2(-20,18),Vector2(40,4)),Color("#352c20"))
-        map_layer.draw_rect(Rect2(wagon+Vector2(-20,18),Vector2(40*float(sim.convoy["hp"])/100.0,4)),COL_GOLD)
-        _draw_string("군량 수레",wagon+Vector2(-23,-22),11,COL_GOLD)
+        var cargo: Dictionary = sim.convoy_status()
+        var k: float = maxf(1.0,0.75/camera_zoom)
+        var cargo_color: Color = COL_RED if str(cargo["state"]) in ["교전 정체","파괴"] else COL_GOLD
+        _paint_tile(44,Rect2(wagon-Vector2(17,15)*k,Vector2(34,30)*k))
+        map_layer.draw_rect(Rect2(wagon+Vector2(-25,18)*k,Vector2(50,5)*k),Color("#352c20"))
+        map_layer.draw_rect(Rect2(wagon+Vector2(-25,18)*k,Vector2(50*float(sim.convoy["hp"])/100.0,5)*k),cargo_color)
+        _map_plate("수레 %d%% · %s" % [roundi(float(cargo["progress"])*100.0),str(cargo["state"])],wagon+Vector2(0,-33)*k,cargo_color,maxi(11,roundi(11.0/camera_zoom)))
+        var finish: Vector2 = sim.convoy["goal"]
+        map_layer.draw_arc(finish,20.0*k,0,TAU,36,Color(COL_GOLD,0.85),2.0*k,true)
+        _map_plate("호위 도착점",finish+Vector2(0,-28)*k,COL_GOLD,maxi(11,roundi(11.0/camera_zoom)))
     var visible_units: Array[Dictionary] = []
     for unit in sim.units:
         if float(unit["troops"]) > 0.0 and _visible_unit(unit):
@@ -2038,6 +2065,34 @@ func _draw_cooperation_links() -> void:
     var goal: Vector2=unit["goal"]
     map_layer.draw_line(p,goal,Color(COL_GOLD,0.65),1.5*k,true)
     map_layer.draw_arc(goal,9.0*k,0,TAU,24,COL_GOLD,1.5*k,true)
+
+func _bridge_name(y: float) -> String:
+    if y<600.0: return "북측 교량"
+    if y>1100.0: return "남측 교량"
+    return "중앙 교량"
+
+# Display the actual committed crossing for the selected friendly army only.
+func _draw_selected_bridge_route() -> void:
+    if not sim.started or sim.finished or not sim.long_operation: return
+    var unit: Dictionary = sim.find_unit(selected_id)
+    if unit.is_empty() or int(unit["side"])!=0 or float(unit["troops"])<=0.0: return
+    var bridge: float = float(unit.get("bridge_y",-1.0))
+    if bridge<0.0: return
+    var p: Vector2 = unit["pos"]
+    var k: float = 1.0/camera_zoom
+    for point in sim.committed_route_preview(unit):
+        var delta: Vector2 = point-p
+        var length: float = delta.length()
+        if length>0.1:
+            var direction: Vector2 = delta/length
+            var offset: float = 0.0
+            while offset<length:
+                map_layer.draw_line(p+direction*offset,p+direction*minf(offset+10.0*k,length),Color(COL_GOLD,0.65),1.8*k,true)
+                offset+=19.0*k
+        p=point
+    var crossing:=Vector2(sim.river_x(bridge),bridge)
+    map_layer.draw_arc(crossing,14.0*k,0,TAU,30,COL_GOLD,2.0*k,true)
+    _map_plate(_bridge_name(bridge)+" · 도하 예정",crossing+Vector2(0,-22)*k,COL_GOLD,maxi(11,roundi(11.0/camera_zoom)))
 
 func _change_link(partner: int) -> void:
     var unit: Dictionary=sim.find_unit(selected_id)
