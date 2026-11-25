@@ -23,6 +23,14 @@ var outposts: Array[Dictionary] = []
 var scouts: Array[Dictionary] = []
 var intelligence: Array[Dictionary] = [{}, {}]
 var reserve_next: Array[float] = [18.0, 18.0]
+var scenario_id: int = 0
+var scenario_title: String = "북남 요충지"
+var scenario_goal: String = "두 요충지를 동시에 점령하고 유지"
+var scenario_limit: float = MAX_SECONDS
+var forests: Array[Rect2] = []
+var hill: Rect2 = Rect2(400, 213, 108, 89)
+var timeline: Array[Dictionary] = []
+var pending_reports: Array[Dictionary] = []
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var battle_time: float = 0.0
 var turn: int = 1
@@ -40,6 +48,8 @@ func _init() -> void:
     reset()
 
 func reset() -> void:
+    timeline.clear()
+    pending_reports.clear()
     units.clear()
     bases.clear()
     commanders.clear()
@@ -75,7 +85,8 @@ func reset() -> void:
     commanders.append({"side":1, "pos":Vector2(846, 515), "goal":Vector2(846, 515)})
     scouts.append({"side":0, "pos":Vector2(145, 230), "goal":Vector2(375, 120), "leg":0, "alive":true, "report_timer":0.0, "reports":0})
     scouts.append({"side":1, "pos":Vector2(755, 340), "goal":Vector2(525, 440), "leg":0, "alive":true, "report_timer":0.0, "reports":0})
-    _log("출전 편성 준비: 장수별 목표와 진형 방침을 확인하세요.")
+    _configure_scenario()
+    _log("출전 편성 준비: " + scenario_title)
 
 func _add_unit(side: int, title: String, unit_type: String, disposition: String, ability: float, start: Vector2, mission: String, people: float) -> void:
     var unit: Dictionary = {
@@ -101,7 +112,9 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "ambush_ready":0.0, "ambush_until":-1.0, "ambushes":0,
         "charge_dir":Vector2.ZERO, "charge_speed":0.0, "charge_cooldown":0.0, "charges":0,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
-        "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false
+        "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
+        "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
+        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기"
     }
     _set_general_profile(unit)
     if unit_type == "기병":
@@ -117,6 +130,8 @@ func _base(side: int, at: Vector2) -> Dictionary:
 
 func _log(message: String) -> void:
     events.append("[%02d턴] %s" % [turn, message])
+    if timeline.size() < 1200:
+        timeline.append({"time":battle_time,"turn":turn,"message":message})
     if events.size() > 24:
         events.pop_front()
 
@@ -124,7 +139,7 @@ func start() -> void:
     if started or finished:
         return
     started = true
-    _log("전투 개시. 장수는 초기 작전에 따라 스스로 판단합니다.")
+    _log("전투 개시. " + scenario_goal)
 
 func select_unit_mission(unit_id: int, mission: String, policy: String) -> bool:
     if started:
@@ -181,6 +196,7 @@ func step(dt: float) -> void:
         _on_new_turn()
     _move_commanders(dt)
     _update_scouts(dt)
+    _deliver_intel()
     _update_reserves()
     _update_couriers(dt)
     _supply_logic(dt)
@@ -286,7 +302,7 @@ func _supply_logic(dt: float) -> void:
             if float(base["build_timer"]) <= 0.0:
                 base["state"] = "가동"
                 _log("%s 보급기지 재설치 완료" % ("아군" if side == 0 else "적군"))
-        elif battle_time - float(base["last_relocate"]) > 26.0:
+        elif not bool(base.get("fixed", false)) and battle_time - float(base["last_relocate"]) > 26.0:
             var desired: Vector2 = _best_supply_position(side)
             if bp.distance_to(desired) > 135.0:
                 base["target"] = desired
@@ -296,7 +312,14 @@ func _supply_logic(dt: float) -> void:
     for base in bases:
         if bool(base["alive"]) and str(base["state"]) == "가동":
             base["stock"] = minf(100.0, float(base["stock"]) + dt * 0.60)
-    for unit in units:
+    var supply_queue: Array[Dictionary] = units.duplicate()
+    supply_queue.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+        if int(a["supply_priority"]) != int(b["supply_priority"]):
+            return int(a["supply_priority"]) > int(b["supply_priority"])
+        if float(a["rations"]) != float(b["rations"]):
+            return float(a["rations"]) < float(b["rations"])
+        return int(a["id"]) < int(b["id"]))
+    for unit in supply_queue:
         if float(unit["troops"]) <= 0.0:
             continue
         var own_base: Dictionary = bases[int(unit["side"])]
@@ -572,13 +595,21 @@ func _decide(unit: Dictionary) -> void:
     action = str(compliant["action"])
     reason = str(compliant["reason"])
     goal = compliant["goal"]
+    var planned: Dictionary = _apply_planned_route(unit, action, reason, goal, enemy_distance)
+    action = str(planned["action"])
+    reason = str(planned["reason"])
+    goal = planned["goal"]
+    if action != str(unit["last_timeline_action"]):
+        unit["last_timeline_action"] = action
+        if int(unit["side"]) == 0 and timeline.size() < 1200:
+            timeline.append({"time":battle_time,"turn":turn,"message":"%s: %s — %s" % [str(unit["name"]),action,reason]})
     unit["action"] = action
     unit["reason"] = reason
     unit["goal"] = _field_point(goal)
     var wanted: String = "횡대"
     if action in ["후퇴", "패주", "기지 습격", "돌파", "반격", "재집결", "보급 복귀", "탄약 보충"]:
         wanted = "종대"
-    elif action in ["방어", "보급 호위", "측면 방어", "거점 방어"]:
+    elif action in ["방어", "보급 호위", "측면 방어", "거점 방어", "방어선 사수"]:
         wanted = "방진"
     elif str(unit["type"]) == "기병":
         wanted = "종대"
@@ -630,7 +661,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var pos: Vector2 = unit["pos"]
     var goal: Vector2 = unit["goal"]
     var enemy: Dictionary = _nearest_visible_enemy(unit)
-    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행"]:
+    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
@@ -751,7 +782,7 @@ func _field_point(p: Vector2) -> Vector2:
 func terrain_at(p: Vector2) -> String:
     if _in_forest(p):
         return "숲"
-    if Rect2(400.0, 213.0, 108.0, 89.0).has_point(p):
+    if hill.has_point(p):
         return "고지"
     for y in [131.0, 282.0, 435.0]:
         if absf(p.y - y) <= 10.0:
@@ -772,7 +803,10 @@ func _terrain_movement_multiplier(unit: Dictionary, p: Vector2) -> float:
     return 1.0
 
 func _in_forest(p: Vector2) -> bool:
-    return Rect2(325, 80, 125, 90).has_point(p) or Rect2(450, 360, 130, 125).has_point(p)
+    for region in forests:
+        if region.has_point(p):
+            return true
+    return false
 
 
 # A unit is not a single point for contact resolution. These are its actual
@@ -983,6 +1017,13 @@ func _update_outposts(dt: float) -> void:
 func _objective_winner() -> int:
     if outposts.size() < 2 or turn < 3:
         return -1
+    if scenario_id == 1:
+        var central: Dictionary = outposts[0]
+        if int(central["owner"]) >= 0 and float(central["hold"]) >= 18.0:
+            return int(central["owner"])
+        return -1
+    if scenario_id == 2:
+        return -1
     var owner: int = int(outposts[0]["owner"])
     if owner < 0:
         return -1
@@ -1007,7 +1048,7 @@ func battle_report() -> Array[String]:
 func _check_victory() -> void:
     var winner: int = _objective_winner()
     if winner >= 0:
-        _finish("양측 요충지 확보 — 아군 승리" if winner == 0 else "적 요충지 장악 — 패배")
+        _finish("작전 목표 확보 — 아군 승리" if winner == 0 else "적 작전 목표 장악 — 패배")
         return
 
     for unit in units:
@@ -1036,7 +1077,11 @@ func _check_victory() -> void:
     elif side_alive[1] == 0:
         if reinforcements_used[1] >= 2:
             _finish("적 전투부대 전멸 또는 패주 — 승리")
-    if not finished and battle_time >= MAX_SECONDS:
+    if not finished and scenario_id == 2 and not bool(bases[0]["alive"]):
+        _finish("아군 보급기지 상실 — 패배")
+    if not finished and scenario_id == 2 and battle_time >= scenario_limit:
+        _finish("보급기지 방어 성공 — 아군 승리")
+    if not finished and battle_time >= scenario_limit:
         var blue: float = 0.0
         var red: float = 0.0
         for unit in units:
@@ -1109,6 +1154,8 @@ func _assigned_outpost(unit: Dictionary) -> Dictionary:
     var mission: String = str(unit["mission"])
     if outposts.size() < 2:
         return {}
+    if scenario_id == 1 and mission == "중앙 진격":
+        return outposts[0]
     if mission == "북측 확보":
         return outposts[0]
     if mission == "남측 우회":
@@ -1230,6 +1277,9 @@ func _set_general_profile(unit: Dictionary) -> void:
     unit["loyalty"] = profile[4]
 
 func _effective_stat(unit: Dictionary, key: String) -> float:
+    if bool(unit["active_deputy"]):
+        var profile: Dictionary = _deputy_profile(int(unit["deputy_index"]))
+        return float(profile.get(key, unit[key]))
     var factor: float = 1.0
     match str(unit["general_state"]):
         "부상": factor = 0.72
@@ -1287,11 +1337,13 @@ func _update_scouts(dt: float) -> void:
             continue
         scout["report_timer"] = maxf(0.0, float(scout["report_timer"]) - dt)
         if not threat.is_empty() and threat_d < (125.0 if _in_forest(threat["pos"]) else 190.0) and float(scout["report_timer"]) <= 0.0:
-            intelligence[side][int(threat["id"])] = {"pos":threat["pos"], "time":battle_time, "type":threat["type"], "troops":threat["troops"]}
+            var confidence: float = clampf(1.0 - threat_d / 320.0 - (0.18 if _in_forest(threat["pos"]) else 0.0), 0.30, 0.95)
+            var observed_pos: Vector2 = _field_point((threat["pos"] as Vector2) + Vector2(rng.randf_range(-1.0,1.0),rng.randf_range(-1.0,1.0)) * (1.0-confidence) * 40.0)
+            pending_reports.append({"side":side,"id":int(threat["id"]),"pos":observed_pos,"time":battle_time,"type":threat["type"],"troops":roundf(float(threat["troops"])/10.0)*10.0,"confidence":confidence,"arrive":battle_time + 2.0 + p.distance_to(commanders[side]["pos"])/130.0})
             scout["reports"] = int(scout["reports"]) + 1
             scout["report_timer"] = 4.0
             if side == 0:
-                _log("정찰 보고: %s 위치 확인" % str(threat["name"]))
+                _log("정찰대: 관측 정보 전달 중")
         var goal: Vector2 = scout["goal"]
         if not threat.is_empty() and threat_d < 65.0:
             goal = _field_point(p + (p - (threat["pos"] as Vector2)).normalized() * 100.0)
@@ -1314,7 +1366,7 @@ func _read_scout_report(unit: Dictionary) -> void:
     var best_time: float = float(unit["memory_time"])
     for id in intelligence[int(unit["side"])]:
         var report: Dictionary = intelligence[int(unit["side"])][id]
-        if float(report["time"]) > best_time and p.distance_to(report["pos"]) < 290.0:
+        if float(report["time"]) > best_time and float(report.get("confidence", 0.0)) >= 0.40 and p.distance_to(report["pos"]) < 290.0:
             unit["memory_pos"] = report["pos"]
             unit["memory_time"] = report["time"]
             unit["memory_id"] = int(id)
@@ -1464,10 +1516,198 @@ func _general_exposure(unit: Dictionary, damage: float, flank: bool, shock: floa
     unit["general_hp"] = maxf(0.0, 100.0 - float(unit["general_risk"]) * 1.4)
     if float(unit["general_hp"]) <= 0.0:
         unit["general_state"] = "전사"
+        unit["active_deputy"] = true
         unit["morale"] = maxf(0.0, float(unit["morale"]) - 26.0)
         unit["cohesion"] = maxf(0.0, float(unit["cohesion"]) - 20.0)
-        _log("%s 전사: 부장 임시 지휘" % str(unit["name"]))
+        _log("%s 전사: %s 지휘 승계" % [str(unit["name"]), str(_deputy_profile(int(unit["deputy_index"]))["name"])])
     elif float(unit["general_hp"]) < 55.0 and str(unit["general_state"]) == "건재":
         unit["general_state"] = "부상"
         unit["morale"] = maxf(0.0, float(unit["morale"]) - 10.0)
         _log("%s 부상: 지휘 효율 저하" % str(unit["name"]))
+
+
+# M6: pre-battle planning and scenario configuration.
+func set_scenario(index: int) -> bool:
+    if started and not finished:
+        return false
+    scenario_id = clampi(index, 0, 2)
+    reset()
+    return true
+
+func _configure_scenario() -> void:
+    scenario_title = "북남 요충지"
+    scenario_goal = "두 요충지를 동시에 점령하고 유지"
+    scenario_limit = MAX_SECONDS
+    forests = [Rect2(325,80,125,90), Rect2(450,360,130,125)]
+    hill = Rect2(400,213,108,89)
+    if scenario_id == 1:
+        scenario_title = "중앙 고지 쟁탈"
+        scenario_goal = "중앙 고지를 18초 연속 확보"
+        scenario_limit = 150.0
+        hill = Rect2(365,205,170,155)
+        forests = [Rect2(230,55,140,110),Rect2(560,370,140,120)]
+        outposts[0]["name"] = "중앙 고지"
+        outposts[0]["pos"] = Vector2(450,280)
+        outposts[1]["name"] = "남측 감시점"
+        outposts[1]["pos"] = Vector2(470,465)
+        for unit in units:
+            if str(unit["type"]) == "보병":
+                unit["mission"] = "중앙 진격"
+    elif scenario_id == 2:
+        scenario_title = "보급로 사수"
+        scenario_goal = "120초 동안 아군 보급기지 사수"
+        scenario_limit = 120.0
+        forests = [Rect2(205,95,160,110),Rect2(310,365,150,125)]
+        hill = Rect2(510,215,110,95)
+        for unit in units:
+            if int(unit["side"]) == 0:
+                unit["mission"] = "본진 방어" if str(unit["type"]) != "기병" else "남측 우회"
+                unit["defense_anchor"] = Vector2(200, float((unit["pos"] as Vector2).y))
+                unit["defense_set"] = str(unit["type"]) != "기병"
+            else:
+                unit["troops"] = float(unit["troops"]) * 1.20
+                unit["initial_troops"] = unit["troops"]
+        bases[0]["fixed"] = true
+
+func transfer_troops(receiver_id: int, donor_id: int, amount: int) -> bool:
+    if started or amount <= 0 or receiver_id == donor_id:
+        return false
+    var receiver: Dictionary = find_unit(receiver_id)
+    var donor: Dictionary = find_unit(donor_id)
+    if receiver.is_empty() or donor.is_empty() or int(receiver["side"]) != 0 or int(donor["side"]) != 0:
+        return false
+    if float(donor["troops"]) - amount < 40.0 or float(receiver["troops"]) + amount > 220.0:
+        return false
+    receiver["troops"] = float(receiver["troops"]) + amount
+    donor["troops"] = float(donor["troops"]) - amount
+    receiver["initial_troops"] = receiver["troops"]
+    donor["initial_troops"] = donor["troops"]
+    return true
+
+func swap_generals(first_id: int, second_id: int) -> bool:
+    if started or first_id == second_id:
+        return false
+    var first: Dictionary = find_unit(first_id)
+    var second: Dictionary = find_unit(second_id)
+    if first.is_empty() or second.is_empty() or int(first["side"]) != 0 or int(second["side"]) != 0:
+        return false
+    for key in ["name","personality","ability","leadership","martial","intelligence","judgment","loyalty","deputy_index"]:
+        var temporary: Variant = first[key]
+        first[key] = second[key]
+        second[key] = temporary
+    return true
+
+func place_unit(unit_id: int, position: Vector2) -> bool:
+    var unit: Dictionary = find_unit(unit_id)
+    if started or unit.is_empty() or int(unit["side"]) != 0 or position.x > 270.0 or position.x < 35.0:
+        return false
+    position = _field_point(position)
+    for other in units:
+        if int(other["id"]) != unit_id and (other["pos"] as Vector2).distance_to(position) < 50.0:
+            return false
+    unit["pos"] = position
+    unit["goal"] = position
+    return true
+
+func add_waypoint(unit_id: int, position: Vector2) -> bool:
+    var unit: Dictionary = find_unit(unit_id)
+    if started or unit.is_empty() or int(unit["side"]) != 0 or unit["waypoints"].size() >= 5:
+        return false
+    unit["waypoints"].append(_field_point(position))
+    return true
+
+func clear_plan(unit_id: int) -> bool:
+    var unit: Dictionary = find_unit(unit_id)
+    if started or unit.is_empty() or int(unit["side"]) != 0:
+        return false
+    unit["waypoints"].clear()
+    unit["waypoint_index"] = 0
+    unit["defense_set"] = false
+    return true
+
+func set_defense_line(unit_id: int, position: Vector2) -> bool:
+    var unit: Dictionary = find_unit(unit_id)
+    if started or unit.is_empty() or int(unit["side"]) != 0:
+        return false
+    unit["defense_anchor"] = _field_point(position)
+    unit["defense_set"] = true
+    return true
+
+func _apply_planned_route(unit: Dictionary, action: String, reason: String, goal: Vector2, enemy_distance: float) -> Dictionary:
+    var unchanged: Dictionary = {"action":action,"reason":reason,"goal":goal}
+    if action in ["후퇴","패주","재집결","휴식","보급 복귀","탄약 보충","거리 유지","측면 방어"]:
+        return unchanged
+    var p: Vector2 = unit["pos"]
+    var index: int = int(unit["waypoint_index"])
+    var points: Array = unit["waypoints"]
+    if index < points.size() and p.distance_to(points[index]) <= 22.0:
+        index += 1
+        unit["waypoint_index"] = index
+    if index < points.size() and enemy_distance > 105.0:
+        return {"action":"계획 경유","reason":"사전 계획 경유점 %d/%d" % [index+1,points.size()],"goal":points[index]}
+    if bool(unit["defense_set"]) and index >= points.size():
+        var anchor: Vector2 = unit["defense_anchor"]
+        if p.distance_to(anchor) > 28.0:
+            return {"action":"방어선 사수","reason":"지정 방어 구역 복귀","goal":anchor}
+        return {"action":"방어선 사수","reason":"지정 방어 구역 사수","goal":p}
+    return unchanged
+
+func set_supply_priority(unit_id: int, priority: int) -> bool:
+    var unit: Dictionary = find_unit(unit_id)
+    if unit.is_empty() or int(unit["side"]) != 0 or finished:
+        return false
+    unit["supply_priority"] = clampi(priority,0,2)
+    return true
+
+func _deputy_profile(index: int) -> Dictionary:
+    match index:
+        1: return {"name":"공격형 부장","leadership":55.0,"martial":76.0,"intelligence":48.0,"judgment":58.0}
+        2: return {"name":"책략형 부장","leadership":52.0,"martial":42.0,"intelligence":78.0,"judgment":69.0}
+        _: return {"name":"통솔형 부장","leadership":76.0,"martial":53.0,"intelligence":55.0,"judgment":65.0}
+
+func set_deputy(unit_id: int, index: int) -> bool:
+    var unit: Dictionary = find_unit(unit_id)
+    if started or unit.is_empty() or int(unit["side"]) != 0:
+        return false
+    unit["deputy_index"] = clampi(index,0,2)
+    return true
+
+func deputy_name(unit: Dictionary) -> String:
+    return str(_deputy_profile(int(unit["deputy_index"]))["name"])
+
+func _deliver_intel() -> void:
+    for i in range(pending_reports.size()-1,-1,-1):
+        var report: Dictionary = pending_reports[i]
+        if battle_time < float(report["arrive"]):
+            continue
+        var side: int = int(report["side"])
+        var id: int = int(report["id"])
+        var old: Dictionary = intelligence[side].get(id,{})
+        if old.is_empty() or float(old["time"]) < float(report["time"]):
+            intelligence[side][id] = report
+            if side == 0:
+                _log("정찰 보고 도착: 신뢰도 %d%%" % int(float(report["confidence"])*100.0))
+        pending_reports.remove_at(i)
+
+func player_can_see(position: Vector2, concealed: bool = false) -> bool:
+    var factor: float = 0.60 if concealed else 1.0
+    if (commanders[0]["pos"] as Vector2).distance_to(position) <= 170.0 * factor:
+        return true
+    for unit in units:
+        if int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0 or bool(unit["routed"]):
+            continue
+        var sight: float = 200.0 * factor * (0.85 + _effective_stat(unit,"intelligence")*0.002)
+        if terrain_at(unit["pos"]) == "고지":
+            sight *= 1.15
+        if (unit["pos"] as Vector2).distance_to(position) <= sight:
+            return true
+    for scout in scouts:
+        if int(scout["side"]) == 0 and bool(scout["alive"]) and (scout["pos"] as Vector2).distance_to(position) <= 145.0 * factor:
+            return true
+    return false
+
+func timeline_text() -> String:
+    var lines: PackedStringArray = []
+    for entry in timeline:
+        lines.append("%05.1f초 | %02d턴 | %s" % [float(entry["time"]),int(entry["turn"]),str(entry["message"])])
+    return "\n".join(lines)
