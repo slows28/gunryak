@@ -217,7 +217,7 @@ func _run() -> void:
     cargo_sim.set_scenario(3)
     var wagon_origin:Vector2=cargo_sim.convoy["pos"]
     for u in cargo_sim.units:
-        u["pos"]=Vector2(200,1500) if int(u["side"])==0 else Vector2(2500,1500)
+        u["pos"]=Vector2(200,1200) if int(u["side"])==0 else Vector2(2500,1500)
     check(cargo_sim.convoy_status()["state"]=="호위 대기","cargo reports unguarded wait")
     cargo_sim._update_convoy(0.1)
     check(cargo_sim.convoy["pos"]==wagon_origin and float(cargo_sim.convoy["unguarded_seconds"])>0.0,"unguarded wagon actually waits")
