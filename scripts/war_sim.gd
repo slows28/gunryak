@@ -353,6 +353,17 @@ func _decide(unit: Dictionary) -> void:
         goal = pos + escape.normalized() * minf(110.0, 155.0 - enemy_distance)
         if str(unit["action"]) != "거리 유지":
             _log("%s 궁병이 근접 적을 피해 후방 기동" % str(unit["name"]))
+    elif str(unit["type"]) == "기병" and personality == "공격" and ability >= 72.0 and morale > 52.0 and relative_strength >= 0.75 and enemy_distance >= 92.0 and enemy_distance < 245.0:
+        # Waypoint is built from an enemy we can actually SEE, not the full map.
+        # Reaching the waypoint commits the unit to a strike on that enemy.
+        if str(unit["action"]) == "측면 우회" and pos.distance_to(unit["goal"]) < 27.0:
+            action = "돌파"
+            reason = "측면 진입 성공: 관측한 적을 향해 돌격"
+            goal = nearest["pos"]
+        else:
+            action = "측면 우회"
+            reason = "공격형 장수: 적 정면을 피해 측면으로 기동"
+            goal = _flank_waypoint(unit, nearest)
     elif enemy_distance < 165.0 and personality == "신중" and relative_strength < 0.94:
         action = "방어"
         reason = "적군 우세를 감지해 방어 진형 유지"
@@ -419,6 +430,21 @@ func _decide(unit: Dictionary) -> void:
         unit["next_formation"] = wanted
         unit["form_remaining"] = 2.1 + (100.0 - ability) * 0.014
 
+
+# A visible target's facing determines the offset, so the cavalry really travels
+# to one flank. A cautious commander never calls this maneuver.
+func _flank_waypoint(unit: Dictionary, enemy: Dictionary) -> Vector2:
+    var enemy_facing: Vector2 = enemy["facing"]
+    if enemy_facing.length_squared() <= 0.1:
+        enemy_facing = Vector2.LEFT if int(enemy["side"]) == 1 else Vector2.RIGHT
+    enemy_facing = enemy_facing.normalized()
+    var lateral: Vector2 = Vector2(-enemy_facing.y, enemy_facing.x)
+    var offset: Vector2 = (unit["pos"] as Vector2) - (enemy["pos"] as Vector2)
+    var side_sign: float = 1.0 if lateral.dot(offset) >= 0.0 else -1.0
+    if absf(lateral.dot(offset)) < 4.0:
+        side_sign = 1.0 if int(unit["id"]) % 2 == 0 else -1.0
+    return _field_point((enemy["pos"] as Vector2) + lateral * side_sign * 83.0 + enemy_facing * 24.0)
+
 func _mission_point(side: int, mission: String) -> Vector2:
     var x: float = 680.0 if side == 0 else 220.0
     match mission:
@@ -440,7 +466,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var pos: Vector2 = unit["pos"]
     var goal: Vector2 = unit["goal"]
     var enemy: Dictionary = _nearest_visible_enemy(unit)
-    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지"]:
+    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
@@ -455,8 +481,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         "방진": rate *= 0.65
     if str(unit["next_formation"]) != "":
         rate *= 0.55
-    if _in_forest(pos):
-        rate *= 0.70
+    rate *= _terrain_movement_multiplier(unit, pos)
     if pos.distance_to(goal) > 2.0:
         var new_pos: Vector2 = pos.move_toward(goal, rate * dt)
         unit["pos"] = _field_point(new_pos)
@@ -546,6 +571,31 @@ func _resolve_frontline(dt: float) -> void:
 func _field_point(p: Vector2) -> Vector2:
     return Vector2(clampf(p.x, 18.0, FIELD_W - 18.0), clampf(p.y, 22.0, FIELD_H - 18.0))
 
+
+# Terrain layout is the same geometry used by game.gd's tactical map.
+func terrain_at(p: Vector2) -> String:
+    if _in_forest(p):
+        return "숲"
+    if Rect2(400.0, 213.0, 108.0, 89.0).has_point(p):
+        return "고지"
+    for y in [131.0, 282.0, 435.0]:
+        if absf(p.y - y) <= 10.0:
+            return "도로"
+    return "평지"
+
+func _terrain_movement_multiplier(unit: Dictionary, p: Vector2) -> float:
+    match terrain_at(p):
+        "도로":
+            return 1.23
+        "숲":
+            match str(unit["type"]):
+                "기병": return 0.53
+                "궁병": return 0.77
+                _: return 0.83
+        "고지":
+            return 0.82
+    return 1.0
+
 func _in_forest(p: Vector2) -> bool:
     return Rect2(325, 80, 125, 90).has_point(p) or Rect2(450, 360, 130, 125).has_point(p)
 
@@ -624,10 +674,14 @@ func _combat(dt: float) -> void:
             # Close fighting degrades bow effectiveness; cover blocks some shots.
             attack *= 0.55 if distance < 56.0 else 1.0
             if _in_forest(ep):
-                attack *= 0.84
+                attack *= 0.72
+            if terrain_at(pos) == "고지" and terrain_at(ep) != "고지":
+                attack *= 1.23
         else:
             # Physical contact frontage, not a free formation-specific stat buff.
             attack *= clampf(float(contacts) / 8.0, 0.35, 1.50)
+            if terrain_at(pos) == "고지" and terrain_at(ep) != "고지":
+                attack *= 1.11
 
         var direction: Vector2 = (pos - ep).normalized()
         var facing: Vector2 = enemy["facing"]
