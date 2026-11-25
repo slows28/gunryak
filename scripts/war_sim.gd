@@ -552,7 +552,7 @@ func _combat(dt: float) -> void:
                 attack *= 0.84
         else:
             # Physical contact frontage, not a free formation-specific stat buff.
-            attack *= clampf(float(contacts) / 4.0, 0.45, 1.50)
+            attack *= clampf(float(contacts) / 8.0, 0.35, 1.50)
 
         var direction: Vector2 = (pos - ep).normalized()
         var facing: Vector2 = enemy["facing"]
