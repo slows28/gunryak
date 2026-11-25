@@ -438,6 +438,19 @@ func _capture() -> void:
             if age<0.1 or age>0.35: continue
             if not game.sim.player_can_see(fx["from"]) or not game.sim.player_can_see(fx["to"]): continue
             game.call("_focus_combat")
+            var own_ids:Array[int]=game.sim.command_ids(0)
+            var expected:int=-1
+            for key in ["attacker_id","defender_id"]:
+                if own_ids.has(int(fx.get(key,-1))):
+                    expected=int(fx[key])
+                    break
+            if expected>=0:
+                game.call("_select_friendly_combatant",fx)
+                if game.selected_id!=expected or game.observing_enemy:
+                    push_error("VISUAL_CAPTURE_FAIL: combat focus selected unrelated commander")
+                    quit(1)
+                    return
+                print("COMBAT_COMMANDER_FOCUS_PASS")
             game.camera_center=(fx["from"] as Vector2).lerp(fx["to"],0.5)
             game.camera_zoom=1.8
             game.call("_clamp_camera")
