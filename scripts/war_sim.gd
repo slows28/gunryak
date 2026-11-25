@@ -1969,6 +1969,10 @@ func _scan_situations() -> void:
             kind = "군량 부족"
         elif battle_time-float(unit["last_deviation"]) < 3.0:
             kind = "명령 이탈"
+        elif float(unit["general_hp"]) < 55.0:
+            kind = "장수 부상"
+        elif str(unit["type"]) == "궁병" and float(unit["ammo"]) < 20.0:
+            kind = "화살 부족"
         elif float(unit["front_pressure"]) > 0.60:
             kind = "전선 압박"
         if kind == "":
