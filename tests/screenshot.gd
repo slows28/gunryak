@@ -222,16 +222,15 @@ func _capture() -> void:
         push_error("VISUAL_CAPTURE_FAIL: terrain resolution did not improve")
         quit(1)
         return
+    var actual_strength: float=float(game.sim.find_unit(0)["troops"])
     var sample_army: Dictionary=game.sim.find_unit(0).duplicate(true)
     sample_army["troops"]=4680.0
     sample_army["next_formation"]=""
     var slots: Array=game.call("_visual_slots",sample_army)
-    if slots.size()!=72:
-        push_error("VISUAL_CAPTURE_FAIL: increased formation density missing")
+    if slots.size()!=72 or float(game.sim.find_unit(0)["troops"])!=actual_strength:
+        push_error("VISUAL_CAPTURE_FAIL: density or presentation isolation invalid")
         quit(1)
         return
-    if float(game.sim.find_unit(0)["troops"])==4680.0:
-        print("VISUAL_NOTE: actual unit coincidentally has sample strength")
     print("INTEGRATED_VISUAL_PASS: terrain "+str(terrain_size)+" / 72 presentation slots / command skin")
 
     # Same simulation tick, same camera: compare quiet and detailed presentation.
