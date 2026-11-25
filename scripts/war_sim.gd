@@ -6,6 +6,7 @@ const FIELD_W: float = 900.0
 const FIELD_H: float = 570.0
 # Compact mode remains available for legacy regression fixtures. The game uses wide mode.
 var wide_field: bool = false
+var six_armies: bool = false
 var field_size: Vector2 = Vector2(FIELD_W,FIELD_H)
 var layout_scale: float = 1.0
 const TURN_SECONDS: float = 18.0
@@ -111,6 +112,14 @@ func reset() -> void:
     _add_unit(1, "장합", "보병", "신중", 86.0, Vector2(760, 158), "북측 확보", 152.0)
     _add_unit(1, "위군 궁대", "궁병", "균형", 65.0, Vector2(787, 294), "중앙 진격", 102.0)
     _add_unit(1, "위군 기병", "기병", "공격", 66.0, Vector2(755, 437), "남측 우회", 96.0)
+    if six_armies:
+        _add_unit(0,"강유","궁병","균형",83.0,Vector2(175,215),"북측 확보",120.0)
+        _add_unit(0,"관흥","기병","공격",78.0,Vector2(180,375),"남측 우회",110.0)
+        _add_unit(0,"장익","보병","신중",82.0,Vector2(80,360),"본진 방어",135.0)
+        _add_unit(1,"곽회","보병","신중",83.0,Vector2(715,220),"북측 확보",125.0)
+        _add_unit(1,"비요","기병","공격",76.0,Vector2(720,375),"남측 우회",110.0)
+        _add_unit(1,"왕쌍","보병","균형",80.0,Vector2(820,360),"본진 방어",135.0)
+        reserve_limit = [1,1]
     outposts.append({"name":"북측 요충지", "pos":Vector2(435, 148), "owner":-1, "challenger":-1, "progress":0.0, "hold":0.0})
     outposts.append({"name":"남측 관문", "pos":Vector2(470, 423), "owner":-1, "challenger":-1, "progress":0.0, "hold":0.0})
     bases.append(_base(0, Vector2(116, 310)))
@@ -174,7 +183,7 @@ func _log(message: String) -> void:
 func start() -> void:
     if started or finished:
         return
-    if wide_field:
+    if wide_field and not six_armies:
         _deploy_detachments()
     started = true
     _log("전투 개시. " + scenario_goal)
@@ -668,6 +677,20 @@ func _decide(unit: Dictionary) -> void:
                 goal = (parent["pos"] as Vector2)+flank-front*34.0
             action = "분견 지원"
             reason = "본대 측면 엄호 및 합류"
+    if six_armies and str(unit["mission"]) == "본진 방어" and action not in ["패주","후퇴","재집결","휴식","탄약 보충","보급 복귀","측면 방어"]:
+        var base_pos: Vector2 = bases[side]["pos"]
+        if enemy_distance > 110.0 or (not nearest.is_empty() and (nearest["pos"] as Vector2).distance_to(base_pos) > 210.0):
+            action = "보급 호위"
+            reason = "군단 후방 및 군량 보호"
+            goal = base_pos+Vector2(65.0 if side == 0 else -65.0,0)
+    if six_armies and str(unit["type"]) == "궁병" and enemy_distance > 165.0 and action in ["진격","거점 점령","거점 방어","전열 지원","명령 수행"]:
+        var screen: Dictionary = _infantry_screen(unit)
+        if not screen.is_empty():
+            var screen_pos: Vector2 = screen["pos"]
+            var behind: Vector2 = Vector2.LEFT if side == 0 else Vector2.RIGHT
+            goal = screen_pos+behind*100.0
+            action = "전열 지원"
+            reason = "보병 엄호 하에 후방 사격 위치 확보"
     var planned: Dictionary = _apply_planned_route(unit, action, reason, goal, enemy_distance)
     action = str(planned["action"])
     reason = str(planned["reason"])
@@ -1132,6 +1155,14 @@ func _objective_winner() -> int:
         if not structures.is_empty() and float(structures[0]["hp"]) <= 0.0 and int(outposts[0]["owner"]) == 0 and float(outposts[0]["hold"]) >= 12.0:
             return 0
         return -1
+    if six_armies and scenario_id == 0:
+        var secured: Array[int] = [0,0]
+        for site in outposts:
+            var faction: int = int(site["owner"])
+            if faction >= 0 and float(site["hold"]) >= OUTPOST_HOLD_SECONDS: secured[faction] += 1
+        for faction in range(2):
+            if secured[faction] >= 2: return faction
+        return -1
     var owner: int = int(outposts[0]["owner"])
     if owner < 0:
         return -1
@@ -1146,7 +1177,7 @@ func battle_report() -> Array[String]:
     var rows: Array[String] = []
     rows.append("전투 결산 · %s" % (result if finished else "진행 중"))
     for unit in units:
-        if int(unit["side"]) != 0 or int(unit["id"]) >= 3:
+        if int(unit["side"]) != 0 or not int(unit["id"]) in command_ids(0):
             continue
         var report: Dictionary = corps_report(int(unit["id"]))
         rows.append("%s[%s] | 판단 %d · 피해 %d · 손실 %d · 이탈 %d · 공적 %d" %
@@ -1277,6 +1308,8 @@ func _assigned_outpost(unit: Dictionary) -> Dictionary:
     var mission: String = str(unit["mission"])
     if outposts.size() < 2:
         return {}
+    if six_armies and scenario_id == 0 and mission == "중앙 진격" and outposts.size() >= 3:
+        return outposts[2]
     if scenario_id in [1,4] and mission == "중앙 진격":
         return outposts[0]
     if mission == "북측 확보":
@@ -1393,6 +1426,12 @@ func _set_general_profile(unit: Dictionary) -> void:
         "마속": profile = [52.0, 47.0, 89.0, 55.0, 58.0]
         "위연": profile = [84.0, 93.0, 69.0, 81.0, 46.0]
         "장합": profile = [89.0, 86.0, 78.0, 86.0, 85.0]
+        "강유": profile = [83.0,79.0,88.0,85.0,80.0]
+        "관흥": profile = [74.0,87.0,61.0,72.0,85.0]
+        "장익": profile = [82.0,72.0,73.0,78.0,90.0]
+        "곽회": profile = [85.0,76.0,83.0,86.0,90.0]
+        "비요": profile = [74.0,84.0,65.0,75.0,76.0]
+        "왕쌍": profile = [77.0,91.0,61.0,68.0,82.0]
     unit["leadership"] = profile[0]
     unit["martial"] = profile[1]
     unit["intelligence"] = profile[2]
@@ -1581,7 +1620,8 @@ func _update_reserves() -> void:
             if stress > worst:
                 worst = stress
                 assigned = unit
-        if active >= 3 and ratio > 2.15 and pressure < 0.45 and turn < 5:
+        var expected: int = 6 if six_armies else 3
+        if active >= expected and ratio > float(expected)*0.72 and pressure < 0.45 and turn < 5:
             continue
         reinforcements_used[side] += 1
         reserve_next[side] = battle_time + 22.0
@@ -2172,6 +2212,9 @@ func _expand_layout() -> void:
         var old: Rect2 = structure["rect"]
         structure["rect"] = Rect2(layout_point(old.position),Vector2(old.size.x,old.size.y*3.0))
     scenario_limit = [360.0,330.0,300.0,390.0,360.0][scenario_id]
+    if six_armies and scenario_id == 0:
+        outposts.append({"name":"중앙 교량 거점","pos":Vector2(1370,850),"owner":-1,"challenger":-1,"progress":0.0,"hold":0.0})
+        scenario_goal = "6턴 이후 세 거점 중 두 곳을 8초 확보"
     if scenario_id == 1:
         scenario_goal = "6턴 이후 중앙 고지 30초 연속 확보"
     elif scenario_id == 2:
@@ -2240,3 +2283,28 @@ func _crossing_route(p: Vector2,goal: Vector2) -> Vector2:
             best_y = y
     if absf(p.y-best_y) < 30.0: return Vector2(river_x(best_y)+(65.0 if p.x < river_x(p.y) else -65.0),best_y)
     return Vector2(river_x(best_y)+(-58.0 if p.x < river_x(p.y) else 58.0),best_y)
+
+func set_six_armies(enabled: bool) -> void:
+    six_armies = enabled
+    if enabled: wide_field = true
+    reset()
+
+func command_ids(side: int) -> Array[int]:
+    var ids: Array[int] = [0,1,2] if side == 0 else [3,4,5]
+    if six_armies:
+        ids.append_array([6,7,8] if side == 0 else [9,10,11])
+    return ids
+
+func _infantry_screen(unit: Dictionary) -> Dictionary:
+    var best: Dictionary = {}
+    var score: float = 380.0
+    var p: Vector2 = unit["pos"]
+    for ally in units:
+        if int(ally["side"]) != int(unit["side"]) or str(ally["type"]) != "보병" or bool(ally["routed"]) or float(ally["troops"]) <= 24.0: continue
+        if str(ally["mission"]) == "본진 방어" and str(unit["mission"]) != "본진 방어": continue
+        var d: float = p.distance_to(ally["pos"])
+        if str(ally["mission"]) == str(unit["mission"]): d *= 0.60
+        if d < score:
+            score = d
+            best = ally
+    return best
