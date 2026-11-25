@@ -27,6 +27,12 @@ func _capture() -> void:
     if not _save_frame("title.png"):
         quit(1)
         return
+    game.call("_begin_campaign")
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("campaign_map.png"):
+        quit(1)
+        return
     game.call("_leave_title")
     await process_frame
     await RenderingServer.frame_post_draw
