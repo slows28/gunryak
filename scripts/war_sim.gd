@@ -340,6 +340,17 @@ func _decide(unit: Dictionary) -> void:
         action = "후퇴"
         reason = "붕괴 위험: 전선을 이탈하고 재집결"
         goal = Vector2(86, pos.y) if side == 0 else Vector2(815, pos.y)
+    elif str(unit["type"]) == "궁병" and enemy_distance < 110.0:
+        # Real spatial withdrawal against observed melee pressure.
+        # Retreat target is calculated from the visible opponent only.
+        action = "거리 유지"
+        reason = "궁병: 근접 위협을 피해 사격 거리를 확보"
+        var escape: Vector2 = pos - (nearest["pos"] as Vector2)
+        if escape.length_squared() < 0.001:
+            escape = Vector2.LEFT if side == 0 else Vector2.RIGHT
+        goal = pos + escape.normalized() * minf(110.0, 155.0 - enemy_distance)
+        if str(unit["action"]) != "거리 유지":
+            _log("%s 궁병이 근접 적을 피해 후방 기동" % str(unit["name"]))
     elif enemy_distance < 165.0 and personality == "신중" and relative_strength < 0.94:
         action = "방어"
         reason = "적군 우세를 감지해 방어 진형 유지"
@@ -353,11 +364,8 @@ func _decide(unit: Dictionary) -> void:
         goal = nearest["pos"]
     elif enemy_distance < 160.0 and str(unit["type"]) == "궁병":
         action = "거리 유지"
-        reason = "궁병: 사격 거리 유지"
-        if str(unit["action"]) == "거리 유지":
-            goal = unit["goal"]
-        else:
-            goal = pos
+        reason = "궁병: 유효 사거리에서 사격 대기"
+        goal = pos
     elif enemy_distance < 165.0:
         action = "교전"
         reason = "전선 접촉: 적 병력과 교전"
@@ -430,7 +438,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var pos: Vector2 = unit["pos"]
     var goal: Vector2 = unit["goal"]
     var enemy: Dictionary = _nearest_visible_enemy(unit)
-    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어"]:
+    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:

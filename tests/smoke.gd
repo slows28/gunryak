@@ -114,6 +114,27 @@ func _initialize() -> void:
     check(str(scout["action"]) == "진격", "out-of-sight enemy does not trigger combat AI")
     check(fog.validate_state().is_empty(), "raids and intelligence states remain valid")
 
+
+    # The archer must physically retreat away from a VISIBLE close enemy, not
+    # merely set its goal to its own position and freeze.
+    var spacing = WarSim.new()
+    var archer: Dictionary = spacing.find_unit(1)
+    var attacker: Dictionary = spacing.find_unit(4)
+    archer["pos"] = Vector2(475, 285)
+    attacker["pos"] = Vector2(535, 285)
+    var contact_distance: float = (archer["pos"] as Vector2).distance_to(attacker["pos"])
+    spacing._decide(archer)
+    check(str(archer["action"]) == "거리 유지", "archer chooses spacing against nearby visible enemy")
+    var escape_goal: Vector2 = archer["goal"]
+    check(escape_goal.x < 475.0, "archer retreat goal is behind its current position")
+    spacing._move_unit(archer, 0.1)
+    check((archer["pos"] as Vector2).distance_to(attacker["pos"]) > contact_distance, "archer physically gains space")
+    check(str(archer["reason"]).find("근접") >= 0, "archer decision explains observed pressure")
+    check(spacing.validate_state().is_empty(), "archer spacing preserves invariants")
+    attacker["pos"] = Vector2(640, 285)
+    spacing._decide(archer)
+    check(str(archer["action"]) == "진격", "archer resumes assigned mission outside contact range")
+
     # Re-formation must take time, not change instantaneously.
     var forma = WarSim.new()
     var lead: Dictionary = forma.find_unit(0)

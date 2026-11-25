@@ -47,7 +47,7 @@ jobs:
           python3 - <<'PY'
           import pathlib, struct
           folder = pathlib.Path("test_results/screenshots")
-          for name in ("before_battle.png", "battle_12s.png"):
+          for name in ("before_battle.png", "battle_12s.png", "battle_28s.png"):
               file = folder/name
               if not file.exists():
                   raise SystemExit(f"Screenshot missing: {file}")
