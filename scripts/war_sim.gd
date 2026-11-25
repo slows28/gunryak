@@ -14,7 +14,9 @@ const LAST_TURN: int = 10
 const MAX_SECONDS: float = TURN_SECONDS * float(LAST_TURN)
 const SUPPLY_RADIUS: float = 182.0
 const AI_VISION_RANGE: float = 285.0
-const MAX_TROOPS: float = 2000.0
+const MAX_TROOPS: float = 5000.0
+const ARMY_SCALE: float = 32.0
+const LARGE_FORMATIONS = ["횡대","종대","방진","어린진","학익진","봉시진","안행진"]
 const OUTPOST_RADIUS: float = 58.0
 const OUTPOST_CAPTURE_SECONDS: float = 7.0
 const OUTPOST_HOLD_SECONDS: float = 8.0
@@ -120,6 +122,13 @@ func reset() -> void:
         _add_unit(1,"비요","기병","공격",76.0,Vector2(720,375),"남측 우회",110.0)
         _add_unit(1,"왕쌍","보병","균형",80.0,Vector2(820,360),"본진 방어",135.0)
         reserve_limit = [1,1]
+        var manpower: Array[int] = [4500,3500,3200,4800,3300,3200,4000,3800,4500,4100,3600,4200]
+        var shapes: Array[String] = ["방진","안행진","봉시진","어린진","안행진","봉시진","학익진","어린진","방진","학익진","봉시진","방진"]
+        for i in range(units.size()):
+            units[i]["troops"] = float(manpower[i])
+            units[i]["initial_troops"] = float(manpower[i])
+            units[i]["formation"] = shapes[i]
+            units[i]["policy"] = shapes[i]+" 유지"
     outposts.append({"name":"북측 요충지", "pos":Vector2(435, 148), "owner":-1, "challenger":-1, "progress":0.0, "hold":0.0})
     outposts.append({"name":"남측 관문", "pos":Vector2(470, 423), "owner":-1, "challenger":-1, "progress":0.0, "hold":0.0})
     bases.append(_base(0, Vector2(116, 310)))
@@ -196,7 +205,7 @@ func select_unit_mission(unit_id: int, mission: String, policy: String) -> bool:
         return false
     unit["mission"] = mission
     _apply_policy(unit, policy)
-    if policy in ["횡대 유지", "종대 유지", "방진 유지"]:
+    if policy.ends_with(" 유지") and policy.replace(" 유지","") in LARGE_FORMATIONS:
         unit["formation"] = policy.replace(" 유지", "")
     return true
 
@@ -534,7 +543,7 @@ func _decide(unit: Dictionary) -> void:
         action = "패주"
         reason = "지휘 통제 상실: 생존 병력이 본진으로 도주"
         goal = _home_point(side)
-    elif troops < 24.0 or morale < 19.0:
+    elif troops < (600.0 if six_armies else 24.0) or morale < 19.0:
         action = "후퇴"
         reason = "붕괴 위험: 전선을 이탈하고 재집결"
         goal = Vector2(86.0*layout_scale if side == 0 else 815.0*layout_scale,pos.y)
@@ -677,7 +686,7 @@ func _decide(unit: Dictionary) -> void:
                 goal = (parent["pos"] as Vector2)+flank-front*34.0
             action = "분견 지원"
             reason = "본대 측면 엄호 및 합류"
-    if six_armies and str(unit["mission"]) == "본진 방어" and action not in ["패주","후퇴","재집결","휴식","탄약 보충","보급 복귀","측면 방어"]:
+    if six_armies and scenario_id != 3 and str(unit["mission"]) == "본진 방어" and action not in ["패주","후퇴","재집결","휴식","탄약 보충","보급 복귀","측면 방어"]:
         var base_pos: Vector2 = bases[side]["pos"]
         if enemy_distance > 110.0 or (not nearest.is_empty() and (nearest["pos"] as Vector2).distance_to(base_pos) > 210.0):
             action = "보급 호위"
@@ -714,7 +723,13 @@ func _decide(unit: Dictionary) -> void:
         wanted = "방진"
     elif str(unit["type"]) == "기병":
         wanted = "종대"
-    if str(unit["policy"]) in ["횡대 유지", "종대 유지", "방진 유지"] and action != "패주":
+    if six_armies and action not in ["후퇴","패주","재집결","보급 복귀","탄약 보충","전술 철수"]:
+        if wanted == "방진": wanted = "방진"
+        elif str(unit["type"]) == "기병": wanted = "봉시진"
+        elif str(unit["type"]) == "궁병": wanted = "안행진"
+        elif action in ["돌파","반격","교전"]: wanted = "어린진"
+        else: wanted = "학익진"
+    if str(unit["policy"]).ends_with(" 유지") and str(unit["policy"]).replace(" 유지","") in LARGE_FORMATIONS and action != "패주":
         wanted = str(unit["policy"]).replace(" 유지", "")
     # Cancel an obsolete re-formation order before it completes; otherwise
     # a later AI decision can apply a formation the general no longer wants.
@@ -775,6 +790,10 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     match str(unit["formation"]):
         "종대": rate *= 1.10
         "방진": rate *= 0.65
+        "어린진": rate *= 0.90
+        "학익진": rate *= 0.78
+        "봉시진": rate *= 1.12
+        "안행진": rate *= 0.91
     if str(unit["next_formation"]) != "":
         rate *= 0.55
     if wide_field and (enemy.is_empty() or pos.distance_to(enemy["pos"]) > 220.0):
@@ -814,9 +833,9 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
 # actually in each formation, morale and how well a unit resists front pressure.
 func _body_distance(a: Dictionary, b: Dictionary) -> float:
     if six_armies:
-        var radius_a: float = 31.0 if str(a["formation"]) == "종대" else 23.0
-        var radius_b: float = 31.0 if str(b["formation"]) == "종대" else 23.0
-        return radius_a+radius_b
+        var direction: Vector2 = ((b["pos"] as Vector2)-(a["pos"] as Vector2)).normalized()
+        if direction.length_squared()<0.01: direction=Vector2.RIGHT
+        return _formation_extent(a,direction)+_formation_extent(b,-direction)+5.0
     if str(a["type"]) == "궁병" or str(b["type"]) == "궁병":
         return 25.0
     return 34.0
@@ -827,6 +846,10 @@ func _frontline_power(unit: Dictionary, enemy: Dictionary, direction: Vector2) -
         "횡대": factor = 1.06
         "종대": factor = 0.77
         "방진": factor = 1.28
+        "어린진": factor = 1.19
+        "학익진": factor = 1.10
+        "봉시진": factor = 1.18
+        "안행진": factor = 0.85
     if str(unit["type"]) == "기병":
         factor *= 1.16 if str(enemy["formation"]) != "방진" else 0.70
         if _in_forest(unit["pos"]):
@@ -945,9 +968,7 @@ func formation_slots(unit: Dictionary) -> Array[Vector2]:
             ranks = 3
     var count: int = clampi(int(round(float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"])) * 12.0)), 0, 12)
     if six_armies:
-        files = 8 if str(unit["formation"]) == "횡대" else (4 if str(unit["formation"]) == "종대" else 5)
-        ranks = 3 if files == 8 else (6 if files == 4 else 5)
-        count = clampi(ceili(float(unit["troops"])/6.0),0,24)
+        return army_slots(unit,clampi(ceili(float(unit["troops"])/180.0),1,24),12.0)
     var center: Vector2 = unit["pos"]
     for k in range(count):
         var file: int = k % files
@@ -959,7 +980,7 @@ func formation_slots(unit: Dictionary) -> Array[Vector2]:
 # Number of soldiers able to reach the opposing formation from their REAL slots.
 # Broad-phase culling keeps repeated headless regression fast.
 func formation_contacts(attacker: Dictionary, defender: Dictionary, weapon_reach: float) -> int:
-    if (attacker["pos"] as Vector2).distance_to(defender["pos"]) > weapon_reach + 75.0:
+    if (attacker["pos"] as Vector2).distance_to(defender["pos"]) > weapon_reach + (190.0 if six_armies else 75.0):
         return 0
     var attacking_slots: Array[Vector2] = formation_slots(attacker)
     var defending_slots: Array[Vector2] = formation_slots(defender)
@@ -1074,7 +1095,14 @@ func _combat(dt: float) -> void:
             if terrain_at(pos) == "하천": damage *= 0.68
             if terrain_at(ep) == "하천": damage *= 1.18
         if six_armies:
-            damage *= clampf(float(unit["initial_troops"])/120.0,0.45,1.8)
+            damage *= clampf(float(unit["initial_troops"])/3800.0,0.20,1.5)*ARMY_SCALE
+            match str(unit["formation"]):
+                "어린진": damage *= 1.14 if unit_type != "궁병" else 0.95
+                "학익진": damage *= 1.20 if flank or rear else 0.93
+                "봉시진": damage *= 1.20 if unit_type == "기병" else 1.03
+                "안행진": damage *= 1.22 if unit_type == "궁병" else 0.85
+                "방진": damage *= 0.84
+            shock *= ARMY_SCALE
         if wide_field: shock *= float(unit.get("strength_share",1.0))
         damage_entries.append({"target":int(enemy["id"]), "source":int(unit["id"]), "damage":maxf(0.0, damage + shock), "flank":flank or rear, "shock":shock, "ambush":ambush})
         if shock > 0.0 or battle_time - float(unit["last_visual"]) >= (0.9 if unit_type == "궁병" else 0.55):
@@ -1091,19 +1119,20 @@ func _combat(dt: float) -> void:
         defender["casualties_taken"] = float(defender["casualties_taken"]) + actual_damage
         if actual_damage > 0.0:
             defender["last_hit"] = battle_time
-        var shock_damage: float = float(entry["shock"])
+        var shock_damage: float = float(entry["shock"])/(ARMY_SCALE if six_armies else 1.0)
+        var pressure_damage: float = actual_damage/(ARMY_SCALE if six_armies else 1.0)
         if shock_damage > 0.0 or bool(entry["ambush"]):
             defender["morale"] = maxf(0.0, float(defender["morale"]) - shock_damage * 1.1 - (6.0 if bool(entry["ambush"]) else 0.0))
             defender["cohesion"] = maxf(0.0, float(defender["cohesion"]) - shock_damage * 1.6)
-        _general_exposure(defender, actual_damage, bool(entry["flank"]), shock_damage)
-        defender["cohesion"] = maxf(0.0, float(defender["cohesion"]) - actual_damage * (0.85 if bool(entry["flank"]) else 0.38))
+        _general_exposure(defender, pressure_damage, bool(entry["flank"]), shock_damage)
+        defender["cohesion"] = maxf(0.0, float(defender["cohesion"]) - pressure_damage * (0.85 if bool(entry["flank"]) else 0.38))
         if bool(entry["flank"]):
             defender["flank_hits"] = float(defender["flank_hits"]) + actual_damage
         var source: Dictionary = find_unit(int(entry["source"]))
         if not source.is_empty():
             source["damage_dealt"] = float(source["damage_dealt"]) + actual_damage
         var morale_loss: float = 0.11 if bool(entry["flank"]) else 0.07
-        defender["morale"] = maxf(0.0, float(defender["morale"]) - actual_damage * morale_loss)
+        defender["morale"] = maxf(0.0, float(defender["morale"]) - pressure_damage * morale_loss)
         if float(defender["troops"]) <= 0.0:
             _log("%s 전멸" % str(defender["name"]))
             for ally in units:
@@ -1155,6 +1184,7 @@ func _objective_winner() -> int:
     if outposts.size() < 2 or turn < (6 if wide_field else 3):
         return -1
     if scenario_id == 1:
+        if six_armies and battle_time < 125.0: return -1
         var central: Dictionary = outposts[0]
         if int(central["owner"]) >= 0 and float(central["hold"]) >= (30.0 if wide_field else 18.0):
             return int(central["owner"])
@@ -1646,7 +1676,7 @@ func _update_reserves() -> void:
         var home: Vector2 = _home_point(side)
         home.y += float(reinforcements_used[side] - 1) * 52.0
         var mission: String = str(assigned.get("mission", "중앙 진격"))
-        _add_unit(side, ("왕실 예비대 %d" if side == 0 else "위군 예비대 %d") % reinforcements_used[side], "보병", "균형", 63.0, home, mission, 72.0)
+        _add_unit(side, ("왕실 예비대 %d" if side == 0 else "위군 예비대 %d") % reinforcements_used[side], "보병", "균형", 63.0, home, mission, 3000.0 if six_armies else 72.0)
         units.back()["reserve"] = true
         _log("%s 예비대 투입: %s" % ["아군" if side == 0 else "적군", mission])
 
@@ -1676,7 +1706,7 @@ func _update_general_conditions(unit: Dictionary, dt: float) -> void:
         unit["ai_cooldown"] = 0.0
         _log("%s: 명령 통제 상실 및 패주" % str(unit["name"]))
     if bool(unit["routed"]):
-        var lost: float = minf(float(unit["troops"]), dt * (0.45 if bool(unit["surrounded"]) else 0.15))
+        var lost: float = minf(float(unit["troops"]), dt * (0.45 if bool(unit["surrounded"]) else 0.15)*(ARMY_SCALE if six_armies else 1.0))
         unit["troops"] = maxf(0.0, float(unit["troops"]) - lost)
         unit["deserted"] = float(unit["deserted"]) + lost
         var p: Vector2 = unit["pos"]
@@ -1684,7 +1714,7 @@ func _update_general_conditions(unit: Dictionary, dt: float) -> void:
         if p.distance_to(_home_point(int(unit["side"]))) < 75.0 and (threat.is_empty() or p.distance_to(threat["pos"]) > 125.0):
             unit["morale"] = minf(100.0, float(unit["morale"]) + dt * (0.8 + _effective_stat(unit, "leadership") * 0.014))
             unit["cohesion"] = minf(100.0, float(unit["cohesion"]) + dt * 1.8)
-            if float(unit["morale"]) >= 42.0 and float(unit["cohesion"]) >= 50.0 and float(unit["troops"]) >= 24.0:
+            if float(unit["morale"]) >= 42.0 and float(unit["cohesion"]) >= 50.0 and float(unit["troops"]) >= (600.0 if six_armies else 24.0):
                 unit["routed"] = false
                 unit["rallying"] = true
                 unit["ai_cooldown"] = 0.0
@@ -1751,7 +1781,7 @@ func _configure_scenario() -> void:
                 unit["defense_anchor"] = Vector2(200, float((unit["pos"] as Vector2).y))
                 unit["defense_set"] = str(unit["type"]) != "기병"
             else:
-                unit["troops"] = float(unit["troops"]) * 1.20
+                unit["troops"] = minf(MAX_TROOPS,float(unit["troops"]) * 1.20) if six_armies else float(unit["troops"])*1.20
                 unit["initial_troops"] = unit["troops"]
         bases[0]["fixed"] = true
     elif scenario_id == 3:
@@ -1782,7 +1812,7 @@ func transfer_troops(receiver_id: int, donor_id: int, amount: int) -> bool:
     var donor: Dictionary = find_unit(donor_id)
     if receiver.is_empty() or donor.is_empty() or int(receiver["side"]) != 0 or int(donor["side"]) != 0:
         return false
-    if float(donor["troops"]) - amount < 40.0 or float(receiver["troops"]) + amount > 220.0:
+    if float(donor["troops"]) - amount < (1000.0 if six_armies else 40.0) or float(receiver["troops"]) + amount > (5000.0 if six_armies else 220.0):
         return false
     receiver["troops"] = float(receiver["troops"]) + amount
     donor["troops"] = float(donor["troops"]) - amount
@@ -1985,7 +2015,7 @@ func _update_structures(dt: float) -> void:
                 break
 
 func merit(unit: Dictionary) -> int:
-    return maxi(0,int(round(float(unit["damage_dealt"])*2.0 + float(unit["objective_time"])*0.8 + float(unit["supply_guard_time"])*0.4 + float(unit["structure_damage"]) - float(unit["deserted"]))))
+    return maxi(0,int(round(float(unit["damage_dealt"])*2.0/(ARMY_SCALE if six_armies else 1.0) + float(unit["objective_time"])*0.8 + float(unit["supply_guard_time"])*0.4 + float(unit["structure_damage"]) - float(unit["deserted"])/(ARMY_SCALE if six_armies else 1.0))))
 
 func _update_convoy(dt: float) -> void:
     if convoy.is_empty() or float(convoy["hp"]) <= 0.0:
@@ -2157,7 +2187,7 @@ func _deliver_tactical(unit: Dictionary, letter: Dictionary) -> void:
 
 func _tactical_decision(unit: Dictionary, enemy: Dictionary, action: String, reason: String, goal: Vector2, distance: float, strength: float) -> Dictionary:
     var result_order: Dictionary = {"action":action,"reason":reason,"goal":goal}
-    if bool(unit["routed"]) or float(unit["morale"]) < 19.0 or float(unit["troops"]) < 24.0:
+    if bool(unit["routed"]) or float(unit["morale"]) < 19.0 or float(unit["troops"]) < (600.0 if six_armies else 24.0):
         return result_order
     if battle_time < float(unit["tactical_until"]):
         var order: String = unit["tactical_order"]
@@ -2331,3 +2361,48 @@ func _infantry_screen(unit: Dictionary) -> Dictionary:
             score = d
             best = ally
     return best
+
+# Shared formation geometry: both tactical contact slots and rendered soldiers
+# derive from the same oriented rank shapes, with a bounded representative count.
+func army_slots(unit: Dictionary,count: int,spacing: float) -> Array[Vector2]:
+    var points: Array[Vector2] = []
+    if count <= 0 or float(unit["troops"]) <= 0.0: return points
+    var front: Vector2 = unit["facing"]
+    if front.length_squared()<0.01: front=Vector2.RIGHT if int(unit["side"])==0 else Vector2.LEFT
+    front=front.normalized()
+    var side: Vector2=front.orthogonal()
+    var local: Array[Vector2]=[]
+    var shape: String=str(unit["formation"])
+    var width: int=mini(count,8)
+    if shape=="종대": width=mini(count,4)
+    elif shape=="방진": width=ceili(sqrt(float(count)))
+    elif shape in ["어린진","봉시진"]: width=7
+    elif shape=="학익진": width=mini(count,10)
+    elif shape=="안행진": width=mini(count,9)
+    var row: int=0
+    while local.size()<count:
+        var row_width: int=width
+        if shape=="어린진": row_width=mini(7,3+row*2)
+        elif shape=="봉시진": row_width=mini(7,1+row*2)
+        row_width=mini(row_width,count-local.size())
+        for i in range(row_width):
+            var lateral: float=float(i)-float(row_width-1)*0.5
+            var depth: float=-float(row)
+            if shape=="학익진": depth+=absf(lateral)*0.65
+            elif shape=="안행진": depth+=lateral*0.45
+            local.append(Vector2(depth,lateral))
+        row+=1
+    var center:=Vector2.ZERO
+    for p in local: center+=p
+    center/=float(local.size())
+    for p in local:
+        var q: Vector2=(p-center)*spacing
+        points.append((unit["pos"] as Vector2)+front*q.x+side*q.y)
+    return points
+
+func _formation_extent(unit: Dictionary,direction: Vector2) -> float:
+    var p: Vector2=unit["pos"]
+    var extent: float=10.0
+    for slot in formation_slots(unit):
+        extent=maxf(extent,(slot-p).dot(direction)+8.0)
+    return extent
