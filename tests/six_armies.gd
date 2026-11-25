@@ -77,6 +77,37 @@ func _run() -> void:
     check(escort["action"]=="협동 엄호" and int(archer["link_id"])==int(main["id"]),"archer links to friendly frontline")
     var support_goal: Vector2=escort["goal"]
     check(support_goal.x<float(main["pos"].x),"archer takes position behind infantry")
+    # Explicit partners are validated and retained until a new order arrives.
+    check(tactics.select_unit_mission(1,"전열 엄호","안행진 유지",0),"valid named partner")
+    check(not tactics.select_unit_mission(1,"전열 엄호","안행진 유지",3),"enemy partner rejected")
+    check(not tactics.select_unit_mission(1,"전열 엄호","안행진 유지",1),"self partner rejected")
+    check(int(archer["assigned_link"])==0,"named partner retained")
+    archer["pos"]=Vector2(500,880)
+    main["pos"]=Vector2(600,880)
+    infantry["pos"]=Vector2(650,880)
+    check(not tactics._physical_screen(archer,infantry).is_empty(),"physical infantry screen in contact")
+    main["pos"]=Vector2(600,1080)
+    check(tactics._physical_screen(archer,infantry).is_empty(),"no protection with guard displaced")
+    main["pos"]=Vector2(600,880)
+    var cavalry_plan := WarSim.new()
+    cavalry_plan.set_six_armies(true)
+    var wing: Dictionary=cavalry_plan.find_unit(2)
+    var front: Dictionary=cavalry_plan.find_unit(0)
+    var foe: Dictionary=cavalry_plan.find_unit(3)
+    wing["pos"]=Vector2(650,1035)
+    front["pos"]=Vector2(600,880)
+    front["facing"]=Vector2.RIGHT
+    foe["pos"]=Vector2(650,880)
+    foe["facing"]=Vector2.LEFT
+    check(cavalry_plan.select_unit_mission(2,"측후방 기동","봉시진 유지",0),"named flank partner")
+    var order: Dictionary=cavalry_plan._coordinated_order(wing,foe,"진격","",Vector2.ZERO)
+    wing["pos"]=wing["flank_goal"]
+    front["pos"]=Vector2(400,880)
+    order=cavalry_plan._coordinated_order(wing,foe,"진격","",Vector2.ZERO)
+    check(order["action"]=="협동 대기","flank waits for frontal contact")
+    front["pos"]=Vector2(600,880)
+    order=cavalry_plan._coordinated_order(wing,foe,"진격","",Vector2.ZERO)
+    check(order["action"]=="돌파","flank commits when partner contacts enemy")
     print("TACTICAL_EVIDENCE "+JSON.stringify({"cavalry_front_square":front_counter,"cavalry_flank_square":flank_counter,"linked_damage":linked_damage,"escort_goal":str(support_goal)}))
     for scenario in range(5):
         var sim := WarSim.new()
@@ -109,6 +140,7 @@ func _run() -> void:
         var maneuver: float=0.0
         var support: float=0.0
         var completed: int=0
+        var screened: float=0.0
         for u in sim.units:
             if int(u["side"])==0:
                 linked+=float(u["linked_hits"])
@@ -117,7 +149,8 @@ func _run() -> void:
                 maneuver+=float(u["maneuver_distance"])
                 support+=float(u["support_seconds"])
                 completed+=int(u["flank_completed"])
-        print("COOPERATION_ROW "+JSON.stringify({"scenario":scenario,"linked_damage":linked,"counter_damage":counter,"flank_damage":flanking,"maneuver_distance":maneuver,"support_seconds":support,"flank_completed":completed}))
+                screened+=float(u["screened_damage"])
+        print("COOPERATION_ROW "+JSON.stringify({"scenario":scenario,"linked_damage":linked,"counter_damage":counter,"flank_damage":flanking,"maneuver_distance":maneuver,"support_seconds":support,"flank_completed":completed,"screened_damage":screened}))
         print("SIX_ARMY_ROW "+JSON.stringify({"scenario":scenario,"seconds":sim.battle_time,"winner":sim.winning_side,"blue":sim.total_troops(0),"red":sim.total_troops(1),"delivered":sim.delivered_orders,"intercepted":sim.intercepted_orders,"issued":issued,"result":sim.result}))
     var model := Campaign.new()
     model.set_six_armies(true)
