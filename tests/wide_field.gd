@@ -21,7 +21,19 @@ func _run() -> void:
             sim.turn = 3
             if sim._objective_winner() != -1: failures += 1
             sim.reset()
+        var before_blue: int = sim.total_troops(0)
+        var before_red: int = sim.total_troops(1)
         sim.start()
+        if sim.units.size() != 12 or sim.total_troops(0) != before_blue or sim.total_troops(1) != before_red:
+            failures += 1
+        var crossing := Vector2(sim.river_x(390.0),390.0)
+        var river := Vector2(sim.river_x(600.0),600.0)
+        if sim.terrain_at(crossing) != "교량" or sim.terrain_at(river) != "하천":
+            failures += 1
+        if sim._terrain_movement_multiplier(sim.units[0],crossing) <= sim._terrain_movement_multiplier(sim.units[0],river):
+            failures += 1
+        var initial_corps: Dictionary = sim.corps_report(0)
+        if int(initial_corps["troops"]) != 145: failures += 1
         var max_x: float = before.x
         for i in range(4200):
             if sim.finished: break
