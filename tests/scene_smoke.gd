@@ -19,6 +19,8 @@ func _process(_dt: float) -> bool:
             return false
         instance.set_process(false)
         instance.call("_start")
+        # Accelerated playback preserves the 25-minute operation clock.
+        instance.game_speed=4.0
     if frames > 4 and instance != null and instance.is_inside_tree():
         for index in range(60):
             instance.call("_process", 0.1)
