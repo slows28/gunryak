@@ -58,6 +58,7 @@ var map_clip: Control
 var camera_zoom: float = 1.0
 var camera_center: Vector2 = MAP_SIZE * 0.5
 var visibility_texture: ImageTexture
+var dust_texture: ImageTexture
 var visibility_stamp: float = -100.0
 var render_clock: float = 0.0
 var phase_label: Label
@@ -116,6 +117,7 @@ func _ready() -> void:
     _install_korean_font()
     _build_map_layer()
     _rebuild_terrain()
+    dust_texture = TerrainArt.dust_cloud()
     _reset_camera()
     _build_interface()
     _build_presentation()
@@ -558,6 +560,8 @@ func _draw_map(_canvas: Control) -> void:
         map_layer.draw_texture_rect(terrain_cache,map_rect,false)
     else:
         map_layer.draw_rect(map_rect,Color("#58684e"))
+    if sim.wide_field and camera_zoom >= 0.65:
+        _draw_river_detail()
     if fog_enabled and sim.started and not sim.finished and visibility_texture != null:
         map_layer.draw_texture_rect(visibility_texture,map_rect,false)
     _draw_terrain_texture()
@@ -565,8 +569,7 @@ func _draw_map(_canvas: Control) -> void:
         for crossing in [390.0,850.0,1300.0]:
             var bridge := Vector2(sim.river_x(crossing),crossing)
             if camera_zoom >= 0.75:
-                map_layer.draw_line(bridge+Vector2(-30,-38),bridge+Vector2(30,-38),Color("#59442f"),3.0,true)
-                map_layer.draw_line(bridge+Vector2(-30,38),bridge+Vector2(30,38),Color("#59442f"),3.0,true)
+                _draw_bridge(bridge)
             if camera_zoom >= 0.75:
                 _map_plate("교량",bridge+Vector2(0,-45),COL_GOLD,11)
     if not sim.started:
@@ -688,6 +691,7 @@ func _draw_map(_canvas: Control) -> void:
             visible_units.append(unit)
     visible_units.sort_custom(func(a: Dictionary,b: Dictionary) -> bool: return (a["pos"] as Vector2).y < (b["pos"] as Vector2).y)
     var field_view := Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom).grow(125.0)
+    _draw_march_dust(field_view)
     for unit in visible_units:
         if field_view.has_point(unit["pos"]): _draw_unit(unit)
     _draw_combat_effects()
@@ -724,7 +728,11 @@ func _draw_unit(unit: Dictionary) -> void:
         var ratio: float = clampf(float(unit["troops"])/maxf(1.0,float(unit["initial_troops"])),0.0,1.0)
         map_layer.draw_rect(Rect2(block.position+Vector2(0,extent.y+2*k),Vector2(extent.x*ratio,2*k)),accent)
         if not sub:
-            _paint_tile(38+side,Rect2(p-Vector2(14,32)*k,Vector2(28,34)*k),Color(1,1,1,accent.a))
+            if sim.six_armies:
+                var mini_slots: Array[Vector2] = sim.formation_slots(unit)
+                for spot in mini_slots:
+                    map_layer.draw_circle(p+(spot-p)*0.50*k,1.65*k,Color(accent,0.93))
+            _paint_tile(38+side,Rect2(p-Vector2(11,30)*k,Vector2(22,27)*k),Color(1,1,1,accent.a))
         else:
             map_layer.draw_line(p,p+(unit["facing"] as Vector2)*8*k,accent,1.5*k,true)
         return
@@ -1190,7 +1198,7 @@ func _draw_terrain_texture() -> void:
 
 func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> void:
     var direction: Vector2 = unit["facing"]
-    var moving: bool = (unit["pos"] as Vector2).distance_to(unit["goal"]) > 5.0 and sim.started and not sim.finished
+    var moving: bool = float(unit.get("motion_speed",0.0)) > 2.0 and sim.started and not sim.finished
     var kind: int = 0
     if str(unit["type"]) == "궁병":
         kind = 1
@@ -1256,14 +1264,14 @@ func _draw_combat_effects() -> void:
             "돌격":
                 _paint_fx(3,target,50.0+age*42.0,alpha)
                 map_layer.draw_arc(target,10.0+age*44.0,0.0,TAU,24,Color(1.0,0.73,0.36,alpha*0.72),2.2,true)
-                _paint_fx(2,p.lerp(target,0.65),45.0,alpha*0.75)
+                # Ground dust is emitted only by actual marching on exposed soil.
             _:
                 _paint_fx(4,(p+target)*0.5,35.0,alpha)
                 var impact: Vector2 = (p+target)*0.5
                 for k in range(4):
                     var ray: Vector2 = Vector2.from_angle(float(k)*TAU/4.0+float(fx["time"]))* (7.0+age*16.0)
                     map_layer.draw_line(impact+ray*0.45,impact+ray,Color(1.0,0.83,0.44,alpha*0.68),1.6,true)
-                _paint_fx(2,(p+target)*0.5,20.0+age*22.0,alpha*0.35)
+                # Melee sparks remain; no generic dust cloud on grass or water.
 
 func _setup_sound() -> void:
     sound_player = AudioStreamPlayer.new()
@@ -1918,3 +1926,43 @@ func _visual_slots(unit: Dictionary) -> Array[Vector2]:
         var depth: float = (float(rank)-float(ranks-1)*0.5)*spacing*0.95
         result.append(center+side*lateral-front*depth)
     return result
+
+func _draw_march_dust(view: Rect2) -> void:
+    if dust_texture == null or camera_zoom < 0.60: return
+    for puff in sim.dust_effects:
+        var p: Vector2 = puff["pos"]
+        if not view.grow(50.0).has_point(p): continue
+        if fog_enabled and not sim.finished and int(puff["side"])!=0 and not sim.player_can_see(p): continue
+        var age: float = clampf((sim.battle_time-float(puff["time"]))/WarSim.DUST_LIFE,0.0,1.0)
+        var radius: float = float(puff["radius"])*(0.70+age*1.35)
+        var direction: Vector2 = puff["dir"]
+        p -= direction*age*16.0
+        p += direction.orthogonal()*float(puff["phase"])*age*6.0
+        var opacity: float = (1.0-age)*(1.0-age)*0.68
+        map_layer.draw_texture_rect(dust_texture,Rect2(p-Vector2(radius,radius*0.67),Vector2(radius*2.0,radius*1.34)),false,Color(1.0,0.96,0.86,opacity))
+
+func _draw_river_detail() -> void:
+    var top: float = maxf(0.0,camera_center.y-MAP_SIZE.y*0.5/camera_zoom)
+    var bottom: float = minf(sim.field_size.y,camera_center.y+MAP_SIZE.y*0.5/camera_zoom)
+    for y in range(int(top/24.0)*24,int(bottom)+24,24):
+        if sim.near_crossing(float(y)): continue
+        var rx: float=sim.river_x(float(y))
+        var a: float=0.16+0.10*sin(float(y)*0.04+render_clock*2.4)
+        var shift: float=sin(float(y)*0.31+render_clock*1.5)*5.0
+        map_layer.draw_line(Vector2(rx-17.0,float(y)+shift),Vector2(rx-5.0,float(y)+shift+4.0),Color(0.75,0.88,0.80,a),1.4,true)
+        map_layer.draw_line(Vector2(rx+6.0,float(y)-shift),Vector2(rx+21.0,float(y)-shift+5.0),Color(0.64,0.84,0.81,a*0.8),1.2,true)
+
+func _draw_bridge(p: Vector2) -> void:
+    # Actual 76-unit crossing width; timber rails, supports and a cast shadow.
+    var deck:=Rect2(p-Vector2(32,38),Vector2(64,76))
+    map_layer.draw_rect(Rect2(deck.position+Vector2(4,7),deck.size),Color(0.10,0.13,0.10,0.35))
+    map_layer.draw_rect(deck,Color("#8a7353"))
+    for x in range(-30,32,6):
+        map_layer.draw_rect(Rect2(p+Vector2(x,-37),Vector2(5,74)),Color("#b39a6c").darkened(0.10+0.10*sin(float(x))))
+        map_layer.draw_line(p+Vector2(x+5,-36),p+Vector2(x+5,36),Color("#554831"),0.9,true)
+    for y in [-38.0,38.0]:
+        map_layer.draw_line(p+Vector2(-35,y+3),p+Vector2(35,y+3),Color("#423527"),5.0,true)
+        map_layer.draw_line(p+Vector2(-35,y),p+Vector2(35,y),Color("#b59a69"),3.0,true)
+        for x in [-32.0,-11.0,11.0,32.0]:
+            map_layer.draw_rect(Rect2(p+Vector2(x-2,y-6),Vector2(4,9)),Color("#59462f"))
+            map_layer.draw_rect(Rect2(p+Vector2(x-2,y-6),Vector2(4,2)),Color("#d3b680"))
