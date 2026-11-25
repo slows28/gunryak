@@ -111,7 +111,8 @@ class RenderLayer extends Control:
 
 func _ready() -> void:
     sim.tactical_enabled = true
-    sim.set_wide_field(true)
+    sim.set_six_armies(true)
+    campaign.set_six_armies(true)
     _install_korean_font()
     _build_map_layer()
     _rebuild_terrain()
@@ -187,25 +188,26 @@ func _build_interface() -> void:
     _label("01  장수 선택",Vector2(956,132),Vector2(295,19),12,COL_MUTED)
     unit_list = ItemList.new()
     unit_list.position = Vector2(950,154)
-    unit_list.size = Vector2(306,148)
-    unit_list.add_theme_font_size_override("font_size",15)
+    unit_list.size = Vector2(306,186)
+    unit_list.add_theme_font_size_override("font_size",13)
+    unit_list.add_theme_constant_override("v_separation",2)
     add_child(unit_list)
     unit_list.item_selected.connect(_on_unit_selected)
-    _label("02  작전 목표",Vector2(956,308),Vector2(267,20),13,COL_MUTED)
-    mission_choice = _options(Vector2(950,329),["중앙 진격","북측 확보","남측 우회","본진 방어"])
+    _label("02  작전 목표",Vector2(956,344),Vector2(267,20),13,COL_MUTED)
+    mission_choice = _options(Vector2(950,363),["중앙 진격","북측 확보","남측 우회","본진 방어"])
     mission_choice.size.x = 306
     mission_choice.item_selected.connect(_on_choices_changed)
-    _label("03  진형 · 지휘 방침",Vector2(956,369),Vector2(267,21),13,COL_MUTED)
-    policy_choice = _options(Vector2(950,390),["현장 판단","명령 엄수","재량 위임","횡대 유지","종대 유지","방진 유지"])
+    _label("03  진형 · 지휘 방침",Vector2(956,401),Vector2(267,21),13,COL_MUTED)
+    policy_choice = _options(Vector2(950,420),["현장 판단","명령 엄수","재량 위임","횡대 유지","종대 유지","방진 유지"])
     policy_choice.size.x = 306
     policy_choice.item_selected.connect(_on_choices_changed)
-    apply_btn = _button("작전 적용 / 전령 보내기",Vector2(950,433),Vector2(306,42),_apply_order)
+    apply_btn = _button("작전 적용 / 전령 보내기",Vector2(950,460),Vector2(306,42),_apply_order)
     _primary_button(apply_btn)
-    _label("책사 위치",Vector2(956,482),Vector2(267,25),15,COL_GOLD)
-    _button("전선 접근",Vector2(950,510),Vector2(149,35),_commander_forward)
-    _button("본진 복귀",Vector2(1107,510),Vector2(149,35),_commander_back)
-    selected_label = _label("",Vector2(1034,553),Vector2(220,27),14,COL_GOLD)
-    details_label = _label("",Vector2(1034,579),Vector2(221,86),12,COL_TEXT)
+    _label("책사 위치",Vector2(956,503),Vector2(267,25),15,COL_GOLD)
+    _button("전선 접근",Vector2(950,525),Vector2(149,35),_commander_forward)
+    _button("본진 복귀",Vector2(1107,525),Vector2(149,35),_commander_back)
+    selected_label = _label("",Vector2(1034,565),Vector2(220,27),14,COL_GOLD)
+    details_label = _label("",Vector2(1034,590),Vector2(221,86),12,COL_TEXT)
     details_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     _label("전황 기록",Vector2(27,692),Vector2(125,26),17,COL_GOLD)
     event_label = _label("",Vector2(153,692),Vector2(578,102),13,COL_TEXT)
@@ -253,17 +255,18 @@ func _options(where: Vector2, choices: Array[String]) -> OptionButton:
 
 func _refresh_unit_list() -> void:
     unit_list.clear()
-    for i in range(mini(3, sim.units.size())):
-        var unit: Dictionary = sim.units[i]
+    for i in sim.command_ids(0):
+        var unit: Dictionary = sim.find_unit(i)
         var icon := AtlasTexture.new()
         icon.atlas = PAINTED_ART
         icon.region = _art_region(_portrait_tile(str(unit["name"])))
-        unit_list.add_item("%s  ·  %s / %s" % [str(unit["name"]), str(unit["type"]), str(unit["personality"])],icon)
-    unit_list.fixed_icon_size = Vector2i(40,40)
-    unit_list.select(clampi(selected_id, 0, 2))
+        unit_list.add_item("%s  ·  %s / %s" % [str(unit["name"]),str(unit["type"]),str(unit["personality"])],icon)
+        unit_list.set_item_metadata(unit_list.item_count-1,i)
+    unit_list.fixed_icon_size = Vector2i(24,24)
+    unit_list.select(maxi(0,sim.command_ids(0).find(selected_id)))
 
 func _on_unit_selected(index: int) -> void:
-    selected_id = index
+    selected_id = int(unit_list.get_item_metadata(index))
     _select_unit()
 
 func _select_unit() -> void:
@@ -436,9 +439,7 @@ func _refresh_hud() -> void:
         if not fog_enabled or sim.finished or _public_event(sim.events[i]):
             lines += sim.events[i] + "\n"
     if sim.finished:
-        lines = ""
-        for report_line in sim.battle_report():
-            lines += report_line + "\n"
+        lines = sim.result+"\n장수 6개 군단의 상세 전과는 결산 화면에서 확인하십시오."
     event_label.text = lines
     if not sim.started:
         notice_label.text = sim.scenario_goal + "\n작전실: 병력·부장·배치·경유점\n지도 모드: " + map_mode
@@ -508,12 +509,12 @@ func _map_select(mouse_pos: Vector2) -> void:
         queue_redraw()
         accept_event()
         return
-    for i in range(mini(3, sim.units.size())):
-        var unit: Dictionary = sim.units[i]
+    for i in sim.command_ids(0):
+        var unit: Dictionary = sim.find_unit(i)
         var p: Vector2 = unit["pos"]
         if _world_mouse(mouse_pos).distance_to(p) < 47.0/maxf(0.5,camera_zoom):
             selected_id = i
-            unit_list.select(i)
+            unit_list.select(sim.command_ids(0).find(i))
             _select_unit()
             accept_event()
             return
@@ -693,7 +694,7 @@ func _draw_unit(unit: Dictionary) -> void:
     if camera_zoom < 0.65:
         var k: float = 1.0/camera_zoom
         var sub: bool = unit.has("parent_id")
-        var extent: Vector2 = Vector2(13,8)*k if sub else Vector2(20,12)*k
+        var extent: Vector2 = Vector2(13,8)*k if sub else Vector2(16,10)*k
         var block := Rect2(p-extent*0.5,extent)
         map_layer.draw_rect(block,Color("#192a2d"))
         map_layer.draw_rect(block,accent,false,1.5*k)
@@ -747,8 +748,8 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     var label: String = "%s  %d" % [str(unit["name"]),int(float(unit["troops"]))]
     if not state.is_empty():
         label += " · "+state
-    var fs: int = maxi(10,int(round(13.0*inv)))
-    var width: float = maxf(78.0*inv,korean_font.get_string_size(label,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+16.0*inv)
+    var fs: int = maxi(10,int(round((11.0 if camera_zoom<0.65 else 13.0)*inv)))
+    var width: float = maxf(58.0*inv,korean_font.get_string_size(label,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+12.0*inv)
     var height: float = 24.0*inv
     var chosen := Rect2()
     var found: bool = false
@@ -884,10 +885,11 @@ func _open_planning() -> void:
     plan_scenario.select(sim.scenario_id)
     plan_scenario.disabled = campaign_active or (sim.started and not sim.finished)
     plan_donor.clear()
-    for i in range(3):
+    var ids: Array[int] = sim.command_ids(0)
+    for i in ids:
         var candidate: Dictionary = sim.find_unit(i)
         plan_donor.add_item(str(candidate["name"]) + " 부대",i)
-    plan_donor.select((selected_id+1)%3)
+    plan_donor.select((ids.find(selected_id)+1)%ids.size())
     plan_deputy.select(int(unit["deputy_index"]))
     plan_deputy.disabled = sim.started
     plan_takeover.disabled = not sim.started or sim.finished or sim.turn < 6 or str(unit["general_state"]) != "부상" or bool(unit["active_deputy"])
@@ -934,6 +936,9 @@ func _transfer_out() -> void:
         plan_status.text = "병력 조정 불가: 최소 40명 / 최대 220명"
 
 func _swap_general() -> void:
+    if campaign_active:
+        plan_status.text = "캠페인 장수 교체는 전략 지도에서 수행하십시오."
+        return
     if sim.swap_generals(selected_id,plan_donor.get_selected_id()):
         _refresh_unit_list()
         _select_unit()
@@ -1451,7 +1456,12 @@ func _build_outcome_dialog() -> void:
     layout.add_child(section)
     outcome_cards = VBoxContainer.new()
     outcome_cards.add_theme_constant_override("separation",7)
-    layout.add_child(outcome_cards)
+    var scroll := ScrollContainer.new()
+    scroll.custom_minimum_size = Vector2(724,300)
+    scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    layout.add_child(scroll)
+    outcome_cards.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    scroll.add_child(outcome_cards)
     var buttons := HBoxContainer.new()
     buttons.add_theme_constant_override("separation",8)
     layout.add_child(buttons)
@@ -1487,7 +1497,7 @@ func _show_outcome() -> void:
         outcome_cards.remove_child(child)
         child.queue_free()
     for unit in sim.units:
-        if int(unit["side"]) != 0 or int(unit["id"]) >= 3:
+        if int(unit["side"]) != 0 or not int(unit["id"]) in sim.command_ids(0):
             continue
         var card := PanelContainer.new()
         var card_style := StyleBoxFlat.new()
