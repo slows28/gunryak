@@ -8,6 +8,9 @@ const FIELD_H: float = 570.0
 var wide_field: bool = false
 var six_armies: bool = false
 var long_operation: bool = false
+var enemy_strategy_enabled: bool = true
+var next_enemy_strategy: float = 0.0
+var enemy_replans: int = 0
 const OPERATION_SCALE: float = 4.0
 const LONG_LIMIT: float = 375.0
 const LONG_OBJECTIVE_OPEN: float = 270.0
@@ -108,6 +111,8 @@ func reset() -> void:
     next_id = 0
     battle_time = 0.0
     step_count = 0
+    next_enemy_strategy=0.0
+    enemy_replans=0
     intercepted_orders = 0
     delivered_orders = 0
     turn = 1
@@ -176,7 +181,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
         "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
         "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
-        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "order_destination":Vector2.ZERO, "has_destination":false, "destination_reached":false, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0, "screened_damage":0.0, "screen_events":0
+        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "order_destination":Vector2.ZERO, "has_destination":false, "destination_reached":false, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0, "screened_damage":0.0, "screen_events":0, "ai_role":"", "ai_partner":-1, "ai_role_until":0.0, "ai_replans":0
     }
     _set_general_profile(unit)
     if unit_type == "기병":
@@ -269,6 +274,9 @@ func step(dt: float) -> void:
     _update_reserves()
     _update_couriers(dt)
     _supply_logic(dt)
+    if long_operation and enemy_strategy_enabled and battle_time>=next_enemy_strategy:
+        next_enemy_strategy=battle_time+8.0
+        _enemy_strategy()
     # We use a shallow fixed unit pool and never mutate it during these loops.
     for unit in units:
         if float(unit["troops"]) <= 0.0:
@@ -759,7 +767,7 @@ func _decide(unit: Dictionary) -> void:
         elif action in ["돌파","반격","교전"]: wanted = "어린진"
         else: wanted = "학익진"
     if six_armies and action in ["지정 지역 사수","예비 대기"] and str(unit["type"])=="보병": wanted="방진"
-    if six_armies and action=="협동 엄호" and str(unit["type"])=="보병": wanted="방진"
+    if six_armies and action in ["협동 엄호","궁병 보호"] and str(unit["type"])=="보병": wanted="방진"
     if six_armies and action in ["협동 우회","협동 대기"] and str(unit["type"])=="기병": wanted="봉시진"
     if str(unit["policy"]).ends_with(" 유지") and str(unit["policy"]).replace(" 유지","") in LARGE_FORMATIONS and action != "패주":
         wanted = str(unit["policy"]).replace(" 유지", "")
@@ -810,7 +818,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var pos: Vector2 = unit["pos"]
     var goal: Vector2 = unit["goal"]
     var enemy: Dictionary = _nearest_visible_enemy(unit)
-    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기"]:
+    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
@@ -856,7 +864,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     unit["motion_speed"] = actual_move.length()/maxf(dt,0.001)
     if six_armies:
         if str(unit["action"])=="협동 우회": unit["maneuver_distance"]+=actual_move.length()
-        if str(unit["action"]) in ["협동 엄호","구원 지원"]:
+        if str(unit["action"]) in ["협동 엄호","구원 지원","궁병 보호"]:
             var ally: Dictionary=find_unit(int(unit["link_id"]))
             if not ally.is_empty() and float(ally["troops"])>0.0 and (unit["pos"] as Vector2).distance_to(ally["pos"])<=150.0:
                 unit["support_seconds"]+=dt
@@ -2566,7 +2574,9 @@ func _has_combined_arms(unit: Dictionary,enemy: Dictionary,targets: Dictionary =
 func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason: String,goal: Vector2) -> Dictionary:
     var original: Dictionary={"action":action,"reason":reason,"goal":goal}
     var mission: String=str(unit["mission"])
-    if mission not in ["전열 엄호","측후방 기동","구원 지원"]: return original
+    var tactical_role:bool=long_operation and int(unit["side"])==1 and battle_time<float(unit.get("ai_role_until",0.0)) and str(unit.get("ai_role",""))!=""
+    if tactical_role: mission=str(unit["ai_role"])
+    if mission not in ["전열 엄호","측후방 기동","구원 지원","궁병 보호"]: return original
     if action in ["후퇴","패주","재집결","휴식","탄약 보충","보급 복귀","거리 유지","측면 방어"]: return original
     var p: Vector2=unit["pos"]
     var ally: Dictionary={}
@@ -2581,9 +2591,11 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
         if score<best:
             best=score
             ally=friend
-    var assigned: Dictionary=find_unit(int(unit.get("assigned_link",-1)))
+    var assigned: Dictionary=find_unit(int(unit.get("ai_partner",-1)) if tactical_role else int(unit.get("assigned_link",-1)))
     if not assigned.is_empty() and _valid_partner(unit,int(assigned["id"])):
         ally=assigned
+    elif tactical_role:
+        return original
     if ally.is_empty():
         unit["link_id"]=-1
         return original
@@ -2591,6 +2603,14 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
     var ap: Vector2=ally["pos"]
     var forward: Vector2=ally["facing"]
     if forward.length_squared()<0.01: forward=Vector2.RIGHT if int(unit["side"])==0 else Vector2.LEFT
+    if (mission=="궁병 보호" or mission=="전열 엄호") and str(unit["type"])=="보병" and str(ally["type"])=="궁병":
+        var threat:Dictionary=_observed_threat_to(unit,ally)
+        if not threat.is_empty():
+            var toward:Vector2=((threat["pos"] as Vector2)-ap).normalized()
+            var distance_to_threat:float=ap.distance_to(threat["pos"])
+            var guard_goal:Vector2=ap+toward*clampf(distance_to_threat*0.5,30.0,90.0)
+            return {"action":"궁병 보호","reason":str(ally["name"])+"군으로 접근하는 적을 차단","goal":guard_goal}
+        return {"action":"협동 엄호","reason":str(ally["name"])+"군 전방 경계","goal":ap+forward*70.0}
     if mission=="전열 엄호":
         var wing: float=1.0 if int(unit["id"])%2==0 else -1.0
         var support_point: Vector2=ap-forward*108.0+forward.orthogonal()*36.0*wing
@@ -2778,3 +2798,66 @@ func _operational_armies(side: int) -> int:
     for unit in units:
         if int(unit["side"])==side and float(unit["troops"])>0.0 and not bool(unit["routed"]): count+=1
     return count
+
+# Red command uses observations shared by the actual nearby anchor and wing,
+# never the player's hidden orders or undiscovered enemy positions.
+func _observed_threat_to(observer:Dictionary,ally:Dictionary)->Dictionary:
+    var best:Dictionary={}
+    var score:float=220.0
+    for foe in units:
+        if not _locally_observed(observer,foe) or bool(foe["routed"]): continue
+        if str(foe["type"])=="궁병": continue
+        var d:float=(ally["pos"] as Vector2).distance_to(foe["pos"])
+        if d<score:
+            score=d
+            best=foe
+    return best
+
+func _enemy_strategy()->void:
+    if scenario_id in [2,3]: return
+    for unit in units:
+        if int(unit["side"])!=1 or float(unit["troops"])<600.0 or bool(unit["routed"]) or bool(unit["reserve"]) or str(unit["mission"])=="본진 방어": continue
+        if float(unit["morale"])<40.0 or float(unit["cohesion"])<35.0 or float(unit["rations"])<20.0:
+            unit["ai_role_until"]=0.0
+            continue
+        var old_role:String=str(unit["ai_role"])
+        var old_partner:int=int(unit["ai_partner"])
+        var role:String=""
+        var partner:int=-1
+        var best:float=INF
+        var p:Vector2=unit["pos"]
+        for ally in units:
+            if int(ally["side"])!=1 or int(ally["id"])==int(unit["id"]) or float(ally["troops"])<600.0 or bool(ally["routed"]) or str(ally["mission"])=="본진 방어": continue
+            var distance:float=p.distance_to(ally["pos"])
+            if distance>310.0: continue
+            var threat:Dictionary=_observed_threat_to(unit,ally)
+            var candidate:String=""
+            if str(unit["type"])=="보병" and str(ally["type"])=="궁병" and not threat.is_empty() and str(threat["type"])=="기병":
+                candidate="궁병 보호"
+            elif str(unit["type"])=="궁병" and str(ally["type"])=="보병" and not threat.is_empty() and float(ally["cohesion"])>35.0:
+                candidate="전열 엄호"
+            elif str(unit["type"])=="기병" and str(ally["type"])=="보병" and not threat.is_empty() and terrain_at(p) not in ["숲","하천","교량"]:
+                if formation_contacts(ally,threat,30.0)>0 and float(unit["morale"])>55.0:
+                    candidate="측후방 기동"
+            if candidate=="" or (str(ally.get("ai_role",""))=="궁병 보호" and candidate=="전열 엄호"): continue
+            var score:float=distance-float(ally["front_pressure"])*90.0
+            if old_role==candidate and old_partner==int(ally["id"]): score-=80.0
+            if score<best:
+                best=score
+                role=candidate
+                partner=int(ally["id"])
+        if role=="":
+            if battle_time>=float(unit["ai_role_until"]):
+                unit["ai_role"]=""
+                unit["ai_partner"]=-1
+            continue
+        if old_role!=role or old_partner!=partner:
+            unit["ai_replans"]+=1
+            enemy_replans+=1
+            unit["flank_target"]=-1
+            unit["flank_phase"]=0
+            unit["flank_until"]=0.0
+            unit["ai_cooldown"]=0.0
+        unit["ai_role"]=role
+        unit["ai_partner"]=partner
+        unit["ai_role_until"]=battle_time+20.0
