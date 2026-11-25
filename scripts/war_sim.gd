@@ -168,6 +168,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "form_remaining": 0.0, "form_duration": 1.0, "motion_speed": 0.0, "dust_distance": 0.0, "troops": people, "initial_troops": people,
         "morale": 100.0, "out_supply": 0.0, "supplied": true,
         "action": "대기", "reason": "초기 배치", "ai_cooldown": 0.0,
+        "contact_target_id":-1,
         "charge": 0.0, "last_raid": -999.0, "contact_troops": 0,
         "front_pressure": 0.0, "pushed_distance": 0.0,
         "decisions": 0, "reforms_completed": 0, "damage_dealt": 0.0,
@@ -1092,6 +1093,27 @@ func formation_contacts(attacker: Dictionary, defender: Dictionary, weapon_reach
 
 # Representative contact point, evaluated only when a visual event is emitted.
 # Authoritative contacts and damage remain unchanged.
+# Display-only front rank anchors use the same formation positions as contact calculations.
+func representative_slots(unit: Dictionary,count: int) -> Array[Vector2]:
+    var anchors: Array[Vector2]=formation_slots(unit)
+    var result: Array[Vector2]=[]
+    if anchors.is_empty() or count<=0: return result
+    var front: Vector2=(unit["facing"] as Vector2).normalized()
+    if front.length_squared()<0.1: front=Vector2.RIGHT if int(unit["side"])==0 else Vector2.LEFT
+    var lateral: Vector2=front.orthogonal()
+    for i in range(count):
+        var anchor: Vector2=anchors[i%anchors.size()]
+        var layer: int=floori(float(i)/float(anchors.size()))
+        var spread: float=4.4 if str(unit["type"])=="기병" else 3.8
+        var offset: Vector2=Vector2.ZERO
+        if layer==1: offset=-front*spread+lateral*spread
+        elif layer==2: offset=front*spread-lateral*spread
+        elif layer>=3: offset=Vector2.from_angle(float(i)*2.39996)*spread
+        var point: Vector2=_field_point(anchor+offset)
+        if long_operation: point=_dry_formation_slot(unit["pos"],point)
+        result.append(point)
+    return result
+
 func visual_contact_pair(attacker: Dictionary,defender: Dictionary) -> Array[Vector2]:
     var left: Array[Vector2]=formation_slots(attacker)
     var right: Array[Vector2]=formation_slots(defender)
@@ -1112,6 +1134,7 @@ func _combat(dt: float) -> void:
     var targets: Dictionary = {}
     for unit in units:
         unit["contact_troops"] = 0
+        unit["contact_target_id"]=-1
         if six_armies and float(unit["troops"])>0.0 and not bool(unit["routed"]):
             targets[int(unit["id"])]=_combat_target(unit)
     for unit in units:
@@ -1156,6 +1179,7 @@ func _combat(dt: float) -> void:
             if terrain_at(pos) == "고지" and terrain_at(ep) != "고지":
                 attack *= 1.11
 
+        unit["contact_target_id"]=int(enemy["id"])
         var direction: Vector2 = (pos - ep).normalized()
         var facing: Vector2 = enemy["facing"]
         if facing.length_squared() < 0.1:
