@@ -128,6 +128,71 @@ func _run() -> void:
     enemy_ai.battle_time=25.0
     enemy_ai._enemy_strategy()
     check(str(red_guard["ai_role"])=="","expired red role is not refreshed without observation")
+    # Real movement and combat tests for the long-operation route constraints.
+    var route_sim:=WarSim.new()
+    route_sim.set_long_operation(true)
+    var traveler:Dictionary=route_sim.find_unit(2)
+    for u in route_sim.units:
+        if int(u["id"])!=2: u["troops"]=0.0
+    var start_pos:=Vector2(850,650)
+    var end_pos:=Vector2(1600,650)
+    traveler["pos"]=start_pos
+    traveler["goal"]=end_pos
+    traveler["action"]="지정 위치 이동"
+    var chosen_goal:Vector2=route_sim._committed_bridge_route(traveler,start_pos,end_pos)
+    var committed:float=float(traveler["bridge_y"])
+    check(committed in [390.0,850.0,1300.0] and chosen_goal.y==committed,"select actual bridge for opposite bank destination")
+    var alternate:Vector2=route_sim._committed_bridge_route(traveler,start_pos,Vector2(1800,1050))
+    check(alternate.y==committed and float(traveler["bridge_y"])==committed,"retain crossing despite changing destination on far bank")
+    var dry:bool=true
+    for step in range(600):
+        route_sim._move_unit(traveler,0.1)
+        dry=dry and route_sim.terrain_at(traveler["pos"])!="하천"
+        if (traveler["pos"] as Vector2).distance_to(end_pos)<5.0: break
+    check(dry and (traveler["pos"] as Vector2).distance_to(end_pos)<10.0 and int(traveler["bridge_crossings"])==1,"actual army reaches opposite bank through one bridge without entering water")
+    var rx:float=route_sim.river_x(650.0)
+    var bank:=Vector2(rx-29.0,650.0)
+    var blocked:Vector2=route_sim._land_motion(traveler,bank,Vector2(rx-24.0,650.0))
+    check(route_sim.terrain_at(blocked)!="하천" and bank.distance_to(blocked)<=5.01,"frontline pressure cannot displace army into river or teleport")
+    check(route_sim._river_separates(Vector2(rx-35.0,650.0),Vector2(rx+35.0,650.0)),"unbridged channel separates melee")
+    check(not route_sim.issue_map_order(2,"지역 사수",Vector2(rx,650.0),-1),"reject destination in river")
+    var committed_flank:=WarSim.new()
+    committed_flank.set_long_operation(true)
+    var cf:Dictionary=committed_flank.find_unit(0)
+    var cw:Dictionary=committed_flank.find_unit(2)
+    var ce:Dictionary=committed_flank.find_unit(3)
+    cf["pos"]=Vector2(600,880)
+    cf["facing"]=Vector2.RIGHT
+    ce["pos"]=Vector2(650,880)
+    ce["facing"]=Vector2.LEFT
+    cw["pos"]=Vector2(650,1035)
+    check(committed_flank.select_unit_mission(2,"측후방 기동","현장 판단",0),"long-operation named flank")
+    committed_flank._coordinated_order(cw,ce,"진격","",Vector2.ZERO)
+    cw["pos"]=cw["flank_goal"]
+    var strike:Dictionary=committed_flank._coordinated_order(cw,ce,"진격","",Vector2.ZERO)
+    check(strike["action"]=="돌파" and int(cw["flank_phase"])==2 and int(cw["flank_commits"])==1,"flank enters committed attack once")
+    committed_flank.battle_time=30.0
+    strike=committed_flank._coordinated_order(cw,ce,"진격","",Vector2.ZERO)
+    check(strike["action"]=="돌파" and int(cw["flank_commits"])==1 and int(cw["flank_completed"])==1,"committed attack survives waypoint timeout without duplicate maneuver")
+    # Actual damage suffered by an intervening infantry line is measured
+    # separately from damage reduction to an attacked archer.
+    var screen_sim:=WarSim.new()
+    screen_sim.set_long_operation(true)
+    var guard:Dictionary=screen_sim.find_unit(0)
+    var bow:Dictionary=screen_sim.find_unit(1)
+    var assault:Dictionary=screen_sim.find_unit(5)
+    for u in screen_sim.units:
+        if int(u["id"]) not in [0,1,5]: u["troops"]=0.0
+    guard["pos"]=Vector2(600,880)
+    guard["formation"]="방진"
+    guard["facing"]=Vector2.RIGHT
+    bow["pos"]=Vector2(500,880)
+    assault["pos"]=Vector2(650,880)
+    assault["facing"]=Vector2.LEFT
+    check(screen_sim._guarding_archer_in_contact(guard,assault),"actual line interposed before archer")
+    screen_sim._combat(0.1)
+    check(float(guard["guard_intercept_damage"])>0.0,"actual melee damage recorded on protective infantry")
+    print("ROUTE_EVIDENCE "+JSON.stringify({"bridge":committed,"crossings":traveler["bridge_crossings"],"position":str(traveler["pos"]),"no_water":dry,"flank_commits":cw["flank_commits"],"guard_damage":guard["guard_intercept_damage"]}))
     for scenario in range(5):
         var sim := WarSim.new()
         sim.set_long_operation(true)
@@ -147,9 +212,12 @@ func _run() -> void:
         sim.start()
         check(sim.units.size()==12,"no hidden duplicate formations")
         var issued: bool = false
+        var water_ticks:int=0
         for i in range(4250):
             if sim.finished: break
             sim.step(0.1)
+            for u in sim.units:
+                if float(u["troops"])>0.0 and sim.terrain_at(u["pos"])=="하천": water_ticks+=1
             if sim.turn>=6 and not issued:
                 issued=sim.request_order(8,"중앙 진격","재량 위임")
         check(sim.operation_limit()==(1680.0 if scenario==3 else 1500.0),"25-minute scenario budget / 28-minute escort")
@@ -161,6 +229,12 @@ func _run() -> void:
         var support: float=0.0
         var completed: int=0
         var screened: float=0.0
+        var bridge_count:int=0
+        var water_count:int=0
+        var commits:int=0
+        var aborts:int=0
+        var guard_damage:float=0.0
+
         for u in sim.units:
             if int(u["side"])==0:
                 linked+=float(u["linked_hits"])
@@ -170,6 +244,13 @@ func _run() -> void:
                 support+=float(u["support_seconds"])
                 completed+=int(u["flank_completed"])
                 screened+=float(u["screened_damage"])
+                bridge_count+=int(u["bridge_crossings"])
+                water_count+=int(u["blocked_water_steps"])
+                commits+=int(u["flank_commits"])
+                aborts+=int(u["flank_aborts"])
+                guard_damage+=float(u["guard_intercept_damage"])
+        print("ROUTE_ROW "+JSON.stringify({"scenario":scenario,"crossings":bridge_count,"blocked_steps":water_count,"water_ticks":water_ticks,"flank_commits":commits,"flank_aborts":aborts,"guard_damage":guard_damage}))
+        check(water_ticks==0,"no ground army center enters river in actual scenario "+str(scenario))
         print("COOPERATION_ROW "+JSON.stringify({"scenario":scenario,"linked_damage":linked,"counter_damage":counter,"flank_damage":flanking,"maneuver_distance":maneuver,"support_seconds":support,"flank_completed":completed,"screened_damage":screened,"enemy_replans":sim.enemy_replans}))
         print("SIX_ARMY_ROW "+JSON.stringify({"scenario":scenario,"seconds":sim.operation_elapsed(),"model_seconds":sim.battle_time,"winner":sim.winning_side,"blue":sim.total_troops(0),"red":sim.total_troops(1),"delivered":sim.delivered_orders,"intercepted":sim.intercepted_orders,"issued":issued,"result":sim.result}))
     var model := Campaign.new()
