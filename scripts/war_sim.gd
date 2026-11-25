@@ -2,6 +2,7 @@ extends RefCounted
 ## Independent battle model: no UI nodes, textures, or rendering calls.
 ## Intentionally bounded fixed-step updates; safe for headless simulation tests.
 
+const GeneralMind = preload("res://scripts/general_mind.gd")
 const FIELD_W: float = 900.0
 const FIELD_H: float = 570.0
 # Compact mode remains available for legacy regression fixtures. The game uses wide mode.
@@ -62,6 +63,7 @@ const DUST_LIFE: float = 1.8
 const DUST_LIMIT: int = 180
 var troop_history: Array[Dictionary] = []
 var sample_at: float = 0.0
+var mind_sample_at: float = 0.0
 var pending_reports: Array[Dictionary] = []
 var structures: Array[Dictionary] = []
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
@@ -87,6 +89,7 @@ func reset() -> void:
     dust_effects.clear()
     troop_history.clear()
     sample_at = 0.0
+    mind_sample_at=0.0
     pending_reports.clear()
     units.clear()
     bases.clear()
@@ -184,6 +187,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "order_destination":Vector2.ZERO, "has_destination":false, "destination_reached":false, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0, "screened_damage":0.0, "screen_events":0, "ai_role":"", "ai_partner":-1, "ai_role_until":0.0, "ai_replans":0, "bridge_y":-1.0, "bridge_bank":0, "bridge_crossings":0, "blocked_water_steps":0, "guard_intercept_damage":0.0, "guard_intercept_ticks":0, "flank_commits":0, "flank_aborts":0, "flank_recovery":0.0, "flank_contact_at":-100.0
     }
     _set_general_profile(unit)
+    unit["mind"]=GeneralMind.initial(unit)
     if unit_type == "기병":
         unit["formation"] = "종대"
     next_id += 1
@@ -299,6 +303,10 @@ func step(dt: float) -> void:
     if tactical_enabled:
         _scan_situations()
     _check_victory()
+    if battle_time>=mind_sample_at or finished:
+        mind_sample_at=battle_time+0.25
+        for u in units:
+            if not u.has("parent_id"): u["mind"]=GeneralMind.update(u,battle_time)
     _record_presentation()
 
 func _on_new_turn() -> void:
@@ -354,6 +362,7 @@ func _update_couriers(dt: float) -> void:
             target["order_destination"]=_field_point(destination) if bool(target["has_destination"]) else Vector2.ZERO
             target["destination_reached"]=false
             target["ai_cooldown"] = 0.0
+            GeneralMind.order(target,"수령: "+str(letter["mission"]),battle_time)
             _log("%s: 전령 도착 / 새 명령 '%s'" % [str(target["name"]), str(letter["mission"])])
             couriers.remove_at(i)
 
@@ -765,6 +774,7 @@ func _decide(unit: Dictionary) -> void:
     unit["action"] = action
     unit["reason"] = reason
     unit["goal"] = _field_point(goal)
+    unit["mind"]=GeneralMind.record(unit,nearest,action,reason,battle_time)
     var wanted: String = "횡대"
     if action in ["후퇴", "패주", "기지 습격", "돌파", "반격", "재집결", "보급 복귀", "탄약 보충", "전술 철수"]:
         wanted = "종대"
@@ -2347,9 +2357,11 @@ func _deliver_tactical(unit: Dictionary, letter: Dictionary) -> void:
     var advantage: bool = not enemy.is_empty() and float(unit["troops"]) > float(enemy["troops"])*1.15
     if order == "철수" and str(unit["personality"]) == "공격" and str(unit["obedience"]) != "명령 엄수" and float(unit["loyalty"]) < 60.0 and advantage and float(unit["morale"]) > 60.0:
         tactical_refused += 1
+        GeneralMind.order(unit,"거부: 철수 / 현장 우세 판단",battle_time,true)
         _log(str(unit["name"])+": 우세 판단으로 철수 명령 거부")
         return
     tactical_delivered += 1
+    GeneralMind.order(unit,"수령: 긴급 "+order,battle_time)
     unit["tactical_order"] = order
     unit["tactical_target"] = int(letter.get("support_id",-1))
     unit["tactical_anchor"] = unit["pos"]
@@ -2871,6 +2883,7 @@ func issue_map_order(id: int,mission: String,destination: Vector2,partner: int=-
     unit["waypoints"].clear()
     unit["waypoint_index"]=0
     unit["defense_set"]=false
+    GeneralMind.order(unit,"사전 작전: "+mission,battle_time)
     return true
 
 func _destination_order(unit: Dictionary,enemy: Dictionary,action: String,reason: String,goal: Vector2,distance: float) -> Dictionary:
