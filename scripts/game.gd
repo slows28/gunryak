@@ -387,7 +387,6 @@ func _draw_map(_canvas: Control) -> void:
     map_layer.draw_set_transform(MAP_SIZE * 0.5 - camera_center * camera_zoom, 0.0, Vector2.ONE * camera_zoom)
     var map_rect: Rect2 = Rect2(Vector2.ZERO, MAP_SIZE)
     map_layer.draw_rect(map_rect, Color("#58684e"))
-    _draw_terrain_texture()
     # Roads, hills, and woodlands are visible and influence movement.
     for y in [131.0, 282.0, 435.0]:
         map_layer.draw_line(_screen(Vector2(5, y)), _screen(Vector2(895, y)), Color(Color("#8e906f"), 0.39), 13.0)
@@ -395,6 +394,7 @@ func _draw_map(_canvas: Control) -> void:
     for forest in sim.forests:
         map_layer.draw_rect(Rect2(_screen(forest.position), forest.size), Color(Color("#335443"), 0.72))
     map_layer.draw_rect(Rect2(_screen(sim.hill.position), sim.hill.size), Color(Color("#817b61"), 0.45))
+    _draw_terrain_texture()
     if not sim.started:
         map_layer.draw_rect(Rect2(_screen(Vector2(35,22)),Vector2(235,530)),Color(COL_BLUE,0.07))
         map_layer.draw_rect(Rect2(_screen(Vector2(35,22)),Vector2(235,530)),Color(COL_BLUE,0.4),false,1.5)
@@ -800,10 +800,12 @@ func _change_zoom(delta: float) -> void:
     queue_redraw()
 
 func _reset_camera() -> void:
+    render_clock = sim.battle_time
     camera_zoom = 1.0
     camera_center = MAP_SIZE*0.5
     if is_instance_valid(map_layer):
         map_layer.queue_redraw()
+    queue_redraw()
 
 func _focus_selected() -> void:
     var unit: Dictionary = sim.find_unit(selected_id)
@@ -891,8 +893,8 @@ func _draw_history(canvas: Control) -> void:
     canvas.draw_string(korean_font,Vector2(20,273),"아군 %d명 · 적군 %s" % [sim.total_troops(0),str(sim.total_troops(1)) if show_enemy else "미확인"],HORIZONTAL_ALIGNMENT_LEFT,-1,14,COL_GOLD)
 
 func _draw_minimap() -> void:
-    var origin := Vector2(718,700)
-    var factor: float = 0.21
+    var origin := Vector2(760,700)
+    var factor: float = 0.16
     draw_rect(Rect2(origin,MAP_SIZE*factor),Color("#405641"))
     for forest in sim.forests:
         draw_rect(Rect2(origin+forest.position*factor,forest.size*factor),Color("#263d2d"))
