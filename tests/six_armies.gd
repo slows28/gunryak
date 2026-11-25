@@ -183,6 +183,34 @@ func _run() -> void:
     committed_flank.battle_time=30.0
     strike=committed_flank._coordinated_order(cw,ce,"진격","",Vector2.ZERO)
     check(strike["action"]=="돌파" and int(cw["flank_commits"])==1 and int(cw["flank_completed"])==1,"committed attack survives waypoint timeout without duplicate maneuver")
+    # A long route receives more time than a short maneuver, and a reached
+    # waypoint retains a separate window to synchronize with the frontal army.
+    var budget_sim:=WarSim.new()
+    budget_sim.set_long_operation(true)
+    var budget_wing:Dictionary=budget_sim.find_unit(2)
+    var budget_front:Dictionary=budget_sim.find_unit(0)
+    var budget_enemy:Dictionary=budget_sim.find_unit(3)
+    budget_wing["pos"]=Vector2(800,650)
+    budget_front["pos"]=Vector2(1500,650)
+    budget_enemy["pos"]=Vector2(1560,650)
+    budget_enemy["facing"]=Vector2.LEFT
+    check(budget_sim.select_unit_mission(2,"측후방 기동","현장 판단",0),"assign route budget test partner")
+    budget_sim._coordinated_order(budget_wing,budget_enemy,"진격","",Vector2.ZERO)
+    check(float(budget_wing["flank_until"])>24.0 and float(budget_wing["flank_until"])<=80.0,"wide route receives bounded travel budget")
+    # Scenario-specific default commander protection respects explicit map orders.
+    var escort_sim:=WarSim.new()
+    escort_sim.set_long_operation(true)
+    escort_sim.set_scenario(3)
+    var rear_id:int=escort_sim._escort_rearguard(0)
+    check(rear_id>=0,"escort assigns a living default infantry rear guard")
+    if rear_id>=0:
+        var rear:Dictionary=escort_sim.find_unit(rear_id)
+        check(str(rear["type"])=="보병" and int(rear["side"])==0,"rear guard has valid side and type")
+        rear["has_destination"]=true
+        check(escort_sim._escort_rearguard(0)!=rear_id,"explicit map order excludes default rear guard")
+        rear["has_destination"]=false
+        rear["routed"]=true
+        check(escort_sim._escort_rearguard(0)!=rear_id,"routed army cannot be assigned protection")
     # Actual damage suffered by an intervening infantry line is measured
     # separately from damage reduction to an attacked archer.
     var screen_sim:=WarSim.new()
