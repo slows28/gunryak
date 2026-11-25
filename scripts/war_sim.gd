@@ -181,7 +181,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
         "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
         "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
-        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "order_destination":Vector2.ZERO, "has_destination":false, "destination_reached":false, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0, "screened_damage":0.0, "screen_events":0, "ai_role":"", "ai_partner":-1, "ai_role_until":0.0, "ai_replans":0, "bridge_y":-1.0, "bridge_bank":0, "bridge_crossings":0, "blocked_water_steps":0, "flank_commits":0, "flank_aborts":0, "flank_recovery":0.0, "flank_contact_at":-100.0
+        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "order_destination":Vector2.ZERO, "has_destination":false, "destination_reached":false, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0, "screened_damage":0.0, "screen_events":0, "ai_role":"", "ai_partner":-1, "ai_role_until":0.0, "ai_replans":0, "bridge_y":-1.0, "bridge_bank":0, "bridge_crossings":0, "blocked_water_steps":0, "guard_intercept_damage":0.0, "guard_intercept_ticks":0, "flank_commits":0, "flank_aborts":0, "flank_recovery":0.0, "flank_contact_at":-100.0
     }
     _set_general_profile(unit)
     if unit_type == "기병":
@@ -1082,6 +1082,7 @@ func _combat(dt: float) -> void:
         var distance: float = pos.distance_to(ep)
         var unit_type: String = str(unit["type"])
         var reach: float = 173.0 if unit_type == "궁병" else 30.0
+        if long_operation and unit_type!="궁병" and _river_separates(pos,ep): continue
         var contacts: int = formation_contacts(unit, enemy, reach)
         if contacts == 0:
             continue
@@ -1188,7 +1189,8 @@ func _combat(dt: float) -> void:
             shock*=0.40
             guard["screened_damage"]+=saved
             guard["screen_events"]+=1
-        damage_entries.append({"target":int(enemy["id"]), "source":int(unit["id"]), "damage":maxf(0.0, damage + shock), "flank":flank or rear, "shock":shock, "ambush":ambush, "counter":counter, "linked":link})
+        var guarding:bool=long_operation and unit_type!="궁병" and _guarding_archer_in_contact(enemy,unit)
+        damage_entries.append({"guarding":guarding, "target":int(enemy["id"]), "source":int(unit["id"]), "damage":maxf(0.0, damage + shock), "flank":flank or rear, "shock":shock, "ambush":ambush, "counter":counter, "linked":link})
         if shock > 0.0 or battle_time - float(unit["last_visual"]) >= (0.9 if unit_type == "궁병" else 0.55):
             unit["last_visual"] = battle_time
             visual_effects.append({"from":pos,"to":ep,"side":int(unit["side"]),"kind":"돌격" if shock > 0.0 else ("화살" if unit_type == "궁병" else "근접"),"time":battle_time})
@@ -1201,6 +1203,9 @@ func _combat(dt: float) -> void:
         var actual_damage: float = minf(float(defender["troops"]), float(entry["damage"]))
         defender["troops"] = maxf(0.0, float(defender["troops"]) - actual_damage)
         defender["casualties_taken"] = float(defender["casualties_taken"]) + actual_damage
+        if bool(entry.get("guarding",false)) and actual_damage>0.0:
+            defender["guard_intercept_damage"]+=actual_damage
+            defender["guard_intercept_ticks"]+=1
         if actual_damage > 0.0:
             defender["last_hit"] = battle_time
         var shock_damage: float = float(entry["shock"])/(ARMY_SCALE if six_armies else 1.0)
@@ -2718,6 +2723,7 @@ func _tactical_target(unit: Dictionary,nearest: Dictionary) -> Dictionary:
         if not _physical_screen(enemy,unit).is_empty(): score-=35.0
         if str(enemy["next_formation"])!="": score+=12.0
         if score<=score_best: continue
+        if long_operation and str(unit["type"])!="궁병" and _river_separates(p,ep): continue
         if formation_contacts(unit,enemy,reach)<=0: continue
         score_best=score
         best=enemy
@@ -2955,4 +2961,25 @@ func _land_motion(unit:Dictionary,old:Vector2,proposed:Vector2)->Vector2:
         return proposed
     unit["blocked_water_steps"]+=1
     var bank:float=1.0 if old.x>=river_x(old.y) else -1.0
-    return _field_point(Vector2(river_x(proposed.y)+bank*maxf(28.0,absf(old.x-river_x(old.y))),proposed.y))
+    var slide:Vector2=_field_point(Vector2(river_x(proposed.y)+bank*maxf(28.0,absf(old.x-river_x(old.y))),proposed.y))
+    var bounded:Vector2=old.move_toward(slide,old.distance_to(proposed))
+    return bounded if terrain_at(bounded)!="하천" else old
+
+# Opposing ground units cannot trade melee strikes over an unbridged channel.
+func _river_separates(a:Vector2,b:Vector2)->bool:
+    var bank_a:float=a.x-river_x(a.y)
+    var bank_b:float=b.x-river_x(b.y)
+    if bank_a*bank_b>=0.0: return false
+    var middle:Vector2=a.lerp(b,0.5)
+    return not near_crossing(middle.y)
+
+# Measure damage actually borne by an infantry screen, separately from
+# hypothetical damage mitigation. Avoid counting any unrelated melee.
+func _guarding_archer_in_contact(guard:Dictionary,attacker:Dictionary)->bool:
+    if str(guard["type"])!="보병" or str(attacker["type"])=="궁병": return false
+    for archer in units:
+        if str(archer["type"])!="궁병" or int(archer["side"])!=int(guard["side"]) or float(archer["troops"])<=0.0 or bool(archer["routed"]): continue
+        if (archer["pos"] as Vector2).distance_to(guard["pos"])>135.0: continue
+        var screen:Dictionary=_physical_screen(archer,attacker)
+        if not screen.is_empty() and int(screen["id"])==int(guard["id"]): return true
+    return false
