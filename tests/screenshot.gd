@@ -16,6 +16,13 @@ func _capture() -> void:
     game = MAIN_SCENE.instantiate()
     root.add_child(game)
     await process_frame
+    # Check real glyph availability: a successful PNG with tofu is not a pass.
+    var font: Font = game.get("korean_font")
+    if font == null or not font.has_char(0xAD70) or not font.has_char(0xB7B5):
+        push_error("KOREAN_FONT_FAIL: 군략 glyphs missing from selected font")
+        quit(1)
+        return
+    print("KOREAN_FONT_PASS: 군략 glyphs available")
     await RenderingServer.frame_post_draw
     if not _save_frame("before_battle.png"):
         quit(1)

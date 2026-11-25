@@ -12,6 +12,7 @@ const COL_RED: Color = Color("#f08873")
 const COL_GOLD: Color = Color("#efc878")
 
 var sim = WarSim.new()
+var korean_font: SystemFont
 var selected_id: int = 0
 var step_buffer: float = 0.0
 var ui_clock: float = 0.0
@@ -32,11 +33,27 @@ var speed_btn: Button
 var apply_btn: Button
 
 func _ready() -> void:
+    _install_korean_font()
     _build_interface()
     _refresh_unit_list()
     _select_unit()
     _refresh_hud()
     queue_redraw()
+
+# Use a platform Korean-capable system font for both Control text and custom
+# CanvasItem.draw_string(). The bundled default font has no Hangul glyphs.
+# Linux CI installs fonts-nanum; Windows normally provides Malgun Gothic.
+func _install_korean_font() -> void:
+    korean_font = SystemFont.new()
+    korean_font.font_names = PackedStringArray([
+        "NanumGothic", "Malgun Gothic", "Noto Sans CJK KR",
+        "Apple SD Gothic Neo", "UnDotum", "Arial Unicode MS"
+    ])
+    korean_font.allow_system_fallback = true
+    var ui_theme := Theme.new()
+    ui_theme.default_font = korean_font
+    ui_theme.default_font_size = 14
+    theme = ui_theme
 
 func _build_interface() -> void:
     _label("군략   /   첫 전쟁 시뮬레이션", Vector2(25, 9), Vector2(420, 35), 25, COL_TEXT)
@@ -342,6 +359,5 @@ func _map_text(value: String, pos: Vector2, shade: Color, font_size: int) -> voi
     _draw_string(value, _screen(pos), font_size, shade)
 
 func _draw_string(value: String, where: Vector2, font_size: int, shade: Color) -> void:
-    var fallback: Font = ThemeDB.fallback_font
-    if fallback != null:
-        draw_string(fallback, where, value, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, shade)
+    if korean_font != null:
+        draw_string(korean_font, where, value, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, shade)
