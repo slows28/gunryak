@@ -1821,6 +1821,8 @@ func _draw_combat_effects() -> void:
         var target: Vector2 = fx["to"]
         if fog_enabled and not sim.finished and not sim.player_can_see(p) and not sim.player_can_see(target):
             continue
+        p=fx.get("visual_from",p)
+        target=fx.get("visual_to",target)
         var alpha: float = clampf(1.0-age,0.0,1.0)
         match str(fx["kind"]):
             "화살":
