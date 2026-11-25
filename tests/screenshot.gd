@@ -77,10 +77,27 @@ func _capture() -> void:
     if not _save_frame("battle_60s.png"):
         quit(1)
         return
+    # Record a later wide-field overview and a zoomed contact view.
+    for i in range(600):
+        if game.sim.finished: break
+        game.call("_process",0.1)
+    game.call("_reset_camera")
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("wide_overview.png"):
+        quit(1)
+        return
+    if not game.sim.finished:
+        game.call("_focus_selected")
+        await process_frame
+        await RenderingServer.frame_post_draw
+        if not _save_frame("wide_contact.png"):
+            quit(1)
+            return
     # Record the real post-battle audit screen as visual evidence.
     var simulator = game.get("sim")
     var additional_steps: int = 0
-    while not bool(simulator.get("finished")) and additional_steps < 1500:
+    while not bool(simulator.get("finished")) and additional_steps < 4200:
         game.call("_process", 0.1)
         additional_steps += 1
     if not bool(simulator.get("finished")):
