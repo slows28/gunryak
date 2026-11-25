@@ -4,7 +4,7 @@ const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const PAINTED_GROUND = preload("res://assets/art/painted_atlas.webp")
 const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
 ## Deterministic, continuous terrain art. Gameplay coordinates remain unchanged.
-static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, scenario: int, scale: float = 1.0) -> ImageTexture:
+static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, scenario: int, scale: float = 1.0, layers: Dictionary = {}) -> ImageTexture:
     # Bake higher-resolution wide terrain; retain true world coordinates.
     # Native world-pixel density for the zoomed battlefield. Mipmaps serve overview.
     var bake: float = 1.0
@@ -262,15 +262,24 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             if scale > 1.0 and absf(pos.x-(1120.0+sin(pos.y/225.0)*100.0+sin(pos.y/89.0)*34.0)) < 45.0: continue
             var on_road: bool=false
             for lane in range(3):
-                var cy:float=[131.0,282.0,435.0][lane]*scale
-                if scale>1.0: cy+=sin(pos.x/220.0+float(lane)*1.6)*48.0+sin(pos.x/94.0+float(lane))*19.0
+                var cy:float=FieldGeometry.road_y(pos.x,lane,scale,scenario)
                 if absf(pos.y-cy)<34.0: on_road=true
             if not on_road: trees.append({"pos":pos,"tile":rng.randi_range(0,4)})
     trees.sort_custom(func(a: Dictionary,b: Dictionary) -> bool: return (a["pos"] as Vector2).y < (b["pos"] as Vector2).y)
-    for t in trees:
-        var tree: Image = tree_images[int(t["tile"])]
-        var center: Vector2 = t["pos"]
-        image.blend_rect(tree,Rect2i(0,0,tree.get_width(),tree.get_height()),Vector2i(center*bake)-Vector2i(tree.get_width()/2,int(tree.get_height()*0.70)))
+    # Keep a distinct tree layer when requested. The original fully baked path
+    # remains available to existing callers (e.g. static terrain tests).
+    if bool(layers.get("separate_trees",false)):
+        var textures: Array[ImageTexture]=[]
+        for tree in tree_images:
+            tree.generate_mipmaps()
+            textures.append(ImageTexture.create_from_image(tree))
+        layers["trees"]=trees
+        layers["textures"]=textures
+    else:
+        for t in trees:
+            var tree: Image=tree_images[int(t["tile"])]
+            var center: Vector2=t["pos"]
+            image.blend_rect(tree,Rect2i(0,0,tree.get_width(),tree.get_height()),Vector2i(center*bake)-Vector2i(tree.get_width()/2,int(tree.get_height()*0.70)))
     # Riverbanks retain exact simulation boundary; gravel and reeds lie outside it.
     if scale>1.0:
         for i in range(4600):
