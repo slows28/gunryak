@@ -378,7 +378,7 @@ func _supply_logic(dt: float) -> void:
                 _log("%s 보급부대 전선 따라 이동" % ("아군" if side == 0 else "적군"))
     for base in bases:
         if bool(base["alive"]) and str(base["state"]) == "가동":
-            base["stock"] = minf(100.0, float(base["stock"]) + dt * 0.60)
+            base["stock"] = minf(100.0,float(base["stock"])+dt*(1.15 if six_armies else 0.60))
     var supply_queue: Array[Dictionary] = units.duplicate()
     supply_queue.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
         if int(a["supply_priority"]) != int(b["supply_priority"]):
@@ -432,7 +432,7 @@ func _has_supply(side: int, position: Vector2) -> bool:
     for base in bases:
         if int(base["side"]) == side and bool(base["alive"]) and str(base["state"]) == "가동":
             var bp: Vector2 = base["pos"]
-            if bp.distance_to(position) <= SUPPLY_RADIUS:
+            if bp.distance_to(position) <= (SUPPLY_RADIUS*1.6 if six_armies else SUPPLY_RADIUS):
                 return true
     return false
 
@@ -451,13 +451,13 @@ func _best_supply_position(side: int) -> Vector2:
     var best_score: float = -100000.0
     for candidate in candidates:
         candidate = _field_point(candidate)
-        var score: float = 0.0
+        var score: float = -120.0 if six_armies and terrain_at(candidate) == "하천" else 0.0
         for unit in units:
             if float(unit["troops"]) <= 0.0:
                 continue
             var d: float = (unit["pos"] as Vector2).distance_to(candidate)
             if int(unit["side"]) == side:
-                score += float(unit["troops"]) * (1.0 if d <= SUPPLY_RADIUS else 0.0)
+                score += float(unit["troops"]) * (1.0 if d <= (SUPPLY_RADIUS*1.6 if six_armies else SUPPLY_RADIUS) else 0.0)
             elif d < 190.0:
                 score -= (190.0 - d) * 1.2
         if score > best_score:
@@ -813,6 +813,10 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
 # M2-2: A contact line shifts toward the weaker side, based on the soldiers
 # actually in each formation, morale and how well a unit resists front pressure.
 func _body_distance(a: Dictionary, b: Dictionary) -> float:
+    if six_armies:
+        var radius_a: float = 31.0 if str(a["formation"]) == "종대" else 23.0
+        var radius_b: float = 31.0 if str(b["formation"]) == "종대" else 23.0
+        return radius_a+radius_b
     if str(a["type"]) == "궁병" or str(b["type"]) == "궁병":
         return 25.0
     return 34.0
@@ -940,6 +944,10 @@ func formation_slots(unit: Dictionary) -> Array[Vector2]:
             files = 4
             ranks = 3
     var count: int = clampi(int(round(float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"])) * 12.0)), 0, 12)
+    if six_armies:
+        files = 8 if str(unit["formation"]) == "횡대" else (4 if str(unit["formation"]) == "종대" else 5)
+        ranks = 3 if files == 8 else (6 if files == 4 else 5)
+        count = clampi(ceili(float(unit["troops"])/6.0),0,24)
     var center: Vector2 = unit["pos"]
     for k in range(count):
         var file: int = k % files
@@ -1006,7 +1014,7 @@ func _combat(dt: float) -> void:
                 attack *= 1.23
         else:
             # Physical contact frontage, not a free formation-specific stat buff.
-            attack *= clampf(float(contacts) / 8.0, 0.35, 1.50)
+            attack *= clampf(float(contacts) / (14.0 if six_armies else 8.0), 0.35, 1.50)
             if terrain_at(pos) == "고지" and terrain_at(ep) != "고지":
                 attack *= 1.11
 
@@ -1065,6 +1073,8 @@ func _combat(dt: float) -> void:
             damage *= float(unit.get("strength_share",1.0))
             if terrain_at(pos) == "하천": damage *= 0.68
             if terrain_at(ep) == "하천": damage *= 1.18
+        if six_armies:
+            damage *= clampf(float(unit["initial_troops"])/120.0,0.45,1.8)
         if wide_field: shock *= float(unit.get("strength_share",1.0))
         damage_entries.append({"target":int(enemy["id"]), "source":int(unit["id"]), "damage":maxf(0.0, damage + shock), "flank":flank or rear, "shock":shock, "ambush":ambush})
         if shock > 0.0 or battle_time - float(unit["last_visual"]) >= (0.9 if unit_type == "궁병" else 0.55):
@@ -1234,6 +1244,14 @@ func _check_victory() -> void:
         _finish("보급기지 방어 성공 — 아군 승리")
     if not finished and battle_time >= scenario_limit and scenario_id in [3,4]:
         _finish("작전 제한 시간 초과 — 패배")
+    if not finished and battle_time >= scenario_limit and six_armies and scenario_id == 0:
+        var control: Array[int] = [0,0]
+        for site in outposts:
+            var faction: int = int(site["owner"])
+            if faction >= 0: control[faction] += 1
+        if control[0] != control[1]:
+            _finish("작전 종료 — 거점 우세: %s" % ("아군" if control[0]>control[1] else "적군"))
+            return
     if not finished and battle_time >= scenario_limit:
         var blue: float = 0.0
         var red: float = 0.0
@@ -2271,7 +2289,11 @@ func near_crossing(y: float) -> bool:
     return false
 
 func _crossing_route(p: Vector2,goal: Vector2) -> Vector2:
-    if absf(p.x-river_x(p.y)) < 36.0: return goal
+    if absf(p.x-river_x(p.y)) < 36.0:
+        if six_armies and near_crossing(p.y):
+            var direction: float = 1.0 if goal.x > river_x(goal.y) else -1.0
+            return Vector2(river_x(p.y)+direction*65.0,p.y)
+        return goal
     if (p.x-river_x(p.y))*(goal.x-river_x(goal.y)) >= 0.0: return goal
     var best_y: float = 850.0
     var best_score: float = INF
