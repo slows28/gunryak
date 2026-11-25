@@ -263,9 +263,13 @@ func _refresh_unit_list() -> void:
         unit_list.add_item("%s  ·  %s / %s" % [str(unit["name"]),str(unit["type"]),str(unit["personality"])],icon)
         unit_list.set_item_metadata(unit_list.item_count-1,i)
     unit_list.fixed_icon_size = Vector2i(24,24)
-    unit_list.select(maxi(0,sim.command_ids(0).find(selected_id)))
+    if unit_list.item_count > 0:
+        var row: int = maxi(0,sim.command_ids(0).find(selected_id))
+        unit_list.select(row)
+        selected_id = int(unit_list.get_item_metadata(row))
 
 func _on_unit_selected(index: int) -> void:
+    if index < 0 or index >= unit_list.item_count: return
     selected_id = int(unit_list.get_item_metadata(index))
     _select_unit()
 
@@ -294,9 +298,9 @@ func _apply_order() -> void:
     var mission: String = mission_choice.get_item_text(mission_choice.selected)
     var policy: String = policy_choice.get_item_text(policy_choice.selected)
     if not sim.started:
-        sim.select_unit_mission(selected_id, mission, policy)
+        runtime_notice = "사전 작전 반영 완료" if sim.select_unit_mission(selected_id, mission, policy) else "작전 설정 불가"
     elif sim.turn >= 6:
-        sim.request_order(selected_id, mission, policy)
+        runtime_notice = "전령 출발 · 도착 전까지 기존 명령 유지" if sim.request_order(selected_id, mission, policy) else "파견 불가 · 기존 전령 또는 부대 상태 확인"
     _select_unit()
     _refresh_hud()
     queue_redraw()
@@ -380,7 +384,7 @@ func _process(delta: float) -> void:
     ui_clock += minf(delta, 0.15)
     if ui_clock >= 0.2:
         ui_clock = 0.0
-        if sim.started and not sim.finished and runtime_notice == "":
+        if sim.started and not sim.finished:
             var problems: Array[String] = sim.validate_state()
             if not problems.is_empty():
                 sim.paused = true
@@ -516,15 +520,23 @@ func _map_select(mouse_pos: Vector2) -> void:
         queue_redraw()
         accept_event()
         return
+    var nearest_id: int = -1
+    var best: float = 47.0/maxf(0.5,camera_zoom)
+    var world: Vector2 = _world_mouse(mouse_pos)
     for i in sim.command_ids(0):
         var unit: Dictionary = sim.find_unit(i)
+        if float(unit["troops"]) <= 0.0: continue
         var p: Vector2 = unit["pos"]
-        if _world_mouse(mouse_pos).distance_to(p) < 47.0/maxf(0.5,camera_zoom):
-            selected_id = i
-            unit_list.select(sim.command_ids(0).find(i))
-            _select_unit()
+        var distance: float = world.distance_to(p)
+        if distance < best:
+            best = distance
+            nearest_id = i
+    if nearest_id >= 0:
+        var row: int = sim.command_ids(0).find(nearest_id)
+        if row >= 0 and row < unit_list.item_count:
+            unit_list.select(row)
+            _on_unit_selected(row)
             accept_event()
-            return
 
 func _draw() -> void:
     draw_rect(Rect2(0,0,1280,800),COL_BG)
@@ -1488,7 +1500,9 @@ func _build_outcome_dialog() -> void:
     var close := Button.new()
     close.text = "전장으로"
     close.custom_minimum_size = Vector2(168,38)
-    close.pressed.connect(func(): outcome_dialog.hide())
+    close.pressed.connect(func():
+        if campaign_active: _advance_campaign()
+        else: outcome_dialog.hide())
     buttons.add_child(close)
     var analysis := Button.new()
     analysis.text = "전투 분석"
