@@ -5,6 +5,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Keep the newest revision only; push and PR builds for the same head share a group.
+concurrency:
+  group: godot-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   headless:
     runs-on: ubuntu-24.04
