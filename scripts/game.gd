@@ -40,6 +40,7 @@ var plan_donor: OptionButton
 var plan_deputy: OptionButton
 var plan_priority: OptionButton
 var plan_fog: CheckButton
+var plan_takeover: Button
 var map_mode: String = "선택"
 var fog_enabled: bool = true
 var plan_actions: Array[Button] = []
@@ -179,6 +180,7 @@ func _apply_order() -> void:
 
 func _start() -> void:
     map_mode = "선택"
+    runtime_notice = ""
     sim.start()
     _refresh_hud()
 
@@ -253,13 +255,15 @@ func _refresh_hud() -> void:
     apply_btn.text = "초기 작전 설정" if not sim.started else "전령 보내기 (6턴~)"
     var unit: Dictionary = sim.find_unit(selected_id)
     if not unit.is_empty():
-        selected_label.text = "%s [%s] %d명 / 사기 %d" % [str(unit["name"]), str(unit["general_state"]), int(float(unit["troops"])), int(float(unit["morale"]))]
+        var leader_state: String = "부장 지휘" if bool(unit["active_deputy"]) else str(unit["general_state"])
+        selected_label.text = "%s [%s] %d명 / 사기 %d" % [str(unit["name"]), leader_state, int(float(unit["troops"])), int(float(unit["morale"]))]
         var ammo_text: String = " · 화살 %d" % int(unit.get("ammo", 100.0)) if str(unit["type"]) == "궁병" else ""
         details_label.text = "통솔 %d · 무력 %d · 지력 %d · 판단 %d\n%s / %s · 응집 %d · 피로 %d\n식량 %d%s · %s\n%s" % [int(unit["leadership"]), int(unit["martial"]), int(unit["intelligence"]), int(unit["judgment"]), str(unit["action"]), str(unit["formation"]), int(unit["cohesion"]), int(unit["fatigue"]), int(unit["rations"]), ammo_text, "포위" if bool(unit["surrounded"]) else str(unit["obedience"]), str(unit["reason"])]
     var start_line: int = maxi(0, sim.events.size() - 4)
     var lines: String = ""
     for i in range(start_line, sim.events.size()):
-        lines += sim.events[i] + "\n"
+        if not fog_enabled or sim.finished or _public_event(sim.events[i]):
+            lines += sim.events[i] + "\n"
     if sim.finished:
         lines = ""
         for report_line in sim.battle_report():
@@ -540,6 +544,10 @@ func _build_planning_dialog() -> void:
     _plan_button(troop_row,"장수 교체",_swap_general)
     plan_deputy = _plan_option(root,"부장",["통솔형 부장","공격형 부장","책략형 부장"])
     plan_deputy.item_selected.connect(_change_deputy)
+    plan_takeover = Button.new()
+    plan_takeover.text = "부상 장수 지휘 교체 전령 (6턴~)"
+    root.add_child(plan_takeover)
+    plan_takeover.pressed.connect(_request_takeover)
     plan_priority = _plan_option(root,"보급 우선순위",["낮음","보통","높음"])
     plan_priority.item_selected.connect(_change_priority)
     var map_row := HBoxContainer.new()
@@ -601,6 +609,7 @@ func _open_planning() -> void:
     plan_donor.select((selected_id+1)%3)
     plan_deputy.select(int(unit["deputy_index"]))
     plan_deputy.disabled = sim.started
+    plan_takeover.disabled = not sim.started or sim.finished or sim.turn < 6 or str(unit["general_state"]) != "부상" or bool(unit["active_deputy"])
     plan_priority.select(int(unit["supply_priority"]))
     plan_priority.disabled = sim.finished
     plan_fog.set_pressed_no_signal(fog_enabled)
@@ -672,3 +681,20 @@ func _toggle_fog(value: bool) -> void:
     fog_enabled = value
     _refresh_hud()
     queue_redraw()
+
+func _request_takeover() -> void:
+    if sim.request_deputy_takeover(selected_id):
+        planning_dialog.hide()
+        runtime_notice = "부장 지휘 교체 전령 파견"
+        _refresh_hud()
+    else:
+        plan_status.text = "지휘 교체 불가: 부상, 6턴 이후, 전령 중복 여부 확인"
+
+func _public_event(message: String) -> bool:
+    # Conservative filtering of identifiable enemy-only events in limited view.
+    if "적군" in message or "위군" in message:
+        return false
+    for unit in sim.units:
+        if int(unit["side"]) == 1 and str(unit["name"]) in message:
+            return false
+    return true
