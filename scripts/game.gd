@@ -4,13 +4,14 @@ const WarSim = preload("res://scripts/war_sim.gd")
 const TerrainArt = preload("res://scripts/terrain_art.gd")
 const Campaign = preload("res://scripts/campaign.gd")
 const CampaignView = preload("res://scripts/campaign_view.gd")
+const OrderMap = preload("res://scripts/order_map.gd")
 const PAINTED_ART = preload("res://assets/art/painted_atlas.webp")
 const PAINTED_FX = preload("res://assets/art/painted_fx.webp")
 const TITLE_ART = preload("res://assets/art/title_art.webp")
 const MAP_TOP_LEFT: Vector2 = Vector2(24, 101)
 const MAP_SIZE: Vector2 = Vector2(900, 570)
-const COL_BG: Color = Color("#101b1e")
-const COL_PANEL: Color = Color("#1b2b2d")
+const COL_BG: Color = Color("#171918")
+const COL_PANEL: Color = Color("#282822")
 const COL_TEXT: Color = Color("#eee7d2")
 const COL_MUTED: Color = Color("#a6b6b4")
 const COL_BLUE: Color = Color("#8ed5e7")
@@ -97,6 +98,10 @@ var terrain_scenario: int = -1
 var campaign_active: bool = false
 var campaign = Campaign.new()
 var strategy_view: Control
+var order_view: Control
+var order_pause_before: bool = false
+var live_order_label: Label
+var live_order_button: Button
 var battle_recorded: bool = false
 var chapter: int = 0
 var campaign_results: Array[String] = []
@@ -130,6 +135,9 @@ func _ready() -> void:
     strategy_view.configure(campaign,korean_font,PAINTED_ART,_launch_campaign_battle,_show_title)
     add_child(strategy_view)
     strategy_view.hide()
+    order_view=OrderMap.new()
+    order_view.configure(self,korean_font)
+    add_child(order_view)
     _refresh_unit_list()
     _select_unit()
     _refresh_hud()
@@ -151,20 +159,20 @@ func _install_korean_font() -> void:
         ui_theme.set_color("font_disabled_color",type,Color("#7e8b8b"))
         for state in ["normal","hover","pressed","disabled","focus"]:
             var style := StyleBoxFlat.new()
-            style.bg_color = Color("#314648") if state == "hover" or state == "pressed" else Color("#213335")
+            style.bg_color = Color("#494035") if state == "hover" or state == "pressed" else Color("#2f3029")
             if state == "disabled": style.bg_color = Color("#192628")
-            style.border_color = Color("#b79d68") if state in ["hover","pressed","focus"] else Color("#3f5555")
+            style.border_color = Color("#b79d68") if state in ["hover","pressed","focus"] else Color("#6b6250")
             style.set_border_width_all(1)
             style.set_corner_radius_all(4)
             style.content_margin_left = 8
             style.content_margin_right = 8
             ui_theme.set_stylebox(state,type,style)
     var list_bg := StyleBoxFlat.new()
-    list_bg.bg_color = Color("#162427")
+    list_bg.bg_color = Color("#211f1b")
     list_bg.set_corner_radius_all(4)
     ui_theme.set_stylebox("panel","ItemList",list_bg)
     var selected := StyleBoxFlat.new()
-    selected.bg_color = Color("#345154")
+    selected.bg_color = Color("#51432d")
     selected.border_color = COL_GOLD
     selected.border_width_left = 3
     selected.set_corner_radius_all(3)
@@ -183,7 +191,7 @@ func _build_interface() -> void:
     pause_btn = _button("일시정지",Vector2(554,16),Vector2(102,43),_pause)
     speed_btn = _button("속도 ×1",Vector2(662,16),Vector2(100,43),_speed)
     _button("초기화",Vector2(768,16),Vector2(88,43),_reset)
-    _button("작전실",Vector2(862,16),Vector2(76,43),_open_planning)
+    _button("작전 지도",Vector2(862,16),Vector2(76,43),_open_order_map)
     status_label = _label("",Vector2(955,9),Vector2(307,64),14,COL_TEXT)
     objective_label = _label("",Vector2(26,77),Vector2(412,22),13,COL_GOLD)
     _label("군단 지휘",Vector2(956,101),Vector2(270,29),21,COL_GOLD)
@@ -195,16 +203,21 @@ func _build_interface() -> void:
     unit_list.add_theme_constant_override("v_separation",2)
     add_child(unit_list)
     unit_list.item_selected.connect(_on_unit_selected)
-    _label("02  작전 목표",Vector2(956,344),Vector2(267,20),13,COL_MUTED)
+    _label("02  현재 작전",Vector2(956,344),Vector2(267,20),13,COL_GOLD)
     mission_choice = _options(Vector2(950,363),["중앙 진격","북측 확보","남측 우회","본진 방어","전열 엄호","측후방 기동","구원 지원"])
     mission_choice.size.x = 306
     mission_choice.item_selected.connect(_on_choices_changed)
-    _label("03  진형 · 지휘 방침",Vector2(956,401),Vector2(267,21),13,COL_MUTED)
+    mission_choice.hide()
+    live_order_label = _label("",Vector2(956,370),Vector2(292,80),15,COL_TEXT)
+    live_order_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     policy_choice = _options(Vector2(950,420),["현장 판단","명령 엄수","재량 위임","횡대 유지","종대 유지","방진 유지","어린진 유지","학익진 유지","봉시진 유지","안행진 유지"])
     policy_choice.size.x = 306
     policy_choice.item_selected.connect(_on_choices_changed)
+    policy_choice.hide()
     apply_btn = _button("작전 적용 / 전령 보내기",Vector2(950,460),Vector2(306,42),_apply_order)
-    _primary_button(apply_btn)
+    apply_btn.hide()
+    live_order_button=_button("작전 지도 열기",Vector2(950,460),Vector2(306,42),_open_order_map)
+    _primary_button(live_order_button)
     _label("책사 위치",Vector2(956,503),Vector2(267,25),15,COL_GOLD)
     _button("전선 접근",Vector2(950,525),Vector2(149,35),_commander_forward)
     _button("본진 복귀",Vector2(1107,525),Vector2(149,35),_commander_back)
@@ -310,6 +323,7 @@ func _apply_order() -> void:
 func _start() -> void:
     if is_instance_valid(title_screen):
         title_screen.hide()
+    if is_instance_valid(order_view): order_view.hide()
     map_mode = "선택"
     runtime_notice = ""
     sim.start()
@@ -437,8 +451,13 @@ func _refresh_hud() -> void:
     pause_btn.text = "재개" if sim.paused else "일시정지"
     apply_btn.disabled = sim.started and (sim.turn < 6 or sim.finished)
     apply_btn.text = "초기 작전 설정" if not sim.started else "전령 보내기 (6턴~)"
+    start_btn.visible=not sim.started
+    live_order_button.disabled=sim.finished
+    live_order_button.text="작전 지도 열기" if not sim.started else "작전 지도 · 전령 지시"
     var unit: Dictionary = sim.find_unit(selected_id)
     if not unit.is_empty():
+        var ally: Dictionary=sim.find_unit(int(unit.get("assigned_link",-1)))
+        live_order_label.text="%s\n목적지: %s\n연계: %s" % [str(unit["mission"]),sim.terrain_at(unit["order_destination"]) if bool(unit.get("has_destination",false)) else "장수 판단",str(ally["name"]) if not ally.is_empty() else "자동 / 없음"]
         var leader_state: String = "부장 지휘" if bool(unit["active_deputy"]) else str(unit["general_state"])
         var corps: Dictionary = sim.corps_report(selected_id)
         selected_label.text = "%s · %s · 군단 %d명" % [str(unit["name"]),leader_state,int(corps["troops"])]
@@ -546,13 +565,13 @@ func _draw() -> void:
     draw_rect(Rect2(0,0,1280,800),COL_BG)
     draw_rect(Rect2(0,0,1280,68),COL_PANEL)
     draw_line(Vector2(24,68),Vector2(1256,68),Color("#817b5f"),1.0)
-    draw_rect(Rect2(940,94,324,581),Color("#1b2b2d"))
+    draw_rect(Rect2(940,94,324,581),COL_PANEL)
     draw_rect(Rect2(21,685,907,110),COL_PANEL)
     draw_rect(Rect2(940,685,324,110),COL_PANEL)
     for frame in [Rect2(21,98,906,576),Rect2(940,94,324,581),Rect2(21,685,907,110),Rect2(940,685,324,110)]:
-        draw_rect(frame,Color("#536662"),false,1.2)
+        draw_rect(frame,Color("#88734f"),false,1.2)
     draw_line(Vector2(950,550),Vector2(1254,550),Color("#526862"),1.0)
-    draw_line(Vector2(950,302),Vector2(1254,302),Color("#526862"),1.0)
+    draw_line(Vector2(950,340),Vector2(1254,340),Color("#706049"),1.0)
     _draw_minimap()
 
 func _draw_map(_canvas: Control) -> void:
@@ -1345,6 +1364,7 @@ func _update_audio_and_warning() -> void:
 
 func _unhandled_key_input(event: InputEvent) -> void:
     if event is InputEventKey and event.pressed and not event.echo:
+        if is_instance_valid(order_view) and order_view.visible: return
         if event.keycode >= KEY_1 and event.keycode <= KEY_6 and not title_screen.visible and not strategy_view.visible:
             var index: int = int(event.keycode-KEY_1)
             if index < unit_list.item_count:
@@ -1432,7 +1452,7 @@ func _build_title_screen() -> void:
     _title_button("도움말 / 조작",Vector2(690,590),_open_demo_help)
     _title_button("종료",Vector2(690,646),_quit_game)
     var version := Label.new()
-    version.text = "PUBLIC DEMO CANDIDATE  ·  0.9"
+    version.text = "軍略  ·  개발 빌드"
     version.position = Vector2(694,716)
     title_screen.add_child(version)
     title_screen.show()
@@ -1448,6 +1468,7 @@ func _title_button(caption: String, pos: Vector2, callback: Callable) -> void:
     btn.pressed.connect(callback)
 
 func _show_title() -> void:
+    if is_instance_valid(order_view): order_view.hide()
     if is_instance_valid(strategy_view): strategy_view.hide()
     if is_instance_valid(outcome_dialog): outcome_dialog.hide()
     if sim.started and not sim.finished:
@@ -1462,6 +1483,7 @@ func _leave_title() -> void:
     sim.set_scenario(0)
     _reset()
     title_screen.hide()
+    _open_order_map()
 
 func _title_brief() -> void:
     _leave_title()
@@ -1624,6 +1646,7 @@ func _draw_fortifications() -> void:
         _draw_string(str(structure["name"]),p+Vector2(-25,-16),10,COL_TEXT)
 
 func _begin_campaign() -> void:
+    if is_instance_valid(order_view): order_view.hide()
     campaign.reset()
     campaign_active = true
     battle_recorded = false
@@ -1711,7 +1734,7 @@ func _launch_campaign_battle(target: int) -> bool:
     _select_unit()
     _refresh_hud()
     queue_redraw()
-    _open_briefing()
+    _open_order_map()
     return true
 
 func _continue_campaign() -> void:
@@ -2008,3 +2031,17 @@ func _change_link(partner: int) -> void:
         ok=sim.request_order(selected_id,str(unit["mission"]),str(unit["policy"]),partner)
     plan_status.text="협동 대상 지정 완료" if ok and not sim.started else ("협동 대상 변경 전령 파견" if ok else "지정 불가: 자신·전멸 부대 또는 전령 제한")
     _refresh_hud()
+
+func _open_order_map() -> void:
+    if not is_instance_valid(order_view) or sim.finished: return
+    if order_view.visible: return
+    order_pause_before=sim.paused
+    if sim.started: sim.paused=true
+    order_view.open(sim.started)
+
+func _return_to_battle() -> void:
+    sim.paused=order_pause_before
+    _select_unit()
+    _refresh_hud()
+    map_layer.queue_redraw()
+    queue_redraw()
