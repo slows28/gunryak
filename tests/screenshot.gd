@@ -130,6 +130,25 @@ func _capture() -> void:
     if not _save_frame("battle_112s.png"):
         quit(1)
         return
+    game.call("_open_mind_report")
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not game.mind_report.text.contains("왕평") or not game.mind_report.text.contains("마속") or not game.mind_report.text.contains("관측:") or not game.mind_report.text.contains("최근 명령:"):
+        push_error("VISUAL_CAPTURE_FAIL: live general report incomplete")
+        quit(1)
+        return
+    if not _save_frame("general_mind_report.png"):
+        quit(1)
+        return
+    game.mind_dialog.hide()
+    game.call("_toggle_feed")
+    if not game.event_label.visible or game.thought_feed.visible:
+        push_error("VISUAL_CAPTURE_FAIL: traditional battle log inaccessible")
+        quit(1)
+        return
+    game.call("_toggle_feed")
+    print("GENERAL_REPORT_VISUAL_PASS")
+
     if not game.combat_brief.text.contains("아군 손실") or not game.live_order_label.text.contains("현재:"):
         push_error("VISUAL_CAPTURE_FAIL: real battle feedback missing")
         quit(1)
