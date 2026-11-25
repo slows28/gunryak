@@ -821,6 +821,10 @@ func _draw_map(_canvas: Control) -> void:
     visible_units.sort_custom(func(a: Dictionary,b: Dictionary) -> bool: return (a["pos"] as Vector2).y < (b["pos"] as Vector2).y)
     var field_view := Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom).grow(125.0)
     _draw_march_dust(field_view)
+    if camera_zoom>=0.65:
+        var soldiers: Array[Dictionary]=_visible_soldier_batch(visible_units,field_view)
+        for item in soldiers:
+            _draw_soldier(item["point"],item["unit"],item["accent"],int(item["index"]))
     for unit in visible_units:
         if field_view.has_point(unit["pos"]): _draw_unit(unit)
     _draw_combat_effects()
@@ -836,6 +840,25 @@ func _draw_map(_canvas: Control) -> void:
     _draw_terrain_texture()
     map_layer.draw_rect(map_rect, Color(Color("#cad8d7"), 0.42), false, 1.5)
 
+
+# Merge both factions before sorting by feet position. A front rank can now
+# occlude a rear rank even when they belong to different armies.
+func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) -> Array[Dictionary]:
+    var batch: Array[Dictionary]=[]
+    for unit in visible_units:
+        if not field_view.has_point(unit["pos"]): continue
+        var accent: Color=COL_BLUE if int(unit["side"])==0 else COL_RED
+        if bool(unit["routed"]): accent=Color(accent,0.48)
+        elif float(unit["ambush_ready"])>=3.0: accent=Color(accent,0.64)
+        var slots: Array[Vector2]=_visual_slots(unit)
+        for index in range(slots.size()):
+            var point: Vector2=slots[index]
+            var scatter: float=(100.0-float(unit["cohesion"]))*0.045
+            point+=Vector2(sin(float(index)*7.3),cos(float(index)*5.7))*scatter
+            if sim.wide_field and sim.terrain_at(point)=="하천": point=slots[index]
+            batch.append({"point":point,"unit":unit,"accent":accent,"index":index})
+    batch.sort_custom(func(a:Dictionary,b:Dictionary)->bool: return (a["point"] as Vector2).y<(b["point"] as Vector2).y)
+    return batch
 
 func _draw_unit(unit: Dictionary) -> void:
     var side: int = int(unit["side"])
@@ -872,15 +895,6 @@ func _draw_unit(unit: Dictionary) -> void:
         if hull.size()>3 and detailed_map:
             map_layer.draw_colored_polygon(hull,Color(accent,0.045))
             map_layer.draw_polyline(hull,Color(COL_GOLD,0.35),1.2,true)
-    slots.sort_custom(func(a: Vector2,b: Vector2) -> bool: return a.y < b.y)
-    var slot_index: int = 0
-    for spot in slots:
-        # Presentation only: retain the authoritative simulation slots for contact calculations.
-        var point: Vector2 = spot
-        var scatter: float = (100.0-float(unit["cohesion"]))*0.045
-        point += Vector2(sin(float(slot_index)*7.3),cos(float(slot_index)*5.7))*scatter
-        _draw_soldier(point, unit, accent, slot_index)
-        slot_index += 1
     var flag_extent: Vector2 = Vector2(15,22) if unit.has("parent_id") else Vector2(23,32)
     _paint_tile(38+side,Rect2(p-Vector2(flag_extent.x*0.5,flag_extent.y+7),flag_extent),Color(1,1,1,accent.a))
     if camera_zoom>=1.0 and not unit.has("parent_id"):
