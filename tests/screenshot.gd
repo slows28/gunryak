@@ -24,6 +24,12 @@ func _capture() -> void:
         return
     print("KOREAN_FONT_PASS: 군략 glyphs available")
     await RenderingServer.frame_post_draw
+    if not _save_frame("title.png"):
+        quit(1)
+        return
+    game.call("_leave_title")
+    await process_frame
+    await RenderingServer.frame_post_draw
     if not _save_frame("before_battle.png"):
         quit(1)
         return
