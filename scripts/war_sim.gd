@@ -26,6 +26,15 @@ var reserve_next: Array[float] = [18.0, 18.0]
 var reserve_limit: Array[int] = [2,2]
 var winning_side: int = -1
 var convoy: Dictionary = {}
+# Enabled by the game; legacy fixtures can opt out to isolate basic mechanics.
+var tactical_enabled: bool = false
+var command_points: int = 3
+var situation_reports: Array[Dictionary] = []
+var situation_keys: Dictionary = {}
+var situation_serial: int = 0
+var tactical_delivered: int = 0
+var tactical_refused: int = 0
+var last_situation_scan: float = -5.0
 var scenario_id: int = 0
 var scenario_title: String = "북남 요충지"
 var scenario_goal: String = "두 요충지를 동시에 점령하고 유지"
@@ -73,6 +82,13 @@ func reset() -> void:
     reserve_limit = [2,2]
     winning_side = -1
     convoy.clear()
+    command_points = 3
+    situation_reports.clear()
+    situation_keys.clear()
+    situation_serial = 0
+    tactical_delivered = 0
+    tactical_refused = 0
+    last_situation_scan = -5.0
     rng.seed = 20261124
     next_id = 0
     battle_time = 0.0
@@ -129,7 +145,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
         "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
         "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
-        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0
+        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0
     }
     _set_general_profile(unit)
     if unit_type == "기병":
@@ -234,6 +250,8 @@ func step(dt: float) -> void:
     _update_battle_condition(dt)
     _combat(dt)
     _update_outposts(dt)
+    if tactical_enabled:
+        _scan_situations()
     _check_victory()
     _record_presentation()
 
@@ -241,6 +259,8 @@ func _on_new_turn() -> void:
     _log("작전 %d턴 진입" % turn)
     if turn == 6:
         _log("전령 명령 활성화 — 전달 시간은 책사 위치에서 계산")
+    if tactical_enabled and turn >= 6:
+        command_points = mini(4,command_points+1)
 
 func _move_commanders(dt: float) -> void:
     for c in commanders:
@@ -266,6 +286,10 @@ func _update_couriers(dt: float) -> void:
             continue
         if (letter["pos"] as Vector2).distance_to(target_pos) < 16.0:
             delivered_orders += 1
+            if letter.has("tactical_order"):
+                _deliver_tactical(target,letter)
+                couriers.remove_at(i)
+                continue
             if bool(letter.get("appoint_deputy", false)):
                 target["active_deputy"] = true
                 target["ai_cooldown"] = 0.0
@@ -630,6 +654,11 @@ func _decide(unit: Dictionary) -> void:
     action = str(planned["action"])
     reason = str(planned["reason"])
     goal = planned["goal"]
+    if tactical_enabled:
+        var response: Dictionary = _tactical_decision(unit,nearest,action,reason,goal,enemy_distance,relative_strength)
+        action = response["action"]
+        reason = response["reason"]
+        goal = response["goal"]
     if action != str(unit["last_timeline_action"]):
         unit["last_timeline_action"] = action
         if int(unit["side"]) == 0 and timeline.size() < 1200:
@@ -638,9 +667,9 @@ func _decide(unit: Dictionary) -> void:
     unit["reason"] = reason
     unit["goal"] = _field_point(goal)
     var wanted: String = "횡대"
-    if action in ["후퇴", "패주", "기지 습격", "돌파", "반격", "재집결", "보급 복귀", "탄약 보충"]:
+    if action in ["후퇴", "패주", "기지 습격", "돌파", "반격", "재집결", "보급 복귀", "탄약 보충", "전술 철수"]:
         wanted = "종대"
-    elif action in ["방어", "보급 호위", "측면 방어", "거점 방어", "방어선 사수"]:
+    elif action in ["방어", "보급 호위", "측면 방어", "거점 방어", "방어선 사수", "긴급 방어"]:
         wanted = "방진"
     elif str(unit["type"]) == "기병":
         wanted = "종대"
@@ -692,7 +721,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var pos: Vector2 = unit["pos"]
     var goal: Vector2 = unit["goal"]
     var enemy: Dictionary = _nearest_visible_enemy(unit)
-    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수"]:
+    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
@@ -1259,7 +1288,7 @@ func _update_battle_condition(dt: float) -> void:
         var p: Vector2 = unit["pos"]
         var enemy: Dictionary = _nearest_visible_enemy(unit)
         var safe: bool = enemy.is_empty() or p.distance_to(enemy["pos"]) > 110.0
-        var recovery: bool = str(unit["action"]) in ["재집결", "휴식", "방어", "거점 방어", "거리 유지"]
+        var recovery: bool = str(unit["action"]) in ["재집결", "휴식", "방어", "거점 방어", "거리 유지", "긴급 방어", "전술 재집결"]
         if safe and recovery:
             unit["fatigue"] = maxf(0.0, float(unit["fatigue"]) - dt * 2.1)
             unit["cohesion"] = minf(100.0, float(unit["cohesion"]) + dt * (2.6 if bool(unit["supplied"]) else 1.1) * (0.55 + _effective_stat(unit, "leadership") * 0.006))
@@ -1914,3 +1943,149 @@ func order_retreat() -> bool:
         return false
     _finish("책사 철수 결정 — 패배")
     return true
+
+
+# Reports describe allied observations, arrive after a physical-distance delay,
+# and expire. A report never grants live information about unseen enemies.
+func _scan_situations() -> void:
+    if battle_time-last_situation_scan < 2.0:
+        return
+    last_situation_scan = battle_time
+    for report in situation_reports:
+        if report["status"] == "대기" and battle_time >= float(report["arrive"]):
+            report["status"] = "미대응"
+            _log("긴급 보고: "+str(report["title"]))
+        if report["status"] == "미대응" and battle_time >= float(report["expires"]):
+            report["status"] = "시간 경과"
+    for unit in units:
+        if int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0 or bool(unit["reserve"]):
+            continue
+        var kind: String = ""
+        if bool(unit["surrounded"]):
+            kind = "포위 위험"
+        elif float(unit["morale"]) < 45.0 or float(unit["cohesion"]) < 42.0:
+            kind = "전열 붕괴 위험"
+        elif float(unit["rations"]) < 24.0:
+            kind = "군량 부족"
+        elif battle_time-float(unit["last_deviation"]) < 3.0:
+            kind = "명령 이탈"
+        elif float(unit["front_pressure"]) > 0.60:
+            kind = "전선 압박"
+        if kind == "":
+            continue
+        var key: String = "%d:%s" % [unit["id"],kind]
+        if battle_time-float(situation_keys.get(key,-100.0)) < 30.0:
+            continue
+        situation_keys[key] = battle_time
+        situation_serial += 1
+        var delay: float = 2.0+(unit["pos"] as Vector2).distance_to(commanders[0]["pos"])/150.0
+        situation_reports.append({"id":situation_serial,"unit_id":unit["id"],"title":str(unit["name"])+" · "+kind,"kind":kind,"pos":unit["pos"],"arrive":battle_time+delay,"expires":battle_time+delay+26.0,"status":"대기"})
+        if situation_reports.size() > 40:
+            situation_reports.pop_front()
+
+func open_situations() -> Array[Dictionary]:
+    var result_reports: Array[Dictionary] = []
+    for report in situation_reports:
+        if report["status"] == "미대응":
+            result_reports.append(report)
+    return result_reports
+
+func respond_situation(report_id: int, response: String) -> bool:
+    if not tactical_enabled or not started or finished:
+        return false
+    for report in situation_reports:
+        if int(report["id"]) != report_id or report["status"] != "미대응":
+            continue
+        var id: int = int(report["unit_id"])
+        var target: Dictionary = find_unit(id)
+        if target.is_empty() or float(target["troops"]) <= 0.0:
+            report["status"] = "부대 상실"
+            return false
+        if response == "현장 판단":
+            report["status"] = "재량 유지"
+            _log(str(target["name"])+": 보고 확인, 기존 작전 유지")
+            return true
+        if response == "지원":
+            var best: Dictionary = {}
+            var best_score: float = -INF
+            for ally in units:
+                if int(ally["side"]) != 0 or int(ally["id"]) == id or bool(ally["routed"]) or float(ally["troops"]) < 24.0:
+                    continue
+                var score: float = float(ally["morale"])-(ally["pos"] as Vector2).distance_to(target["pos"])*0.1
+                if score > best_score:
+                    best = ally
+                    best_score = score
+            if best.is_empty() or not request_tactical(int(best["id"]),"지원",id):
+                return false
+        elif not request_tactical(id,response):
+            return false
+        report["status"] = "전령 파견"
+        return true
+    return false
+
+func request_tactical(unit_id: int, order: String, support_id: int = -1) -> bool:
+    if not tactical_enabled or not started or finished or turn < 6 or command_points <= 0:
+        return false
+    if order not in ["사수","재집결","철수","지원"]:
+        return false
+    var unit: Dictionary = find_unit(unit_id)
+    if unit.is_empty() or int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0:
+        return false
+    if order == "지원":
+        var ally: Dictionary = find_unit(support_id)
+        if ally.is_empty() or int(ally["side"]) != 0 or support_id == unit_id:
+            return false
+    for letter in couriers:
+        if int(letter["unit_id"]) == unit_id:
+            return false
+    command_points -= 1
+    couriers.append({"pos":commanders[0]["pos"],"unit_id":unit_id,"side":0,"mission":unit["mission"],"policy":unit["policy"],"tactical_order":order,"support_id":support_id})
+    _log("긴급 전령 → %s / %s" % [unit["name"],order])
+    return true
+
+func _deliver_tactical(unit: Dictionary, letter: Dictionary) -> void:
+    var order: String = letter["tactical_order"]
+    # Independent aggressive commanders sometimes reject a withdrawal while
+    # they have a viable advantage; strict orders and high loyalty take priority.
+    var enemy: Dictionary = _nearest_visible_enemy(unit)
+    var advantage: bool = not enemy.is_empty() and float(unit["troops"]) > float(enemy["troops"])*1.15
+    if order == "철수" and str(unit["personality"]) == "공격" and str(unit["obedience"]) != "명령 엄수" and float(unit["loyalty"]) < 60.0 and advantage and float(unit["morale"]) > 60.0:
+        tactical_refused += 1
+        _log(str(unit["name"])+": 우세 판단으로 철수 명령 거부")
+        return
+    tactical_delivered += 1
+    unit["tactical_order"] = order
+    unit["tactical_target"] = int(letter.get("support_id",-1))
+    unit["tactical_anchor"] = unit["pos"]
+    unit["tactical_until"] = battle_time+24.0
+    unit["ai_cooldown"] = 0.0
+    _log(str(unit["name"])+": 긴급 "+order+" 명령 도착")
+
+func _tactical_decision(unit: Dictionary, enemy: Dictionary, action: String, reason: String, goal: Vector2, distance: float, strength: float) -> Dictionary:
+    var result_order: Dictionary = {"action":action,"reason":reason,"goal":goal}
+    if bool(unit["routed"]) or float(unit["morale"]) < 19.0 or float(unit["troops"]) < 24.0:
+        return result_order
+    if battle_time < float(unit["tactical_until"]):
+        var order: String = unit["tactical_order"]
+        if order == "철수":
+            return {"action":"전술 철수","reason":"전령 명령: 생존 병력 보존","goal":_home_point(int(unit["side"]))}
+        if order == "재집결":
+            return {"action":"전술 재집결","reason":"전령 명령: 아군 후방에서 재정비","goal":_rally_point(unit)}
+        if order == "사수":
+            return {"action":"긴급 방어","reason":"전령 명령: 현재 위치 사수","goal":unit["tactical_anchor"]}
+        if order == "지원":
+            var ally: Dictionary = find_unit(int(unit["tactical_target"]))
+            if not ally.is_empty() and float(ally["troops"]) > 0.0:
+                return {"action":"긴급 지원","reason":"전령 명령: "+str(ally["name"])+" 지원","goal":(ally["pos"] as Vector2)+Vector2(-32,0)}
+    # Autonomous initiative: an aggressive low-loyalty commander may exploit
+    # an observed weak enemy, while strict or cautious commanders retain orders.
+    if enemy.is_empty() or distance > 180.0 or strength < 1.30 or float(unit["morale"]) < 65.0 or str(unit["obedience"]) == "명령 엄수" or action in ["후퇴","패주","재집결","휴식","거리 유지","측면 방어","보급 호위","탄약 보충","보급 복귀"]:
+        return result_order
+    if str(unit["personality"]) == "공격" and float(unit["loyalty"]) < 65.0 and str(unit["mission"]) != "중앙 진격":
+        if battle_time >= float(unit["initiative_until"]):
+            unit["initiative_until"] = battle_time+12.0
+            unit["deviations"] = int(unit["deviations"])+1
+            unit["last_deviation"] = battle_time
+            _log(str(unit["name"])+": 관측된 약한 적을 독자 추격")
+        return {"action":"돌파","reason":"독자 판단: 약한 적을 추격","goal":enemy["pos"]}
+    return result_order
