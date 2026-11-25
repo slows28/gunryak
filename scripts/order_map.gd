@@ -9,6 +9,7 @@ const RED=Color("#934e3e")
 const MAP=Rect2(228,90,800,582)
 const ART=preload("res://assets/art/fieldcraft.svg")
 const PARCHMENT=preload("res://assets/art/war_parchment.svg")
+const COMMAND_SKIN=preload("res://assets/art/command_skin.svg")
 const PORTRAITS=preload("res://assets/art/painted_atlas.webp")
 var game: Control
 var sim
@@ -274,7 +275,7 @@ func _gui_input(event:InputEvent)->void:
 
 func _draw()->void:
     draw_rect(Rect2(0,0,1280,800),Color("#171915"))
-    draw_rect(Rect2(0,0,1280,68),Color("#25231c"))
+    draw_texture_rect_region(COMMAND_SKIN,Rect2(0,0,1280,68),Rect2(0,0,256,256))
     for i in range(6):
         draw_line(Vector2(0,65+i),Vector2(1280,65+i),Color(0.8,0.62,0.32,0.16-float(i)*0.018),1.0)
     draw_line(Vector2(12,69),Vector2(1268,69),GOLD,1.0)
@@ -293,15 +294,16 @@ func _draw()->void:
         draw_line(Vector2(fold_x,MAP.position.y),Vector2(fold_x+1,MAP.end.y),Color(0.38,0.27,0.14,0.045),1.0)
     var rng:=RandomNumberGenerator.new()
     rng.seed=41+sim.scenario_id
-    for i in range(100):
+    for i in range(260):
         var p:Vector2=MAP.position+Vector2(rng.randf()*MAP.size.x,rng.randf()*MAP.size.y)
         draw_line(p,p+Vector2(rng.randf_range(1,5),rng.randf_range(-1,1)),Color(0.30,0.22,0.10,rng.randf_range(0.025,0.11)),1)
     for lane in range(3):
         var line:=PackedVector2Array()
         for x in range(0,int(sim.field_size.x)+1,35): line.append(_point(Vector2(x,sim.road_y(float(x),lane))))
-        draw_polyline(line,Color("#8e7654"),4.8,true)
+        draw_polyline(line,Color("#816746"),4.8,true)
         draw_polyline(line,Color("#e8d6ab"),2.6,true)
-        draw_polyline(line,Color("#ac9165"),0.8,true)
+        for j in range(0,line.size()-1,2):
+            draw_line(line[j],line[j+1],Color("#a48758"),0.9,true)
     var river:=PackedVector2Array()
     for y in range(0,int(sim.field_size.y)+1,16): river.append(_point(Vector2(sim.river_x(float(y)),float(y))))
     draw_polyline(river,Color("#596d63"),19,true)
@@ -315,8 +317,11 @@ func _draw()->void:
         draw_polyline(bank_line,Color("#4b675c"),0.85,true)
     for y in [390.0,850.0,1300.0]:
         var p:Vector2=_point(Vector2(sim.river_x(y),y))
-        draw_rect(Rect2(p-Vector2(13,8),Vector2(26,16)),Color("#a88a57"))
-        for x in range(-12,13,4): draw_line(p+Vector2(x,-8),p+Vector2(x,8),INK,0.8)
+        draw_rect(Rect2(p-Vector2(15,9),Vector2(30,18)),Color("#826b47"))
+        draw_rect(Rect2(p-Vector2(13,7),Vector2(26,14)),Color("#c4a573"))
+        for x in range(-12,13,4): draw_line(p+Vector2(x,-7),p+Vector2(x,7),INK,0.8)
+        draw_line(p+Vector2(-15,-9),p+Vector2(15,-9),INK,1.2)
+        draw_line(p+Vector2(-15,9),p+Vector2(15,9),INK,1.2)
     for forest in sim.forests:
         var area:Rect2=forest
         var center:Vector2=_point(area.get_center())
@@ -327,15 +332,15 @@ func _draw()->void:
             var rough:float=0.76+rng.randf()*0.24
             outline.append(center+Vector2(cos(angle)*radius.x,sin(angle)*radius.y)*rough)
         draw_colored_polygon(outline,Color(0.34,0.38,0.20,0.15))
-        for i in range(5):
+        for i in range(8):
             var p:Vector2=_point(area.position+Vector2(rng.randf()*area.size.x,rng.randf()*area.size.y))
-            var h:float=rng.randf_range(37,70)
+            var h:float=rng.randf_range(29,55)
             _art(1,Rect2(p-Vector2(h*0.5,h*0.65),Vector2(h,h)),Color(1,1,1,0.92))
     var hill:Rect2=sim.hill
-    for ring in range(3):
+    for ring in range(6):
         var contour:=PackedVector2Array()
         var hcenter:Vector2=_point(hill.get_center())
-        var hsize:Vector2=hill.size/sim.field_size*MAP.size*(0.24+ring*0.12)
+        var hsize:Vector2=hill.size/sim.field_size*MAP.size*(0.15+ring*0.075)
         for j in range(25):
             var angle:float=TAU*float(j)/24.0
             contour.append(hcenter+Vector2(cos(angle)*hsize.x,sin(angle)*hsize.y)*(0.86+0.13*sin(angle*3.0)))
@@ -359,14 +364,22 @@ func _draw()->void:
         if float(u["troops"])<=0: continue
         if int(u["side"])!=0 and game.fog_enabled and not sim.player_can_see(u["pos"]): continue
         var p:Vector2=_point(u["pos"])
-        if int(u["side"])==0 and bool(u.get("has_destination",false)):
-            _arrow(p,_point(u["order_destination"]),BLUE,2.0)
+        if int(u["side"])==0 and bool(u.get("has_destination",false)) and int(u["id"])!=selected_id:
+            _arrow(p,_point(u["order_destination"]),Color(BLUE,0.52),1.5)
         if int(u["side"])==0:
             var partner:Dictionary=sim.find_unit(int(u.get("assigned_link",-1)))
-            if not partner.is_empty(): _dashed(p,_point(partner["pos"]),Color("#79658d"))
+            if not partner.is_empty() and int(u["id"])!=selected_id: _dashed(p,_point(partner["pos"]),Color(0.40,0.31,0.49,0.42))
+    var selected:Dictionary=sim.find_unit(selected_id)
+    if not selected.is_empty() and partner_choice.selected>=0:
+        var linked:Dictionary=sim.find_unit(int(partner_choice.get_item_metadata(partner_choice.selected)))
+        if not linked.is_empty(): _dashed(_point(selected["pos"]),_point(linked["pos"]),Color("#73537c"))
     if has_destination:
         var u:Dictionary=sim.find_unit(selected_id)
-        if not u.is_empty(): _arrow(_point(u["pos"]),_point(destination),Color("#ab7625"),3.0)
+        if not u.is_empty():
+            var origin:Vector2=_point(u["pos"])
+            var target:Vector2=_point(destination)
+            _arrow(origin,target,Color("#e9d6a5"),5.5)
+            _arrow(origin,target,Color("#95651e"),2.8)
         draw_circle(_point(destination),12,Color("#ab7625"),false,2,true)
         draw_circle(_point(destination),3,Color("#ab7625"))
     for u in sim.units:
@@ -376,8 +389,14 @@ func _draw()->void:
     if dragging and drag_id>=0 and MAP.has_point(drag_position):
         var u:Dictionary=sim.find_unit(drag_id)
         if not u.is_empty(): _piece(u,drag_position,true)
-    _ink("北",MAP.position+Vector2(775,30),17,INK)
-    draw_line(MAP.position+Vector2(783,40),MAP.position+Vector2(783,64),INK,2)
+    var compass:Vector2=MAP.end-Vector2(39,MAP.size.y-46)
+    draw_arc(compass,20,0,TAU,40,Color("#6f5736"),1.4,true)
+    draw_colored_polygon(PackedVector2Array([compass+Vector2(0,-17),compass+Vector2(5,7),compass,compass+Vector2(-5,7)]),INK)
+    _ink("北",compass+Vector2(-7,-23),13,INK)
+    var scale_origin:Vector2=MAP.end-Vector2(142,20)
+    draw_line(scale_origin,scale_origin+Vector2(94,0),INK,1.4)
+    for dx in [0,47,94]: draw_line(scale_origin+Vector2(dx,-4),scale_origin+Vector2(dx,4),INK,1.2)
+    _ink("거리 눈금",scale_origin+Vector2(21,-8),10,INK)
     _plate("한중 방면  /  군사지도",MAP.position+Vector2(99,20),14,Color("#eddbad"))
     _ink("북로",_point(Vector2(sim.field_size.x*0.65,sim.road_y(sim.field_size.x*0.65,0)) )+Vector2(0,-12),12,INK)
     _ink("남로",_point(Vector2(sim.field_size.x*0.65,sim.road_y(sim.field_size.x*0.65,2)) )+Vector2(0,-12),12,INK)
@@ -409,7 +428,9 @@ func _piece(u:Dictionary,p:Vector2,selected:bool)->void:
     if selected:
         draw_circle(p,19,Color(0.98,0.75,0.22,0.18))
         draw_arc(p,19,0,TAU,40,Color("#edc56b"),2.2,true)
-    _art(3+int(u["side"]),Rect2(p-Vector2(25,43),Vector2(50,50)))
+    draw_texture_rect_region(COMMAND_SKIN,Rect2(p-Vector2(25,37),Vector2(50,50)),Rect2(512+int(u["side"])*128,0,128,128))
+    var kind:String="步" if str(u["type"])=="보병" else ("弓" if str(u["type"])=="궁병" else "騎")
+    _ink(kind,p+Vector2(-6,-9),14,Color("#f1ddb1"))
     _plate(str(u["name"]),p+Vector2(0,12),13,Color("#f0ce84") if selected else Color("#ded2b0"))
 
 func _art(tile:int,rect:Rect2,tint:Color=Color.WHITE)->void:
@@ -443,7 +464,8 @@ func _panel_style(bg:String,border:String)->StyleBoxFlat:
     return style
 
 func _frame(rect:Rect2)->void:
-    draw_rect(rect,Color("#22231e"))
+    draw_texture_rect_region(COMMAND_SKIN,rect,Rect2(0,0,256,256))
+    draw_texture_rect_region(COMMAND_SKIN,Rect2(rect.position,Vector2(37,37)),Rect2(256,0,128,128),Color(1,1,1,0.68))
     draw_rect(rect,Color("#a38a53"),false,1.4)
     draw_rect(rect.grow(-4),Color("#594a30"),false,1.0)
     for corner in [rect.position,Vector2(rect.end.x,rect.position.y),rect.end,Vector2(rect.position.x,rect.end.y)]:
