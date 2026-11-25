@@ -102,6 +102,23 @@ func _capture() -> void:
     if not _save_frame("battle_focus.png"):
         quit(1)
         return
+    # Same simulation tick, same camera: compare quiet and detailed presentation.
+    var frozen_time: float = game.sim.battle_time
+    game.call("_toggle_map_detail")
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not game.detailed_map or game.sim.battle_time!=frozen_time:
+        push_error("VISUAL_CAPTURE_FAIL: overlay toggle changed simulation state")
+        quit(1)
+        return
+    if not _save_frame("battle_focus_detail.png"):
+        quit(1)
+        return
+    game.call("_toggle_map_detail")
+    if game.detailed_map:
+        push_error("VISUAL_CAPTURE_FAIL: overlay does not return to clean mode")
+        quit(1)
+        return
     game.call("_reset_camera")
     for i in range(320):
         game.call("_process", 0.1)
