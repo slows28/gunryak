@@ -150,6 +150,41 @@ func _capture() -> void:
     if not _save_frame("battle_result.png"):
         quit(1)
         return
+    # Start a second actual scenario to capture convoy movement and protection.
+    game.queue_free()
+    await process_frame
+    game=MAIN_SCENE.instantiate()
+    root.add_child(game)
+    await process_frame
+    game.call("_leave_title")
+    game.call("_change_scenario",3)
+    if game.sim.convoy.is_empty():
+        push_error("VISUAL_CAPTURE_FAIL: escort scenario unavailable")
+        quit(1)
+        return
+    game.set_process(false)
+    game.call("_start")
+    game.game_speed=4.0
+    for i in range(150):
+        if game.sim.finished: break
+        game.call("_process",0.1)
+    game.camera_center=game.sim.convoy["pos"]
+    game.camera_zoom=1.0
+    game.call("_clamp_camera")
+    game.call("_refresh_hud")
+    game.map_layer.queue_redraw()
+    game.queue_redraw()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("escort_live.png"):
+        quit(1)
+        return
+    game.call("_reset_camera")
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("escort_overview.png"):
+        quit(1)
+        return
     print("GUNRYAK_VISUAL_CAPTURE_PASSED")
     quit(0)
 
