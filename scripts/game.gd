@@ -2,6 +2,7 @@ extends Control
 ## 2D tactical screen. Simulation is entirely separate in war_sim.gd.
 const WarSim = preload("res://scripts/war_sim.gd")
 const BattleAudio = preload("res://scripts/battle_audio.gd")
+const FrontView=preload("res://scripts/front_view.gd")
 const TerrainArt = preload("res://scripts/terrain_art.gd")
 const Campaign = preload("res://scripts/campaign.gd")
 const CampaignView = preload("res://scripts/campaign_view.gd")
@@ -80,6 +81,12 @@ var mind_report: RichTextLabel
 var mind_button: Button
 var thought_feed: Label
 var general_cards: Array[Button]=[]
+var sector_cards: Array[Button]=[]
+var sector_snapshot: Array[Dictionary]=[]
+var sector_selection: int=-1
+var contact_cache: Dictionary={}
+var contact_cache_step: int=-1
+var sector_overlay: Control
 var feed_toggle: Button
 var show_general_feed: bool=true
 var battle_samples: Dictionary = {}
@@ -311,10 +318,14 @@ func _build_interface() -> void:
     for i in range(6):
         var card: Button=_button("",Vector2(151+(i%3)*196,690+floori(float(i)/3.0)*50),Vector2(190,47),_select_general_card.bind(i))
         card.add_theme_font_size_override("font_size",12)
+        card.expand_icon=true
+        card.add_theme_constant_override("icon_max_width",34)
+        card.add_theme_constant_override("h_separation",5)
         card.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
         card.alignment=HORIZONTAL_ALIGNMENT_LEFT
         general_cards.append(card)
     combat_brief.hide()
+    _build_sector_board()
     _button("도움말",Vector2(443,74),Vector2(73,26),_open_demo_help)
     _button("철수",Vector2(521,74),Vector2(60,26),_ask_retreat)
     situation_btn = _button("긴급 보고",Vector2(585,74),Vector2(75,26),func():
@@ -530,6 +541,9 @@ func _start() -> void:
     battle_samples.clear()
     recent_losses.clear()
     previous_centers.clear()
+    contact_cache.clear()
+    contact_cache_step=-1
+    sector_selection=-1
     sample_time=-100.0
     _show_friendly_roster()
     map_mode = "선택"
@@ -566,6 +580,9 @@ func _reset() -> void:
     battle_samples.clear()
     recent_losses.clear()
     previous_centers.clear()
+    contact_cache.clear()
+    contact_cache_step=-1
+    sector_selection=-1
     sample_time=-100.0
     _show_friendly_roster()
     _rebuild_terrain()
@@ -735,6 +752,7 @@ func _refresh_hud() -> void:
     if is_instance_valid(combat_brief): combat_brief.text=_battle_brief()
     if is_instance_valid(thought_feed): thought_feed.text=_latest_general_reports()
     _refresh_general_cards()
+    _refresh_sector_board()
     if is_instance_valid(mind_dialog) and mind_dialog.visible: _refresh_mind_report()
     var start_line: int = maxi(0, sim.events.size() - 3)
     var lines: String = ""
@@ -785,13 +803,61 @@ func _refresh_general_cards() -> void:
         var mood: String=str(mind.get("mood","준비"))
         var reason: String=str(mind.get("reason","초기 배치"))
         var brief: String=reason if reason.length()<=14 else reason.substr(0,13)+"…"
-        card.text="%s · %s · %s\n%s" % [str(u["name"]),mood,_field_action(u),brief]
-        card.tooltip_text="판단: "+reason+"\n관측: "+str(mind.get("observed",""))+"\n우려: "+str(mind.get("concern",""))+"\n최근 명령: "+str(mind.get("last_order",""))
+        card.text="%s · %s\n%s" % [str(u["name"]),_field_action(u),brief]
+        if card.icon==null or str(card.get_meta("general_name",""))!=str(u["name"]):
+            card.icon=_commander_icon(str(u["name"]),0)
+            card.set_meta("general_name",str(u["name"]))
+        card.tooltip_text="기분: "+mood+"\n판단: "+reason+"\n관측: "+str(mind.get("observed",""))+"\n우려: "+str(mind.get("concern",""))+"\n최근 명령: "+str(mind.get("last_order",""))
         card.add_theme_color_override("font_color",_mood_color(mood) if mood not in ["침착","준비","전투 준비"] else COL_TEXT)
         card.add_theme_color_override("font_hover_color",COL_GOLD)
         card.modulate=Color.WHITE if ids[i]==selected_id and not observing_enemy else Color(0.88,0.91,0.89)
         if ids[i]==selected_id and not observing_enemy:
             card.add_theme_color_override("font_color",COL_GOLD)
+
+# Three live fronts, persistent and clickable. Display counts are actual current
+# manpower in each geographical sector, never invented territorial control.
+func _build_sector_board() -> void:
+    for i in range(3):
+        var card: Button=_button("",MAP_TOP_LEFT+Vector2(10+i*218,9),Vector2(208,48),_focus_sector.bind(i))
+        card.add_theme_font_size_override("font_size",12)
+        card.alignment=HORIZONTAL_ALIGNMENT_LEFT
+        card.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+        var panel:=StyleBoxFlat.new()
+        panel.bg_color=Color(0.055,0.085,0.09,0.92)
+        panel.border_color=Color("#637b78")
+        panel.set_border_width_all(1)
+        panel.set_corner_radius_all(4)
+        panel.content_margin_left=10
+        panel.content_margin_right=8
+        card.add_theme_stylebox_override("normal",panel)
+        var hover: StyleBoxFlat=panel.duplicate()
+        hover.bg_color=Color("#24383a")
+        hover.border_color=COL_GOLD
+        card.add_theme_stylebox_override("hover",hover)
+        sector_cards.append(card)
+
+func _refresh_sector_board() -> void:
+    if sector_cards.size()!=3: return
+    sector_snapshot=FrontView.summarize(sim,fog_enabled and not sim.finished)
+    for i in range(3):
+        var row: Dictionary=sector_snapshot[i]
+        var card: Button=sector_cards[i]
+        var enemy: String=_number_text(int(row["enemy"]))
+        if fog_enabled and not sim.finished: enemy="관측 "+enemy
+        card.text="%s  |  %s\n아 %s  /  적 %s" % [str(row["name"]),str(row["state"]),_number_text(int(row["own"])),enemy]
+        card.tooltip_text="해당 구역 병력 합계 · 영토 점유율 아님\n교전 중 공격 부대 %d개 / 아군 최대 전열 압박 %.0f%%\n클릭: 해당 전선으로 이동" % [int(row["contacts"]),float(row["pressure"])*100.0]
+        var color: Color=COL_RED if str(row["state"])=="아군 압박" else (COL_GOLD if int(row["contacts"])>0 else COL_TEXT)
+        card.add_theme_color_override("font_color",color)
+        card.modulate=Color.WHITE if sector_selection==i else Color(0.94,0.96,0.95)
+
+func _focus_sector(index: int) -> void:
+    if index<0 or index>=sector_snapshot.size(): return
+    sector_selection=index
+    camera_center=sector_snapshot[index]["focus"]
+    camera_zoom=1.20
+    _clamp_camera()
+    map_layer.queue_redraw()
+    queue_redraw()
 
 func _mood_color(mood: String) -> Color:
     if mood in ["공황","위기감","지휘 불능","압박"]: return COL_RED
@@ -1177,10 +1243,11 @@ func _draw_map(_canvas: Control) -> void:
     visible_units.sort_custom(func(a: Dictionary,b: Dictionary) -> bool: return (a["pos"] as Vector2).y < (b["pos"] as Vector2).y)
     var field_view := Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom).grow(125.0)
     _draw_march_dust(field_view)
+    _draw_contact_fronts(visible_units,field_view)
     if camera_zoom>=0.65:
         var soldiers: Array[Dictionary]=_visible_soldier_batch(visible_units,field_view)
         for item in soldiers:
-            _draw_soldier(item["point"],item["unit"],item["accent"],int(item["index"]))
+            _draw_soldier(item["point"],item["unit"],item["accent"],int(item["index"]),item["target"])
     for unit in visible_units:
         if field_view.has_point(unit["pos"]): _draw_unit(unit)
     _draw_combat_effects()
@@ -1200,26 +1267,85 @@ func _draw_map(_canvas: Control) -> void:
 
 # Merge both factions before sorting by feet position. A front rank can now
 # occlude a rear rank even when they belong to different armies.
+# Pressure lines are based on real current melee contact pairs. No overlay for
+# artillery-range arrows or invisible enemies; render behind soldiers.
+func _draw_contact_fronts(visible_units: Array[Dictionary],field_view: Rect2) -> void:
+    if not sim.started or sim.finished: return
+    var known: Dictionary={}
+    for u in visible_units: known[int(u["id"])]=u
+    var drawn: Dictionary={}
+    for u in visible_units:
+        var target: Dictionary=known.get(int(u.get("contact_target_id",-1)),{})
+        if target.is_empty() or str(u["type"])=="궁병" or str(target["type"])=="궁병": continue
+        var a: int=int(u["id"])
+        var b: int=int(target["id"])
+        var key: String="%d:%d" % [mini(a,b),maxi(a,b)]
+        if drawn.has(key): continue
+        drawn[key]=true
+        var center: Vector2=(u["pos"] as Vector2).lerp(target["pos"],0.5)
+        if not field_view.has_point(center): continue
+        var normal: Vector2=((target["pos"] as Vector2)-(u["pos"] as Vector2)).normalized()
+        if normal.length_squared()<0.1: continue
+        var lateral: Vector2=normal.orthogonal()
+        var pressure: float=float(u.get("front_pressure",0.0))-float(target.get("front_pressure",0.0))
+        var color: Color=COL_GOLD
+        if absf(pressure)>0.12:
+            var winning: int=int(target["side"]) if pressure>0.0 else int(u["side"])
+            color=COL_BLUE if winning==0 else COL_RED
+        var span: float=clampf(float(u.get("contact_troops",0))*3.0,16.0,60.0)
+        for i in range(5):
+            var p: Vector2=center+lateral*(float(i)-2.0)*span/2.0
+            if sim.terrain_at(p)=="하천": continue
+            map_layer.draw_line(p-lateral*span*0.16,p+lateral*span*0.16,Color(color,0.48),2.0/camera_zoom,true)
+            if absf(pressure)>0.12:
+                var d: Vector2=-normal if pressure>0.0 else normal
+                map_layer.draw_line(p-d*5,p+d*7,Color(color,0.64),1.6/camera_zoom,true)
+        if camera_zoom>=0.85 and detailed_map:
+            _map_plate("전열 압박" if absf(pressure)>0.12 else "접전",center+Vector2(0,20),color,11)
+
 func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) -> Array[Dictionary]:
     var batch: Array[Dictionary]=[]
+    if contact_cache_step!=sim.step_count:
+        contact_cache.clear()
+        contact_cache_step=sim.step_count
     for unit in visible_units:
         if not field_view.has_point(unit["pos"]): continue
         var accent: Color=COL_BLUE if int(unit["side"])==0 else COL_RED
         if bool(unit["routed"]): accent=Color(accent,0.48)
         elif float(unit["ambush_ready"])>=3.0: accent=Color(accent,0.64)
         var slots: Array[Vector2]=_visual_slots(unit)
+        var id: int=int(unit["id"])
+        var target_id: int=int(unit.get("contact_target_id",-1))
+        var target: Dictionary=sim.find_unit(target_id)
+        var can_contact: bool=sim.started and not sim.finished and not bool(unit["routed"]) and target_id>=0 and not target.is_empty() and _visible_unit(target)
+        var targets: Array[Vector2]=[]
+        if can_contact:
+            if not contact_cache.has(id):
+                var anchors: Array[Vector2]=sim.formation_slots(target)
+                var aim: Array[Vector2]=[]
+                var reach: float=173.0 if str(unit["type"])=="궁병" else 34.0
+                for point in slots: aim.append(FrontView.local_target(point,anchors,reach))
+                contact_cache[id]=aim
+            targets=contact_cache[id]
         for index in range(slots.size()):
             var point: Vector2=slots[index]
             var center: Vector2=unit["pos"]
-            if sim.started and not sim.finished and not sim.paused and previous_centers.has(int(unit["id"])):
-                var previous: Vector2=previous_centers[int(unit["id"])]
+            var local_target: Vector2=targets[index] if index<targets.size() else Vector2.INF
+            if sim.started and not sim.finished and not sim.paused and previous_centers.has(id):
+                var previous: Vector2=previous_centers[id]
                 point+=previous.lerp(center,clampf(step_buffer/0.1,0.0,1.0))-center
             var scatter: float=(100.0-float(unit["cohesion"]))*0.045
+            if bool(unit["routed"]): scatter+=6.5
             point+=Vector2(sin(float(index)*7.3),cos(float(index)*5.7))*scatter
+            var event_age: float=render_clock-float(unit.get("last_visual",-100.0))-float(index%5)*0.026
+            if local_target!=Vector2.INF and event_age>=0.0 and event_age<=0.30:
+                point=FrontView.advance_toward_contact(point,local_target,sin(clampf(event_age/0.30,0.0,1.0)*PI),str(unit["type"]))
             if sim.wide_field and sim.terrain_at(point)=="하천": point=slots[index]
-            batch.append({"point":point,"unit":unit,"accent":accent,"index":index})
+            point=Vector2(clampf(point.x,0.0,sim.field_size.x),clampf(point.y,0.0,sim.field_size.y))
+            batch.append({"point":point,"unit":unit,"accent":accent,"index":index,"target":local_target})
     batch.sort_custom(func(a:Dictionary,b:Dictionary)->bool: return (a["point"] as Vector2).y<(b["point"] as Vector2).y)
     return batch
+
 
 func _draw_unit(unit: Dictionary) -> void:
     var side: int = int(unit["side"])
@@ -1514,6 +1640,9 @@ func _change_scenario(index: int) -> void:
         battle_samples.clear()
         recent_losses.clear()
         previous_centers.clear()
+        contact_cache.clear()
+        contact_cache_step=-1
+        sector_selection=-1
         sample_time=-100.0
         _show_friendly_roster()
         _rebuild_terrain()
@@ -1795,7 +1924,7 @@ func _soldier_pose(unit: Dictionary, index: int, now: float) -> int:
     var kind: String = str(unit["type"])
     var moving: bool = float(unit.get("motion_speed",0.0))>2.0
     var routed: bool = bool(unit.get("routed",false))
-    if not routed and now-float(unit.get("last_hit",-100.0))<0.09 and index%7==0:
+    if not routed and now>=float(unit.get("last_hit",-100.0)) and now-float(unit.get("last_hit",-100.0))<0.09 and index%7==0:
         return 5
     var age: float = now-float(unit.get("last_visual",-100.0))
     var interval: float = 0.9 if kind=="궁병" else 0.55
@@ -1813,17 +1942,17 @@ func _soldier_pose(unit: Dictionary, index: int, now: float) -> int:
 func _soldier_motion_region(base: Rect2,pose: int) -> Rect2:
     return Rect2(base.position+Vector2(pose*288,0),base.size)
 
-func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> void:
+func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, target: Vector2=Vector2.INF) -> void:
     var direction: Vector2 = unit["facing"]
+    if target!=Vector2.INF and not bool(unit["routed"]) and p.distance_squared_to(target)>0.1:
+        direction=(target-p).normalized()
     var moving: bool = float(unit.get("motion_speed",0.0)) > 2.0 and sim.started and not sim.finished
     var kind: int = 1 if str(unit["type"])=="궁병" else (2 if str(unit["type"])=="기병" else 0)
     # The atlas uses a shared foot anchor. Taller silhouettes, compact lateral footprint.
-    var extent: Vector2 = Vector2(17,22) if kind==2 else Vector2(13,18)
+    var extent: Vector2 = Vector2(17,22) if kind==2 else Vector2(12,17)
     if not sim.six_armies: extent*=1.25
     # Front and rear ranks no longer perform the same thrust on every tick.
-    var forward: Vector2=direction.normalized()
-    var depth: float=(p-(unit["pos"] as Vector2)).dot(forward)
-    var visual_contact: bool=kind==1 or depth>=-5.0
+    var visual_contact: bool=target!=Vector2.INF
     var delay: float=float(index%5)*0.026
     var pose: int = _soldier_pose(unit,index,render_clock-delay)
     if not visual_contact and pose in [2,3,4]: pose=-1
@@ -1842,7 +1971,9 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> v
     # Shadow is separated from the art, so feet stay grounded and faction colors stay clear.
     map_layer.draw_set_transform(map_offset+(p+Vector2(2.5,1.0))*camera_zoom,0.0,Vector2(1.0,0.45)*camera_zoom)
     map_layer.draw_circle(Vector2.ZERO,7.0 if kind==2 else 4.8,Color(0.04,0.05,0.035,0.30))
-    var region: Rect2 = _soldier_region(unit)
+    var column: int=0
+    if absf(direction.y)>absf(direction.x)*1.10: column=1 if direction.y>0.0 else 2
+    var region: Rect2=Rect2(column*96,(int(unit["side"])*3+kind)*96,96,96)
     var mirror: float = -1.0 if region.position.x==0.0 and direction.x<0.0 else 1.0
     map_layer.draw_set_transform(map_offset+p*camera_zoom,0.0,Vector2(mirror,1.0)*camera_zoom)
     var art: Texture2D = SOLDIER_MOTION if pose>=0 else SOLDIER_ART
@@ -2289,6 +2420,9 @@ func _begin_campaign() -> void:
     if is_instance_valid(order_view): order_view.hide()
     campaign.reset()
     campaign_active = true
+    contact_cache.clear()
+    contact_cache_step=-1
+    sector_selection=-1
     battle_recorded = false
     title_screen.hide()
     strategy_view.show()
@@ -2593,13 +2727,7 @@ func _visual_slots(unit: Dictionary) -> Array[Vector2]:
     if sim.six_armies:
         # Visual detail uses the same formation geometry; combat still uses authoritative slots.
         var count: int=clampi(ceili(float(unit["troops"])/65.0),1,72)
-        var spacing: float=8.8 if str(unit["type"])=="기병" else 8.0
-        var points: Array[Vector2]=sim.army_slots(unit,count,spacing)
-        if str(unit["next_formation"])!="":
-            var target: Array[Vector2]=sim.army_slots(unit,count,spacing,str(unit["next_formation"]))
-            var blend: float=smoothstep(0.0,1.0,1.0-float(unit["form_remaining"])/maxf(0.1,float(unit["form_duration"])))
-            for j in range(points.size()): points[j]=sim._dry_formation_slot(unit["pos"],points[j].lerp(target[j],blend))
-        return points
+        return sim.representative_slots(unit,count)
     var result: Array[Vector2] = []
     var count: int = clampi(ceili(float(unit["troops"])/3.0),1,64)
     var front: Vector2 = unit["facing"]
