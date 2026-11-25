@@ -6,6 +6,7 @@ const Campaign = preload("res://scripts/campaign.gd")
 const CampaignView = preload("res://scripts/campaign_view.gd")
 const OrderMap = preload("res://scripts/order_map.gd")
 const PAINTED_ART = preload("res://assets/art/painted_atlas.webp")
+const SOLDIER_ART = preload("res://assets/art/soldier_sprites.svg")
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const PAINTED_FX = preload("res://assets/art/painted_fx.webp")
 const TITLE_ART = preload("res://assets/art/title_art.webp")
@@ -1292,46 +1293,39 @@ func _draw_terrain_texture() -> void:
     map_layer.draw_colored_polygon(PackedVector2Array([p+Vector2(0,-15),p+Vector2(-6,5),p,p+Vector2(6,5)]),COL_GOLD)
     _draw_string("N",p+Vector2(-4,14),10,COL_TEXT)
 
+# Atlas rows: faction × infantry, archer, cavalry. Columns: profile, front, rear.
+func _soldier_region(unit: Dictionary) -> Rect2:
+    var kind: int = 1 if str(unit["type"])=="궁병" else (2 if str(unit["type"])=="기병" else 0)
+    var direction: Vector2 = unit["facing"]
+    var column: int = 0
+    if absf(direction.y)>absf(direction.x)*1.10:
+        column=1 if direction.y>0.0 else 2
+    return Rect2(column*96,(int(unit["side"])*3+kind)*96,96,96)
+
 func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int) -> void:
     var direction: Vector2 = unit["facing"]
     var moving: bool = float(unit.get("motion_speed",0.0)) > 2.0 and sim.started and not sim.finished
-    var kind: int = 0
-    if str(unit["type"]) == "궁병":
-        kind = 1
-    elif str(unit["type"]) == "기병":
-        kind = 2
-    var tile: int = int(unit["side"])*3+kind
-    var frame: int = int(render_clock*7.0+float(index)*0.35)%4
-    if kind == 0 and int(unit["side"]) == 0:
-        var row: int = 0
-        if int(unit.get("contact_troops",0)) > 0:
-            row = 2
-        elif moving:
-            row = 1
-        elif str(unit["formation"]) == "방진":
-            row = 3
-            frame = frame%2
-        tile = 16+row*4+frame
-    var extent: float = (17.0 if kind==2 else 15.0) if sim.six_armies else (23.0 if kind == 2 else 19.0)
-    var phase: float = render_clock*(17.0 if kind == 2 else 10.0)+index*1.7
-    var attacking: bool = int(unit.get("contact_troops",0)) > 0 and not bool(unit["routed"])
-    var hit: bool = sim.battle_time-float(unit.get("last_hit",-100.0)) < 0.16 and index%4 == 0
+    var kind: int = 1 if str(unit["type"])=="궁병" else (2 if str(unit["type"])=="기병" else 0)
+    # The atlas uses a shared foot anchor. Taller silhouettes, compact lateral footprint.
+    var extent: Vector2 = Vector2(19,24) if kind==2 else Vector2(15,20)
+    if not sim.six_armies: extent*=1.25
+    var phase: float = render_clock*(17.0 if kind==2 else 10.0)+index*1.7
+    var attacking: bool = int(unit.get("contact_troops",0))>0 and not bool(unit["routed"])
+    var hit: bool = sim.battle_time-float(unit.get("last_hit",-100.0))<0.16 and index%4==0
     if moving:
-        p += direction*sin(phase)*(2.8 if kind == 2 else 1.5)
-        p.y += sin(phase)*1.5
-    if attacking:
-        p += direction*maxf(0.0,sin(phase))*4.0
-    if hit:
-        p -= direction*1.5
-    var shade: Color = Color(1.0,0.72,0.62,accent.a) if hit else Color(1,1,1,accent.a)
-    if str(unit["formation"]) == "방진" and not moving:
-        extent *= 0.93
-    map_layer.draw_set_transform(MAP_SIZE*0.5-camera_center*camera_zoom+(p+Vector2(3.5,3.5))*camera_zoom,0.0,Vector2(1.0,0.52)*camera_zoom)
-    map_layer.draw_circle(Vector2.ZERO,7.0 if kind==2 else 5.0,Color(0.03,0.04,0.03,0.37))
+        p+=direction*sin(phase)*(2.0 if kind==2 else 1.0)
+        p.y+=sin(phase)*0.9
+    if attacking: p+=direction*maxf(0.0,sin(phase))*2.5
+    if hit: p-=direction*1.0
+    var shade: Color = Color(1.0,0.78,0.70,accent.a) if hit else Color(1,1,1,accent.a)
     var map_offset: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
-    var mirror: float = -1.0 if direction.x < 0.0 else 1.0
+    # Shadow is separated from the art, so feet stay grounded and faction colors stay clear.
+    map_layer.draw_set_transform(map_offset+(p+Vector2(2.5,1.0))*camera_zoom,0.0,Vector2(1.0,0.45)*camera_zoom)
+    map_layer.draw_circle(Vector2.ZERO,7.0 if kind==2 else 4.8,Color(0.04,0.05,0.035,0.30))
+    var region: Rect2 = _soldier_region(unit)
+    var mirror: float = -1.0 if region.position.x==0.0 and direction.x<0.0 else 1.0
     map_layer.draw_set_transform(map_offset+p*camera_zoom,0.0,Vector2(mirror,1.0)*camera_zoom)
-    map_layer.draw_texture_rect_region(PAINTED_ART,Rect2(-extent*0.5,-extent*0.75,extent,extent),_art_region(tile),shade)
+    map_layer.draw_texture_rect_region(SOLDIER_ART,Rect2(Vector2(-extent.x*0.5,-extent.y*0.90),extent),region,shade)
     map_layer.draw_set_transform(map_offset,0.0,Vector2.ONE*camera_zoom)
 
 func _draw_combat_effects() -> void:
