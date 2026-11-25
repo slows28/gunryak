@@ -12,6 +12,7 @@ const SOLDIER_MOTION = preload("res://assets/art/soldier_motion.svg")
 const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
 const BRIDGE_HQ = preload("res://assets/art/bridge_hq.svg")
 const GENERAL_PORTRAITS=preload("res://assets/art/general_portraits.svg")
+const FIELD_SITES=preload("res://assets/art/field_sites.svg")
 const PORTRAIT_NAMES=["왕평","마속","위연","강유","관흥","장익","장합","위군 궁대","위군 기병","곽회","비요","왕쌍"]
 const COMMAND_SKIN = preload("res://assets/art/command_skin.svg")
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
@@ -1006,6 +1007,16 @@ func _toggle_map_detail() -> void:
     map_detail_button.text = "전술 표시 · 상세" if detailed_map else "전술 표시 · 간결"
     map_layer.queue_redraw()
 
+func _site_art_index(name: String) -> int:
+    if "고지" in name: return 3
+    if "감시" in name or "교량" in name: return 1
+    return 0
+
+func _draw_field_site(kind: int,p: Vector2,scale_factor: float) -> void:
+    # Visual footprint aligned with the old marker; no new collision geometry.
+    var area: Rect2=Rect2(p-Vector2(61,91)*scale_factor,Vector2(122,122)*scale_factor)
+    map_layer.draw_texture_rect_region(FIELD_SITES,area,Rect2(kind*384,0,384,384))
+
 func _draw_map(_canvas: Control) -> void:
     map_layer.draw_set_transform(MAP_SIZE * 0.5 - camera_center * camera_zoom, 0.0, Vector2.ONE * camera_zoom)
     var map_rect: Rect2 = Rect2(Vector2.ZERO,sim.field_size)
@@ -1043,7 +1054,8 @@ func _draw_map(_canvas: Control) -> void:
         if detailed_map or (known and int(site["challenger"])>=0):
             map_layer.draw_arc(site_pos, WarSim.OUTPOST_RADIUS, 0.0, TAU, 44, Color(color.r,color.g,color.b,0.20),1.2,true)
         var marker_scale: float = maxf(1.0,0.75/camera_zoom)
-        _scenery_tile(1,Rect2(site_pos-Vector2(54,86)*marker_scale,Vector2(108,108)*marker_scale))
+        var site_kind: int=_site_art_index(str(site["name"]))
+        _draw_field_site(site_kind,site_pos,marker_scale)
         _paint_tile(40 if owner < 0 else 38+owner,Rect2(site_pos+Vector2(10,-25)*marker_scale,Vector2(24,30)*marker_scale))
         map_layer.draw_circle(site_pos+Vector2(10,-6),3.5,color)
         var state: String = ("중립" if owner < 0 else ("아군" if owner == 0 else "적군")) if known else "미확인"
@@ -1062,7 +1074,7 @@ func _draw_map(_canvas: Control) -> void:
         var accent: Color = COL_BLUE if side == 0 else COL_RED
         if str(base["state"]) == "가동" and not sim.started:
             map_layer.draw_arc(p,WarSim.SUPPLY_RADIUS,0.0,TAU,56,Color(accent,0.18),1.0)
-        _scenery_tile(2,Rect2(p-Vector2(49,65),Vector2(98,98)))
+        _draw_field_site(2,p,0.96)
         _paint_tile(44,Rect2(p+Vector2(27,-3),Vector2(32,28)))
         map_layer.draw_circle(p+Vector2(15,-10),4.0,accent)
         _map_plate("군량 %d" % int(base.get("stock",100.0)),p+Vector2(0,32),accent,11)
@@ -1903,7 +1915,9 @@ func _draw_combat_effects() -> void:
                     map_layer.draw_line(contact+ray*0.6,contact+ray,Color(0.95,0.76,0.42,alpha*0.75),1.1,true)
             _:
                 var impact: Vector2=(p+target)*0.5
-                _paint_fx(4,impact,26.0,alpha*0.80)
+                _paint_fx(4,impact,26.0,alpha*0.65)
+                # Foot-level dust over actual contact; no new hit events.
+                _paint_fx(3,impact+Vector2(0,3),18.0+age*24.0,alpha*0.28)
                 for k in range(9):
                     var ray: Vector2=Vector2.from_angle(float(k)*TAU/9.0+float(fx["time"]))*(4.0+age*15.0)
                     map_layer.draw_line(impact+ray*0.45,impact+ray,Color(1.0,0.86,0.56,alpha*0.76),1.0,true)
