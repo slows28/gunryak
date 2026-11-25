@@ -18,6 +18,7 @@ const OFFICERS = [
     {"name":"장익","personality":"신중","stats":[82,72,73,78,90],"specialty":"방진"}
 ]
 var state: Dictionary = {}
+var save_path: String = SAVE_PATH
 func _init() -> void:
     reset()
 
@@ -194,16 +195,16 @@ func conclude(sim) -> bool:
 func save() -> bool:
     if int(state["pending"]) >= 0:
         return false
-    var file := FileAccess.open(SAVE_PATH,FileAccess.WRITE)
+    var file := FileAccess.open(save_path,FileAccess.WRITE)
     if file == null:
         return false
     file.store_string(JSON.stringify(state))
     return true
 
 func load_save() -> bool:
-    if not FileAccess.file_exists(SAVE_PATH):
+    if not FileAccess.file_exists(save_path):
         return false
-    var file := FileAccess.open(SAVE_PATH,FileAccess.READ)
+    var file := FileAccess.open(save_path,FileAccess.READ)
     if file == null:
         return false
     var parsed: Variant = JSON.parse_string(file.get_as_text())
