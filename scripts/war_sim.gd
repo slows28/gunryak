@@ -2179,7 +2179,7 @@ func _update_structures(dt: float) -> void:
             unit["structure_damage"] = float(unit["structure_damage"])+damage
             if battle_time-float(unit["last_visual"]) >= 0.65:
                 unit["last_visual"] = battle_time
-                visual_effects.append({"from":unit["pos"],"to":center,"side":unit["side"],"kind":"근접","time":battle_time})
+                visual_effects.append({"from":unit["pos"],"to":center,"attacker_id":int(unit["id"]),"side":unit["side"],"kind":"근접","time":battle_time})
             if float(structure["hp"]) <= 0.0:
                 _log(str(structure["name"])+" 파괴: 통행 가능")
                 break

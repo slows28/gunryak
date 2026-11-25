@@ -437,24 +437,27 @@ func _capture() -> void:
             var age: float=game.sim.battle_time-float(fx["time"])
             if age<0.1 or age>0.35: continue
             if not game.sim.player_can_see(fx["from"]) or not game.sim.player_can_see(fx["to"]): continue
-            game.call("_focus_combat")
+            # Exercise the same button the player uses. Do not set the camera
+            # or select a commander in the harness after pressing it.
+            var focused:Dictionary=game.sim.visual_effects.back()
             var own_ids:Array[int]=game.sim.command_ids(0)
             var expected:int=-1
             for key in ["attacker_id","defender_id"]:
-                if own_ids.has(int(fx.get(key,-1))):
-                    expected=int(fx[key])
+                if own_ids.has(int(focused.get(key,-1))):
+                    expected=int(focused[key])
                     break
-            if expected>=0:
-                game.call("_select_friendly_combatant",fx)
-                if game.selected_id!=expected or game.observing_enemy:
-                    push_error("VISUAL_CAPTURE_FAIL: combat focus selected unrelated commander")
-                    quit(1)
-                    return
-                print("COMBAT_COMMANDER_FOCUS_PASS")
-            game.camera_center=(fx["from"] as Vector2).lerp(fx["to"],0.5)
-            game.camera_zoom=1.8
-            game.call("_clamp_camera")
-            game.map_layer.queue_redraw()
+            if expected<0: continue
+            var origin:Vector2=focused.get("visual_from",focused["from"])
+            var target:Vector2=focused.get("visual_to",focused["to"])
+            var half_view:Vector2=game.MAP_SIZE*0.5/1.8
+            var expected_center:Vector2=origin.lerp(target,0.5).clamp(half_view,game.sim.field_size-half_view)
+            game.call("_show_enemy_roster")
+            game.contact_button.pressed.emit()
+            if game.selected_id!=expected or game.observing_enemy or not is_equal_approx(game.camera_zoom,1.8) or not game.camera_center.is_equal_approx(expected_center):
+                push_error("VISUAL_CAPTURE_FAIL: combat button did not frame the contact and select its commander")
+                quit(1)
+                return
+            print("COMBAT_COMMANDER_FOCUS_PASS")
             await process_frame
             await RenderingServer.frame_post_draw
             if not _save_frame("live_combat_effect.png"):
@@ -463,7 +466,9 @@ func _capture() -> void:
             combat_captured=true
             break
     if not combat_captured:
-        print("VISUAL_NOTE: no visible combat event in capture window")
+        push_error("VISUAL_CAPTURE_FAIL: no combat event to verify the focus button")
+        quit(1)
+        return
     var observed_loss: bool=false
     for id in game.recent_losses:
         var sample: Dictionary=game.recent_losses[id]

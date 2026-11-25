@@ -323,7 +323,7 @@ func _build_interface() -> void:
     _build_mind_report()
     _button("브리핑",Vector2(27,730),Vector2(112,26),_open_briefing)
     contact_button=_button("교전 위치",Vector2(27,761),Vector2(112,26),_focus_combat)
-    contact_button.tooltip_text="최근 실제 교전 위치로 카메라 이동 · C 단축키"
+    contact_button.tooltip_text="최근 관측된 교전의 접촉 지점과 아군 장수 확인 · C 단축키"
     combat_brief=_label("",Vector2(153,691),Vector2(578,24),14,COL_GOLD)
     thought_feed=_label("",Vector2(153,718),Vector2(578,74),12,COL_TEXT)
     thought_feed.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
@@ -512,16 +512,20 @@ func _select_friendly_combatant(fx:Dictionary) -> void:
         _show_friendly_roster()
         unit_list.select(ids.find(id))
         _select_unit()
-        _refresh_hud()
         return
 
 func _focus_combat() -> void:
     for i in range(sim.visual_effects.size()-1,-1,-1):
         var fx: Dictionary=sim.visual_effects[i]
-        if fog_enabled and not sim.player_can_see(fx["from"]) and not sim.player_can_see(fx["to"]): continue
+        if sim.battle_time-float(fx["time"])>0.9: continue
+        var origin:Vector2=fx.get("visual_from",fx["from"])
+        var target:Vector2=fx.get("visual_to",fx["to"])
+        var origin_visible:bool=not fog_enabled or sim.player_can_see(origin)
+        var target_visible:bool=not fog_enabled or sim.player_can_see(target)
+        if not origin_visible and not target_visible: continue
         _select_friendly_combatant(fx)
-        camera_center=(fx["from"] as Vector2).lerp(fx["to"],0.5)
-        camera_zoom=1.45
+        camera_center=origin.lerp(target,0.5) if origin_visible and target_visible else (origin if origin_visible else target)
+        camera_zoom=1.8
         _clamp_camera()
         map_layer.queue_redraw()
         queue_redraw()
@@ -1547,6 +1551,19 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
     return batch
 
 
+func _draw_formation_footprint(slots: Array[Vector2], fill: Color, outline: Color, width: float) -> void:
+    var hull: PackedVector2Array = Geometry2D.convex_hull(PackedVector2Array(slots))
+    # Godot closes the hull. The outline needs that closing point, but
+    # polygon triangulation expects each vertex exactly once.
+    if hull.size() < 4:
+        return
+    var polygon: PackedVector2Array = hull.slice(0, -1)
+    # Slots pressed against a field or river boundary can collapse into a
+    # shape with no usable interior. The outline is still useful there.
+    if not Geometry2D.triangulate_polygon(polygon).is_empty():
+        map_layer.draw_colored_polygon(polygon, fill)
+    map_layer.draw_polyline(hull, outline, width, true)
+
 func _draw_unit(unit: Dictionary) -> void:
     var side: int = int(unit["side"])
     var accent: Color = COL_BLUE if side == 0 else COL_RED
@@ -1562,10 +1579,7 @@ func _draw_unit(unit: Dictionary) -> void:
         var k:float=1.0/camera_zoom
         var slots: Array[Vector2]=sim.formation_slots(unit)
         if slots.size()>=3:
-            var hull: PackedVector2Array=Geometry2D.convex_hull(PackedVector2Array(slots))
-            if hull.size()>=4:
-                map_layer.draw_colored_polygon(hull,Color(accent,0.15))
-                map_layer.draw_polyline(hull,Color(accent,0.75),1.0*k,true)
+            _draw_formation_footprint(slots,Color(accent,0.15),Color(accent,0.75),k)
         for spot in slots:
             map_layer.draw_circle(spot,1.45*k,Color("#15201d"))
             map_layer.draw_circle(spot,0.95*k,accent)
@@ -1576,11 +1590,8 @@ func _draw_unit(unit: Dictionary) -> void:
         map_layer.draw_line(p+front*4*k,p+front*8*k,center_color,1.4*k,true)
         return
     var slots: Array[Vector2] = _visual_slots(unit)
-    if sim.six_armies and slots.size()>2 and int(unit["id"])==selected_id and side==0:
-        var hull: PackedVector2Array = Geometry2D.convex_hull(PackedVector2Array(slots))
-        if hull.size()>3 and detailed_map:
-            map_layer.draw_colored_polygon(hull,Color(accent,0.045))
-            map_layer.draw_polyline(hull,Color(COL_GOLD,0.35),1.2,true)
+    if detailed_map and sim.six_armies and slots.size()>2 and int(unit["id"])==selected_id and side==0:
+        _draw_formation_footprint(slots,Color(accent,0.045),Color(COL_GOLD,0.35),1.2)
     var flag_extent: Vector2 = Vector2(15,22) if unit.has("parent_id") else Vector2(23,32)
     _paint_tile(38+side,Rect2(p-Vector2(flag_extent.x*0.5,flag_extent.y+7),flag_extent),Color(1,1,1,accent.a))
     if camera_zoom>=1.0 and not unit.has("parent_id"):
