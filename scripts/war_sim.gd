@@ -50,6 +50,9 @@ var forests: Array[Rect2] = []
 var hill: Rect2 = Rect2(400, 213, 108, 89)
 var timeline: Array[Dictionary] = []
 var visual_effects: Array[Dictionary] = []
+var dust_effects: Array[Dictionary] = []
+const DUST_LIFE: float = 1.8
+const DUST_LIMIT: int = 180
 var troop_history: Array[Dictionary] = []
 var sample_at: float = 0.0
 var pending_reports: Array[Dictionary] = []
@@ -74,6 +77,7 @@ func reset() -> void:
     timeline.clear()
     structures.clear()
     visual_effects.clear()
+    dust_effects.clear()
     troop_history.clear()
     sample_at = 0.0
     pending_reports.clear()
@@ -149,7 +153,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "pos": start, "facing": Vector2.RIGHT if side == 0 else Vector2.LEFT,
         "goal": start, "mission": mission,
         "policy": "현장 판단", "formation": "횡대", "next_formation": "",
-        "form_remaining": 0.0, "troops": people, "initial_troops": people,
+        "form_remaining": 0.0, "form_duration": 1.0, "motion_speed": 0.0, "dust_distance": 0.0, "troops": people, "initial_troops": people,
         "morale": 100.0, "out_supply": 0.0, "supplied": true,
         "action": "대기", "reason": "초기 배치", "ai_cooldown": 0.0,
         "charge": 0.0, "last_raid": -999.0, "contact_troops": 0,
@@ -739,6 +743,7 @@ func _decide(unit: Dictionary) -> void:
     elif wanted != str(unit["next_formation"]):
         unit["next_formation"] = wanted
         unit["form_remaining"] = 2.1 + (100.0 - _effective_stat(unit, "leadership")) * 0.025
+        unit["form_duration"] = unit["form_remaining"]
 
 
 # A visible target's facing determines the offset, so the cavalry really travels
@@ -820,6 +825,8 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         if moved.length_squared() > 0.03:
             unit["fatigue"] = minf(100.0, float(unit["fatigue"]) + moved.length() * (0.030 if str(unit["type"]) == "기병" else 0.042) * (0.48 if wide_field else 1.0))
             unit["facing"] = moved.normalized()
+    unit["motion_speed"] = actual_move.length()/maxf(dt,0.001)
+    if six_armies: _emit_march_dust(unit,pos,actual_move)
     if str(unit["type"]) == "기병":
         _update_charge(unit, actual_move, dt)
     if not enemy.is_empty() and pos.distance_to(enemy["pos"]) < 168.0 and str(unit["action"]) not in ["후퇴", "패주", "재집결", "측면 우회", "기지 습격", "보급 복귀", "탄약 보충", "매복"]:
@@ -968,7 +975,13 @@ func formation_slots(unit: Dictionary) -> Array[Vector2]:
             ranks = 3
     var count: int = clampi(int(round(float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"])) * 12.0)), 0, 12)
     if six_armies:
-        return army_slots(unit,clampi(ceili(float(unit["troops"])/180.0),1,24),12.0)
+        var size: int = clampi(ceili(float(unit["troops"])/180.0),1,24)
+        var points: Array[Vector2] = army_slots(unit,size,12.0)
+        if str(unit["next_formation"]) != "" and not points.is_empty():
+            var next: Array[Vector2] = army_slots(unit,size,12.0,str(unit["next_formation"]))
+            var t: float = smoothstep(0.0,1.0,1.0-float(unit["form_remaining"])/maxf(0.1,float(unit.get("form_duration",3.0))))
+            for i in range(points.size()): points[i] = points[i].lerp(next[i],t)
+        return points
     var center: Vector2 = unit["pos"]
     for k in range(count):
         var file: int = k % files
@@ -1962,6 +1975,8 @@ func request_deputy_takeover(unit_id: int) -> bool:
     return true
 
 func _record_presentation() -> void:
+    for i in range(dust_effects.size()-1,-1,-1):
+        if battle_time-float(dust_effects[i]["time"]) >= DUST_LIFE: dust_effects.remove_at(i)
     for i in range(visual_effects.size()-1,-1,-1):
         if battle_time - float(visual_effects[i]["time"]) > 1.2:
             visual_effects.remove_at(i)
@@ -2364,7 +2379,7 @@ func _infantry_screen(unit: Dictionary) -> Dictionary:
 
 # Shared formation geometry: both tactical contact slots and rendered soldiers
 # derive from the same oriented rank shapes, with a bounded representative count.
-func army_slots(unit: Dictionary,count: int,spacing: float) -> Array[Vector2]:
+func army_slots(unit: Dictionary,count: int,spacing: float,shape_override: String = "") -> Array[Vector2]:
     var points: Array[Vector2] = []
     if count <= 0 or float(unit["troops"]) <= 0.0: return points
     var front: Vector2 = unit["facing"]
@@ -2372,7 +2387,7 @@ func army_slots(unit: Dictionary,count: int,spacing: float) -> Array[Vector2]:
     front=front.normalized()
     var side: Vector2=front.orthogonal()
     var local: Array[Vector2]=[]
-    var shape: String=str(unit["formation"])
+    var shape: String=str(unit["formation"]) if shape_override.is_empty() else shape_override
     var width: int=mini(count,8)
     if shape=="종대": width=mini(count,4)
     elif shape=="방진": width=ceili(sqrt(float(count)))
@@ -2406,3 +2421,32 @@ func _formation_extent(unit: Dictionary,direction: Vector2) -> float:
     for slot in formation_slots(unit):
         extent=maxf(extent,(slot-p).dot(direction)+8.0)
     return extent
+
+# Soil classification is deliberately independent of the army's order or animation.
+# Only exposed dirt roads produce dust. Grass, forest, hill, river, wooden bridge do not.
+func dusty_ground(p: Vector2) -> bool:
+    return terrain_at(p) == "도로"
+
+func _emit_march_dust(unit: Dictionary,previous: Vector2,displacement: Vector2) -> void:
+    var distance: float = displacement.length()
+    if distance < 0.20 or float(unit["troops"]) <= 0.0:
+        unit["dust_distance"] = 0.0
+        return
+    var accumulated: float = float(unit.get("dust_distance",0.0))+distance
+    var cavalry: bool = str(unit["type"])=="기병"
+    var spacing: float = 7.0 if cavalry else 10.0
+    if accumulated < spacing:
+        unit["dust_distance"] = accumulated
+        return
+    unit["dust_distance"] = fmod(accumulated,spacing)
+    var forward: Vector2 = displacement.normalized()
+    var slots: Array[Vector2] = formation_slots(unit)
+    # Sample actual representative feet along the traveled segment, not the target position.
+    for i in range(0,slots.size(),3):
+        var foot: Vector2 = slots[i]-displacement*0.5
+        if not dusty_ground(foot): continue
+        var seed_value: float = float(step_count*37+int(unit["id"])*19+i*13)
+        var variation: float = sin(seed_value*1.73)
+        var radius: float = (17.0 if cavalry else 12.0)*(0.8+absf(variation)*0.5)
+        dust_effects.append({"pos":foot,"dir":forward,"time":battle_time,"radius":radius,"side":unit["side"],"phase":variation,"surface":"도로"})
+        if dust_effects.size()>DUST_LIMIT: dust_effects.pop_front()
