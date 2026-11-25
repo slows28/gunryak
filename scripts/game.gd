@@ -1,6 +1,8 @@
 extends Control
 ## 2D tactical screen. Simulation is entirely separate in war_sim.gd.
 const WarSim = preload("res://scripts/war_sim.gd")
+const Campaign = preload("res://scripts/campaign.gd")
+const CampaignView = preload("res://scripts/campaign_view.gd")
 const PAINTED_ART = preload("res://assets/art/painted_atlas.webp")
 const PAINTED_FX = preload("res://assets/art/painted_fx.webp")
 const TITLE_ART = preload("res://assets/art/title_art.webp")
@@ -74,6 +76,9 @@ var outcome_comparison: Control
 var terrain_cache: ImageTexture
 var terrain_scenario: int = -1
 var campaign_active: bool = false
+var campaign = Campaign.new()
+var strategy_view: Control
+var battle_recorded: bool = false
 var chapter: int = 0
 var campaign_results: Array[String] = []
 var campaign_next: Button
@@ -95,6 +100,10 @@ func _ready() -> void:
     _setup_sound()
     _build_title_screen()
     _build_outcome_dialog()
+    strategy_view = CampaignView.new()
+    strategy_view.configure(campaign,korean_font,PAINTED_ART,_launch_campaign_battle,_show_title)
+    add_child(strategy_view)
+    strategy_view.hide()
     _refresh_unit_list()
     _select_unit()
     _refresh_hud()
@@ -267,6 +276,10 @@ func _speed() -> void:
     speed_btn.text = "속도 ×%s" % str(game_speed)
 
 func _reset() -> void:
+    if campaign_active and int(campaign.state["pending"]) >= 0:
+        runtime_notice = "캠페인 전투 중에는 초기화할 수 없습니다."
+        _refresh_hud()
+        return
     sim.reset()
     _rebuild_terrain()
     _reset_camera()
@@ -327,7 +340,7 @@ func _process(delta: float) -> void:
 
 func _refresh_hud() -> void:
     var phase: String = "전투 준비"
-    phase_label.text = ("북벌 %d/3 · " % (chapter+1) if campaign_active else "") + "01 작전 준비 · 02 교전 · 03 결산"
+    phase_label.text = ("북벌 전략 %d턴 · " % int(campaign.state["turn"]) if campaign_active else "") + "01 작전 준비 · 02 교전 · 03 결산"
     if sim.finished:
         phase = "종료  " + sim.result
         phase_label.text = "03 전투 결산  |  전투 분석 및 타임라인"
@@ -556,6 +569,12 @@ func _draw_map(_canvas: Control) -> void:
                 map_layer.draw_arc(anchor, 28.0,0.0,TAU,32,COL_BLUE,2.0)
                 _draw_string("사수",anchor+Vector2(-12,4),11,COL_BLUE)
     _draw_fortifications()
+    if not sim.convoy.is_empty():
+        var wagon: Vector2 = sim.convoy["pos"]
+        _paint_tile(44,Rect2(wagon-Vector2(17,15),Vector2(34,30)))
+        map_layer.draw_rect(Rect2(wagon+Vector2(-20,18),Vector2(40,4)),Color("#352c20"))
+        map_layer.draw_rect(Rect2(wagon+Vector2(-20,18),Vector2(40*float(sim.convoy["hp"])/100.0,4)),COL_GOLD)
+        _draw_string("군량 수레",wagon+Vector2(-23,-22),11,COL_GOLD)
     var visible_units: Array[Dictionary] = []
     for unit in sim.units:
         if float(unit["troops"]) > 0.0 and _visible_unit(unit):
@@ -696,7 +715,7 @@ func _build_planning_dialog() -> void:
     plan_status = Label.new()
     plan_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     root.add_child(plan_status)
-    plan_scenario = _plan_option(root,"전장 시나리오",["북남 요충지","중앙 고지 쟁탈","보급로 사수"])
+    plan_scenario = _plan_option(root,"전장 시나리오",["북남 요충지","중앙 고지 쟁탈","보급로 사수","군량 수레 호위","천수 돌파전"])
     plan_scenario.item_selected.connect(_change_scenario)
     plan_donor = _plan_option(root,"다른 장수 / 병력 제공 부대",["왕평 부대","마속 부대","위연 부대"])
     var troop_row := HBoxContainer.new()
@@ -952,8 +971,8 @@ func _open_briefing() -> void:
     elif sim.scenario_id == 2:
         tactic = "보급기지 주변에 방어선을 정하고 기병을 기동 예비대로 운용하십시오."
     var story: String = ""
-    if campaign_active:
-        story = ["북벌의 첫 관문 — 촉군은 북쪽과 남쪽 길을 확보해야 한다.\n","고지 쟁탈 — 전군의 접근로를 확보하기 위해 중앙 고지를 차지한다.\n","퇴로 사수 — 위군의 반격 속에서 군량 기지를 지켜야 한다.\n"][chapter]
+    if campaign_active and int(campaign.state["pending"]) >= 0:
+        story = str(Campaign.NODES[int(campaign.state["pending"])]["story"])+"\n"
     brief_text.text = story + "%s\n\n승리 목표: %s\n제한 시간: %.0f초\n\n권장 전략: %s\n\n1~5턴: 사전 작전 수행 / 6턴 이후: 전령 파견\n장수별 능력과 성향, 정찰 정보, 보급을 고려하십시오." % [sim.scenario_title,sim.scenario_goal,sim.scenario_limit,tactic]
     brief_dialog.popup_centered()
 
@@ -1233,11 +1252,16 @@ func _build_title_screen() -> void:
     sub.position = Vector2(694,245)
     sub.add_theme_font_size_override("font_size",22)
     title_screen.add_child(sub)
-    _title_button("북벌 캠페인 시작",Vector2(690,325),_begin_campaign)
-    _title_button("단독 전투",Vector2(690,385),_leave_title)
-    _title_button("전장 브리핑",Vector2(690,445),_title_brief)
-    _title_button("음향 전환",Vector2(690,505),_toggle_sound)
-    _title_button("종료",Vector2(690,565),_quit_game)
+    _title_button("새 북벌 캠페인",Vector2(690,310),_begin_campaign)
+    _title_button("캠페인 이어하기",Vector2(690,366),_continue_campaign)
+    _title_button("단독 전투",Vector2(690,422),_leave_title)
+    _title_button("전장 브리핑",Vector2(690,478),_title_brief)
+    _title_button("음향 전환",Vector2(690,534),_toggle_sound)
+    _title_button("종료",Vector2(690,590),_quit_game)
+    var version := Label.new()
+    version.text = "PUBLIC DEMO CANDIDATE  ·  0.9"
+    version.position = Vector2(694,680)
+    title_screen.add_child(version)
     title_screen.show()
 
 func _title_button(caption: String, pos: Vector2, callback: Callable) -> void:
@@ -1250,11 +1274,19 @@ func _title_button(caption: String, pos: Vector2, callback: Callable) -> void:
     btn.pressed.connect(callback)
 
 func _show_title() -> void:
+    if is_instance_valid(strategy_view): strategy_view.hide()
+    if is_instance_valid(outcome_dialog): outcome_dialog.hide()
     if sim.started and not sim.finished:
         sim.paused = true
     title_screen.show()
+    move_child(title_screen,get_child_count()-1)
 
 func _leave_title() -> void:
+    campaign_active = false
+    if is_instance_valid(strategy_view): strategy_view.hide()
+    sim.reset()
+    sim.set_scenario(0)
+    _reset()
     title_screen.hide()
 
 func _title_brief() -> void:
@@ -1333,8 +1365,10 @@ func _show_outcome() -> void:
     outcome_heading.text = sim.result
     outcome_text.text = "%s  /  %.1f초  /  전령 도착 %d · 차단 %d" % [sim.scenario_title,sim.battle_time,sim.delivered_orders,sim.intercepted_orders]
     if campaign_active:
-        campaign_results.append(sim.result)
-        outcome_text.text += "  /  북벌 %d / 3" % (chapter+1)
+        if not battle_recorded:
+            battle_recorded = campaign.conclude(sim)
+            campaign.save()
+        outcome_text.text += "  /  전략 %d턴" % int(campaign.state["turn"])
     for child in outcome_cards.get_children():
         outcome_cards.remove_child(child)
         child.queue_free()
@@ -1365,7 +1399,8 @@ func _show_outcome() -> void:
         stats.text = "피해 %d   손실 %d   이탈 %d   판단 %d   공적 %d" % [int(unit["damage_dealt"]),int(unit["casualties_taken"]),int(unit["deserted"]),int(unit["decisions"]),sim.merit(unit)]
         stats.add_theme_font_size_override("font_size",14)
         info.add_child(stats)
-    campaign_next.visible = campaign_active and chapter < 2
+    campaign_next.visible = campaign_active
+    campaign_next.text = "전략 지도로 돌아가기"
     outcome_comparison.queue_redraw()
     outcome_dialog.show()
 
@@ -1391,39 +1426,20 @@ func _draw_fortifications() -> void:
         _draw_string(str(structure["name"]),p+Vector2(-25,-16),10,COL_TEXT)
 
 func _begin_campaign() -> void:
+    campaign.reset()
     campaign_active = true
-    chapter = 0
-    campaign_results.clear()
-    sim.set_scenario(0)
-    _reset()
+    battle_recorded = false
     title_screen.hide()
-    _open_briefing()
+    strategy_view.show()
+    strategy_view.refresh()
 
 func _advance_campaign() -> void:
-    if not campaign_active or not sim.finished or chapter >= 2:
+    if not campaign_active or not sim.finished:
         return
-    var carry: Array[Dictionary] = []
-    for i in range(3):
-        var previous: Dictionary = sim.find_unit(i)
-        carry.append(previous.duplicate(true))
-    chapter += 1
-    sim.set_scenario(chapter)
-    _reset()
-    for i in range(3):
-        var unit: Dictionary = sim.find_unit(i)
-        var previous: Dictionary = carry[i]
-        for key in ["name","personality","ability","leadership","martial","intelligence","judgment","loyalty","general_state","general_hp","general_risk","active_deputy","deputy_index"]:
-            unit[key] = previous[key]
-        unit["troops"] = clampf(float(previous["troops"])+25.0,40.0,220.0)
-        unit["initial_troops"] = unit["troops"]
-        unit["morale"] = clampf(float(previous["morale"])+30.0,45.0,100.0)
     outcome_dialog.hide()
-    _refresh_unit_list()
-    _select_unit()
-    _open_briefing()
+    strategy_view.show()
+    strategy_view.refresh()
 
-
-# Build terrain once per scenario, rather than paint repeated hard-edged tiles every frame.
 func _rebuild_terrain() -> void:
     if terrain_cache != null and terrain_scenario == sim.scenario_id:
         return
@@ -1503,3 +1519,40 @@ func _draw_outcome_comparison(canvas: Control) -> void:
 func _outcome_analysis() -> void:
     outcome_dialog.hide()
     _open_analysis()
+
+func _launch_campaign_battle(target: int) -> bool:
+    if not campaign.prepare(target,sim):
+        return false
+    campaign_active = true
+    battle_recorded = false
+    strategy_view.hide()
+    title_screen.hide()
+    _rebuild_terrain()
+    _reset_camera()
+    finish_seen = false
+    last_audio_event = -1.0
+    last_warning = ""
+    map_mode = "선택"
+    selected_id = 0
+    step_buffer = 0.0
+    runtime_notice = ""
+    _refresh_unit_list()
+    _select_unit()
+    _refresh_hud()
+    queue_redraw()
+    _open_briefing()
+    return true
+
+func _continue_campaign() -> void:
+    if campaign.load_save():
+        campaign_active = true
+        title_screen.hide()
+        strategy_view.show()
+        strategy_view.refresh()
+    else:
+        runtime_notice = "저장된 캠페인이 없습니다."
+        var dialog := AcceptDialog.new()
+        dialog.dialog_text = runtime_notice
+        add_child(dialog)
+        dialog.confirmed.connect(dialog.queue_free)
+        dialog.popup_centered()
