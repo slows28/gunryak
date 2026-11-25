@@ -769,6 +769,8 @@ func _decide(unit: Dictionary) -> void:
     if six_armies and action in ["지정 지역 사수","예비 대기"] and str(unit["type"])=="보병": wanted="방진"
     if six_armies and action in ["협동 엄호","궁병 보호"] and str(unit["type"])=="보병": wanted="방진"
     if six_armies and action in ["협동 우회","협동 대기"] and str(unit["type"])=="기병": wanted="봉시진"
+    if long_operation and float(unit["bridge_y"])>=0.0 and absf(pos.x-river_x(pos.y))<130.0:
+        wanted="종대"
     if str(unit["policy"]).ends_with(" 유지") and str(unit["policy"]).replace(" 유지","") in LARGE_FORMATIONS and action != "패주":
         wanted = str(unit["policy"]).replace(" 유지", "")
     # Cancel an obsolete re-formation order before it completes; otherwise
@@ -1035,7 +1037,9 @@ func formation_slots(unit: Dictionary) -> Array[Vector2]:
         if str(unit["next_formation"]) != "" and not points.is_empty():
             var next: Array[Vector2] = army_slots(unit,size,12.0,str(unit["next_formation"]))
             var t: float = smoothstep(0.0,1.0,1.0-float(unit["form_remaining"])/maxf(0.1,float(unit.get("form_duration",3.0))))
-            for i in range(points.size()): points[i] = points[i].lerp(next[i],t)
+            for i in range(points.size()):
+                points[i]=points[i].lerp(next[i],t)
+                if long_operation: points[i]=_dry_formation_slot(unit["pos"],points[i])
         return points
     var center: Vector2 = unit["pos"]
     for k in range(count):
@@ -2510,7 +2514,8 @@ func army_slots(unit: Dictionary,count: int,spacing: float,shape_override: Strin
     center/=float(local.size())
     for p in local:
         var q: Vector2=(p-center)*spacing
-        points.append((unit["pos"] as Vector2)+front*q.x+side*q.y)
+        var pos:Vector2=(unit["pos"] as Vector2)+front*q.x+side*q.y
+        points.append(_dry_formation_slot(unit["pos"],pos) if long_operation else pos)
     return points
 
 func _formation_extent(unit: Dictionary,direction: Vector2) -> float:
@@ -2991,3 +2996,17 @@ func _guarding_archer_in_contact(guard:Dictionary,attacker:Dictionary)->bool:
         var screen:Dictionary=_physical_screen(archer,attacker)
         if not screen.is_empty() and int(screen["id"])==int(guard["id"]): return true
     return false
+
+# Keep representative combat and visual soldiers on passable ground near
+# the channel. Formation transitions must obey the same terrain constraint.
+func _dry_formation_slot(center:Vector2,point:Vector2)->Vector2:
+    var center_bank:float=center.x-river_x(center.y)
+    if absf(center_bank)>150.0: return point
+    var slot_bank:float=point.x-river_x(point.y)
+    if absf(slot_bank)>=27.0 and center_bank*slot_bank>=0.0: return point
+    if absf(center_bank)<36.0 and near_crossing(center.y):
+        var crossing:float=390.0 if center.y<620.0 else (850.0 if center.y<1075.0 else 1300.0)
+        return Vector2(point.x,clampf(point.y,crossing-34.0,crossing+34.0))
+    if near_crossing(point.y): return point
+    var bank:float=1.0 if center_bank>=0.0 else -1.0
+    return Vector2(river_x(point.y)+bank*29.0,point.y)
