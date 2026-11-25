@@ -248,8 +248,17 @@ func _update_couriers(dt: float) -> void:
             continue
         if (letter["pos"] as Vector2).distance_to(target_pos) < 16.0:
             delivered_orders += 1
+            if bool(letter.get("appoint_deputy", false)):
+                target["active_deputy"] = true
+                target["ai_cooldown"] = 0.0
+                _log("%s: %s 지휘 승계 명령 도착" % [str(target["name"]), deputy_name(target)])
+                couriers.remove_at(i)
+                continue
             target["mission"] = str(letter["mission"])
             _apply_policy(target, str(letter["policy"]))
+            target["waypoints"].clear()
+            target["waypoint_index"] = 0
+            target["defense_set"] = false
             target["ai_cooldown"] = 0.0
             _log("%s: 전령 도착 / 새 명령 '%s'" % [str(target["name"]), str(letter["mission"])])
             couriers.remove_at(i)
@@ -1711,3 +1720,16 @@ func timeline_text() -> String:
     for entry in timeline:
         lines.append("%05.1f초 | %02d턴 | %s" % [float(entry["time"]),int(entry["turn"]),str(entry["message"])])
     return "\n".join(lines)
+
+func request_deputy_takeover(unit_id: int) -> bool:
+    var unit: Dictionary = find_unit(unit_id)
+    if not started or finished or turn < 6 or unit.is_empty() or int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0 or bool(unit["active_deputy"]):
+        return false
+    if str(unit["general_state"]) != "부상":
+        return false
+    for courier in couriers:
+        if int(courier["unit_id"]) == unit_id:
+            return false
+    couriers.append({"pos":commanders[0]["pos"],"unit_id":unit_id,"side":0,"mission":unit["mission"],"policy":unit["policy"],"appoint_deputy":true})
+    _log("%s 부대에 부장 지휘 승계 전령 파견" % str(unit["name"]))
+    return true
