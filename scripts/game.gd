@@ -9,6 +9,7 @@ const PAINTED_ART = preload("res://assets/art/painted_atlas.webp")
 const SOLDIER_ART = preload("res://assets/art/soldier_sprites.svg")
 const SOLDIER_MOTION = preload("res://assets/art/soldier_motion.svg")
 const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
+const BRIDGE_HQ = preload("res://assets/art/bridge_hq.svg")
 const COMMAND_SKIN = preload("res://assets/art/command_skin.svg")
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const PAINTED_FX = preload("res://assets/art/painted_fx.webp")
@@ -43,6 +44,7 @@ var decision_label: Label
 var event_label: Label
 var notice_label: Label
 var unit_list: ItemList
+var roster_overlay: Control
 var mission_choice: OptionButton
 var policy_choice: OptionButton
 var start_btn: Button
@@ -103,6 +105,7 @@ var outcome_heading: Label
 var outcome_comparison: Control
 var terrain_cache: ImageTexture
 var terrain_scenario: int = -1
+var terrain_variants: Dictionary = {}
 var campaign_active: bool = false
 var campaign = Campaign.new()
 var strategy_view: Control
@@ -215,6 +218,12 @@ func _build_interface() -> void:
     unit_list.add_theme_constant_override("v_separation",3)
     add_child(unit_list)
     unit_list.item_selected.connect(_on_unit_selected)
+    roster_overlay=RenderLayer.new()
+    roster_overlay.position=unit_list.position
+    roster_overlay.size=unit_list.size
+    roster_overlay.mouse_filter=Control.MOUSE_FILTER_IGNORE
+    roster_overlay.painter=_draw_roster_status
+    add_child(roster_overlay)
     _label("02  현재 작전",Vector2(956,365),Vector2(267,20),15,COL_GOLD)
     mission_choice = _options(Vector2(950,363),["중앙 진격","북측 확보","남측 우회","본진 방어","전열 엄호","측후방 기동","구원 지원"])
     mission_choice.size.x = 306
@@ -293,11 +302,34 @@ func _refresh_unit_list() -> void:
         var icon:AtlasTexture=_commander_icon(str(unit["name"]),int(unit["side"]))
         unit_list.add_item("%s  ·  %s / %s" % [str(unit["name"]),str(unit["type"]),str(unit["personality"])],icon)
         unit_list.set_item_metadata(unit_list.item_count-1,i)
-    unit_list.fixed_icon_size = Vector2i(28,28)
+    unit_list.fixed_icon_size = Vector2i(29,29)
     if unit_list.item_count > 0:
         var row: int = maxi(0,sim.command_ids(0).find(selected_id))
         unit_list.select(row)
         selected_id = int(unit_list.get_item_metadata(row))
+
+func _draw_roster_status(canvas: Control) -> void:
+    if not is_instance_valid(unit_list): return
+    for index in range(unit_list.item_count):
+        var uid: int=int(unit_list.get_item_metadata(index))
+        var unit: Dictionary=sim.find_unit(uid)
+        if unit.is_empty(): continue
+        var row: Rect2=unit_list.get_item_rect(index)
+        if row.end.y>canvas.size.y+1.0 or row.position.y<0.0: continue
+        var strength: float=clampf(float(unit["troops"])/maxf(1.0,float(unit["initial_troops"])),0.0,1.0)
+        var morale: float=clampf(float(unit["morale"])/100.0,0.0,1.0)
+        var shade: Color=COL_RED if bool(unit["routed"]) else COL_BLUE
+        var right: float=canvas.size.x-12.0
+        var label: String=_number_text(roundi(sim.corps_report(uid)["troops"]))+"명"
+        var w: float=korean_font.get_string_size(label,HORIZONTAL_ALIGNMENT_LEFT,-1,13).x
+        canvas.draw_string(korean_font,Vector2(right-w,row.position.y+14),label,HORIZONTAL_ALIGNMENT_LEFT,-1,13,COL_TEXT)
+        var bar: Rect2=Rect2(right-64,row.position.y+19,64,3)
+        canvas.draw_rect(bar,Color("#121915"))
+        canvas.draw_rect(Rect2(bar.position,Vector2(bar.size.x*strength,bar.size.y)),shade)
+        canvas.draw_rect(Rect2(bar.position+Vector2(0,5),Vector2(bar.size.x,2)),Color("#121915"))
+        canvas.draw_rect(Rect2(bar.position+Vector2(0,5),Vector2(bar.size.x*morale,2)),COL_GOLD)
+        if index<unit_list.item_count-1:
+            canvas.draw_line(Vector2(6,row.end.y+1),Vector2(canvas.size.x-6,row.end.y+1),Color(0.70,0.59,0.40,0.16),1.0)
 
 func _on_unit_selected(index: int) -> void:
     if index < 0 or index >= unit_list.item_count: return
@@ -460,8 +492,10 @@ func _refresh_hud() -> void:
         var leader: Dictionary = sim.find_unit(uid)
         if leader.is_empty(): continue
         var state: String = "패주" if bool(leader["routed"]) else ("전멸" if float(leader["troops"]) <= 0.0 else str(leader["type"]))
-        unit_list.set_item_text(index,"%d  %s   %s   %s명" % [index+1,str(leader["name"]),str(leader["type"]) if state==str(leader["type"]) else state,_number_text(roundi(sim.corps_report(uid)["troops"]))])
+        unit_list.set_item_text(index,"%d  %s    %s" % [index+1,str(leader["name"]),state])
+        unit_list.set_item_tooltip(index,"%s명 · 사기 %d · 응집 %d · 식량 %d" % [_number_text(roundi(sim.corps_report(uid)["troops"])),roundi(leader["morale"]),roundi(leader["cohesion"]),roundi(leader["rations"])])
         unit_list.set_item_custom_fg_color(index,COL_MUTED if float(leader["troops"]) <= 0.0 else (COL_RED if bool(leader["routed"]) else COL_TEXT))
+    if is_instance_valid(roster_overlay): roster_overlay.queue_redraw()
     var enemy_text: String = "미확인" if fog_enabled and not sim.finished else str(sim.total_troops(1))
     status_label.text = "%s\n아군 %s  /  적군 %s\n전령 %d 이동 · %d 도착 · %d 차단" % [phase,_number_text(sim.total_troops(0)),enemy_text,sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
     var own_guards: int = sim.commander_guard_count(0)
@@ -643,7 +677,6 @@ func _draw_map(_canvas: Control) -> void:
             _draw_bridge(Vector2(sim.river_x(crossing),crossing))
     if fog_enabled and sim.started and not sim.finished and visibility_texture != null:
         map_layer.draw_texture_rect(visibility_texture,map_rect,false)
-    _draw_terrain_texture()
     if sim.wide_field:
         for crossing in [390.0,850.0,1300.0]:
             var bridge := Vector2(sim.river_x(crossing),crossing)
@@ -800,6 +833,7 @@ func _draw_map(_canvas: Control) -> void:
         return int(a["id"]) < int(b["id"]))
     for unit in visible_units:
         _draw_unit_label(unit,label_areas,visible_units)
+    _draw_terrain_texture()
     map_layer.draw_rect(map_rect, Color(Color("#cad8d7"), 0.42), false, 1.5)
 
 
@@ -1164,6 +1198,7 @@ func _build_map_layer() -> void:
     var layer := RenderLayer.new()
     layer.size = MAP_SIZE
     layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    layer.texture_filter=CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
     layer.painter = _draw_map
     map_clip.add_child(layer)
     map_layer = layer
@@ -1313,12 +1348,17 @@ func _draw_portrait(canvas: Control) -> void:
 
 func _draw_terrain_texture() -> void:
     # Small compass and a clean frame give orientation without repeated labels.
-    var p: Vector2 = camera_center+(Vector2(868,32)-MAP_SIZE*0.5)/camera_zoom
-    if camera_zoom < 0.8: return
-    map_layer.draw_circle(p,20,Color(0.08,0.12,0.13,0.58))
-    map_layer.draw_arc(p,20,0.0,TAU,32,Color(COL_GOLD,0.65),1.0,true)
-    map_layer.draw_colored_polygon(PackedVector2Array([p+Vector2(0,-15),p+Vector2(-6,5),p,p+Vector2(6,5)]),COL_GOLD)
-    _draw_string("N",p+Vector2(-4,14),10,COL_TEXT)
+    # Compass stays at a constant screen size instead of growing with zoom.
+    var offset: Vector2=MAP_SIZE*0.5-camera_center*camera_zoom
+    map_layer.draw_set_transform(Vector2(866,35),0.0,Vector2.ONE)
+    map_layer.draw_circle(Vector2.ZERO,23,Color(0.08,0.12,0.13,0.72))
+    map_layer.draw_arc(Vector2.ZERO,22,0.0,TAU,40,Color(COL_GOLD,0.65),1.0,true)
+    for i in range(8):
+        var d: Vector2=Vector2.from_angle(float(i)*TAU/8.0)
+        map_layer.draw_line(d*18,d*21,Color(COL_GOLD,0.6),1.0,true)
+    map_layer.draw_colored_polygon(PackedVector2Array([Vector2(0,-15),Vector2(-6,5),Vector2.ZERO,Vector2(6,5)]),COL_GOLD)
+    _draw_string("N",Vector2(-4,14),10,COL_TEXT)
+    map_layer.draw_set_transform(offset,0.0,Vector2.ONE*camera_zoom)
 
 # Atlas rows: faction × infantry, archer, cavalry. Columns: profile, front, rear.
 func _soldier_region(unit: Dictionary) -> Rect2:
@@ -1780,7 +1820,11 @@ func _advance_campaign() -> void:
 func _rebuild_terrain() -> void:
     if terrain_cache != null and terrain_scenario == sim.scenario_id:
         return
-    terrain_cache = TerrainArt.battlefield(sim.field_size,sim.forests,sim.hill,sim.scenario_id,sim.layout_scale)
+    var key: String="%s/%d" % [str(sim.field_size),sim.scenario_id]
+    if not terrain_variants.has(key):
+        if terrain_variants.size()>=2: terrain_variants.erase(terrain_variants.keys()[0])
+        terrain_variants[key]=TerrainArt.battlefield(sim.field_size,sim.forests,sim.hill,sim.scenario_id,sim.layout_scale)
+    terrain_cache=terrain_variants[key]
     terrain_scenario = sim.scenario_id
 
 func _blend_land(target: Image, source: Image, area: Rect2, feather: float, kind: int) -> void:
@@ -2048,12 +2092,12 @@ func _map_plate(value: String,p: Vector2,accent: Color,fs: int) -> void:
 func _refresh_visibility() -> void:
     # Only an indication of the same actual player visibility used for unit disclosure.
     # Cached low-resolution mask; no simulation advantage from rendering.
-    var image := Image.create_empty(45,29,false,Image.FORMAT_RGBA8)
-    for y in range(29):
-        for x in range(45):
-            var p: Vector2 = Vector2((float(x)+0.5)/45.0,(float(y)+0.5)/29.0)*sim.field_size
+    var image := Image.create_empty(90,57,false,Image.FORMAT_RGBA8)
+    for y in range(57):
+        for x in range(90):
+            var p: Vector2 = Vector2((float(x)+0.5)/90.0,(float(y)+0.5)/57.0)*sim.field_size
             var visible_now: bool = sim.player_can_see(p)
-            image.set_pixel(x,y,Color(0.035,0.075,0.09,0.02 if visible_now else 0.48))
+            image.set_pixel(x,y,Color(0.025,0.045,0.045,0.0 if visible_now else 0.43))
     visibility_texture = ImageTexture.create_from_image(image)
     visibility_stamp = sim.battle_time
 
@@ -2127,7 +2171,7 @@ func _draw_river_detail() -> void:
 func _draw_bridge(p: Vector2) -> void:
     # Texture aligns the walkable deck to the existing 76-unit north/south opening.
     # Rails, supports and shadows are visual only, not new collision objects.
-    _scenery_tile(0,Rect2(p-Vector2(49,85),Vector2(98,186)))
+    map_layer.draw_texture_rect(BRIDGE_HQ,Rect2(p-Vector2(58,58),Vector2(116,116)),false)
 
 func _draw_cooperation_links() -> void:
     var unit: Dictionary=sim.find_unit(selected_id)
