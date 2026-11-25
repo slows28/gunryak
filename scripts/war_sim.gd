@@ -771,6 +771,11 @@ func _combat(dt: float) -> void:
             exposure *= 0.80
         elif str(enemy["formation"]) == "종대" and (flank or rear):
             exposure *= 1.30
+        if str(enemy["next_formation"]) != "":
+            # An incomplete formation exposes gaps until the real transition ends.
+            exposure *= 1.24
+        if str(unit["next_formation"]) != "":
+            attack *= 0.78
         if unit_type == "기병" and float(unit["charge"]) > 14.0 and distance < 70.0:
             # Formed squares physically resist mounted shock on contact.
             attack *= 0.68 if str(enemy["formation"]) == "방진" else 1.45
@@ -778,18 +783,90 @@ func _combat(dt: float) -> void:
 
         var supply_factor: float = 0.76 if float(unit["out_supply"]) >= TURN_SECONDS * 3.0 else 1.0
         var damage: float = attack * (float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"]))) * (float(unit["morale"]) / 100.0) * exposure * supply_factor * dt
-        damage_entries.append({"target":int(enemy["id"]), "damage":maxf(0.0, damage), "flank":flank or rear})
+        damage_entries.append({"target":int(enemy["id"]), "source":int(unit["id"]), "damage":maxf(0.0, damage), "flank":flank or rear})
     for entry in damage_entries:
         var defender: Dictionary = find_unit(int(entry["target"]))
         if defender.is_empty() or float(defender["troops"]) <= 0.0:
             continue
-        defender["troops"] = maxf(0.0, float(defender["troops"]) - float(entry["damage"]))
+        var actual_damage: float = minf(float(defender["troops"]), float(entry["damage"]))
+        defender["troops"] = maxf(0.0, float(defender["troops"]) - actual_damage)
+        defender["casualties_taken"] = float(defender["casualties_taken"]) + actual_damage
+        var source: Dictionary = find_unit(int(entry["source"]))
+        if not source.is_empty():
+            source["damage_dealt"] = float(source["damage_dealt"]) + actual_damage
         var morale_loss: float = 0.11 if bool(entry["flank"]) else 0.07
-        defender["morale"] = maxf(0.0, float(defender["morale"]) - float(entry["damage"]) * morale_loss)
+        defender["morale"] = maxf(0.0, float(defender["morale"]) - actual_damage * morale_loss)
         if float(defender["troops"]) <= 0.0:
             _log("%s 전멸" % str(defender["name"]))
 
+
+# Neutral strategic positions are optional field objectives. An uncontested unit
+# must actually stand within range long enough to establish control; a contested
+# point neither changes hands nor accumulates victory hold time.
+func _update_outposts(dt: float) -> void:
+    for site in outposts:
+        var blue: bool = false
+        var red: bool = false
+        for unit in units:
+            if float(unit["troops"]) <= 0.0:
+                continue
+            if (unit["pos"] as Vector2).distance_to(site["pos"]) <= OUTPOST_RADIUS:
+                if int(unit["side"]) == 0:
+                    blue = true
+                else:
+                    red = true
+        if blue == red:
+            site["hold"] = 0.0
+            site["challenger"] = -1
+            site["progress"] = 0.0
+            continue
+        var faction: int = 0 if blue else 1
+        if int(site["owner"]) == faction:
+            site["hold"] = float(site["hold"]) + dt
+            site["progress"] = 0.0
+            continue
+        site["hold"] = 0.0
+        if int(site["challenger"]) != faction:
+            site["challenger"] = faction
+            site["progress"] = 0.0
+        site["progress"] = float(site["progress"]) + dt
+        if float(site["progress"]) >= OUTPOST_CAPTURE_SECONDS:
+            site["owner"] = faction
+            site["hold"] = 0.0
+            site["challenger"] = -1
+            site["progress"] = 0.0
+            _log("%s: %s 점령" % [str(site["name"]), "아군" if faction == 0 else "적군"])
+
+func _objective_winner() -> int:
+    if outposts.size() < 2 or turn < 3:
+        return -1
+    var owner: int = int(outposts[0]["owner"])
+    if owner < 0:
+        return -1
+    for site in outposts:
+        if int(site["owner"]) != owner or float(site["hold"]) < OUTPOST_HOLD_SECONDS:
+            return -1
+    return owner
+
+# Game-play-facing audit: three independent generals' actual decisions, reforms
+# and losses, with no fabricated kill counts or hidden information.
+func battle_report() -> Array[String]:
+    var rows: Array[String] = []
+    rows.append("전투 결산 · %s" % (result if finished else "진행 중"))
+    for unit in units:
+        if int(unit["side"]) != 0 or int(unit["id"]) >= 3:
+            continue
+        rows.append("%s | 판단 %d · 진형전환 %d · 피해 %d · 손실 %d" %
+            [str(unit["name"]), int(unit["decisions"]), int(unit["reforms_completed"]),
+            int(round(float(unit["damage_dealt"]))), int(round(float(unit["casualties_taken"])))])
+    return rows
+
 func _check_victory() -> void:
+    var winner: int = _objective_winner()
+    if winner >= 0:
+        _finish("양측 요충지 확보 — 아군 승리" if winner == 0 else "적 요충지 장악 — 패배")
+        return
+
     for unit in units:
         if float(unit["troops"]) <= 0.0:
             continue
@@ -839,6 +916,10 @@ func validate_state() -> Array[String]:
         problems.append("unit pool exceeds bounded demo limit")
     if intercepted_orders < 0 or delivered_orders < 0:
         problems.append("invalid courier counters")
+    for site in outposts:
+        var owner: int = int(site["owner"])
+        if owner < -1 or owner > 1 or float(site["hold"]) < 0.0 or float(site["progress"]) < 0.0:
+            problems.append("invalid outpost control: %s" % str(site["name"]))
     for unit in units:
         var p: Vector2 = unit["pos"]
         if is_nan(p.x) or is_nan(p.y) or is_inf(p.x) or is_inf(p.y):
