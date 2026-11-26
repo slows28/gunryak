@@ -718,7 +718,7 @@ func _draw()->void:
         draw_rect(Rect2(position_on_map-Vector2(6,6),Vector2(12,12)),ink)
         var caption: String="아군 본진" if home["side"]==0 else "적 본진"
         if home["side"]==0 and not sim.commander_captured(0): caption+=" · 책사"
-        _post_label(caption,position_on_map,1)
+        _site_label(caption,position_on_map,-20,12,occupied)
     for base in sim.bases:
         if not base["alive"] or base["side"]!=0: continue
         var center: Vector2=base["pos"]
