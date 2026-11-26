@@ -101,6 +101,9 @@ func configure(owner_game: Control,used_font: Font) -> void:
     route_summary.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     survey=_choice(Vector2(1080,613),Vector2(173,31),[])
     survey.tooltip_text="지점을 표시하고 선택한 군단의 통행 조건을 확인"
+    # The embedded X11 popup disconnects parent focus signals twice on keyboard selection.
+    if DisplayServer.get_name() == "X11":
+        survey.get_popup().force_native = true
     survey.item_selected.connect(_survey_site)
     survey_detail=_label("",Vector2(1082,648),Vector2(170,55),13,Color("#e2d1a6"))
     survey_detail.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
