@@ -1318,10 +1318,12 @@ func _capture_objectives() -> bool:
 
 # Standard northern operation, no injected damage, report, or enemy position.
 func _capture_messenger() -> bool:
+    game._show_title()
     game._leave_title(0)
     game._start()
     game.set_process(false)
     var sim=game.sim
+    if game.outcome_dialog.visible or game.title_screen.visible or game.order_view.visible: return false
     var letter: Dictionary={}
     var road_seen:=false
     for tick in range(3750):
