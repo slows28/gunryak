@@ -5,6 +5,7 @@ const LIMIT_TICKS: int = 4200
 var instance: Control
 var frames: int = 0
 var ticks: int = 0
+var visited_courier_map := false
 
 func _initialize() -> void:
     instance = MAIN_SCENE.instantiate()
@@ -237,6 +238,13 @@ func _process(_dt: float) -> bool:
             instance.call("_process", 0.1)
             ticks += 1
             var sim = instance.get("sim")
+            if instance.order_view.visible:
+                if visited_courier_map or sim.turn!=5 or not sim.paused:
+                    push_error("GUNRYAK_SCENE_FAIL: unexpected mid-battle order map")
+                    instance._quit_game(1)
+                    return false
+                visited_courier_map=true
+                instance.order_view.launch.pressed.emit()
             if ticks == 120:
                 var leader: Dictionary=sim.find_unit(0)
                 var m: Dictionary=leader["mind"]
@@ -258,8 +266,8 @@ func _process(_dt: float) -> bool:
                     return false
             if bool(sim.get("finished")):
                 var result: String = str(sim.get("result"))
-                if result.is_empty():
-                    push_error("GUNRYAK_SCENE_FAIL: battle ended without result")
+                if result.is_empty() or not visited_courier_map:
+                    push_error("GUNRYAK_SCENE_FAIL: missing battle result or turn-five visit")
                     quit(1)
                 else:
                     print("GUNRYAK_SCENE_PASS: battle completed in %d simulated ticks: %s" % [ticks, result])
