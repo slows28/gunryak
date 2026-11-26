@@ -1,5 +1,6 @@
 extends Control
 ## Separate paper war-room: actual battle coordinates, independent rendering and input.
+const CommandMarks = preload("res://scripts/command_marks.gd")
 const ACTIONS: Array[String]=["지정 위치 이동","공격","지역 사수","전열 엄호","측후방 기동","구원 지원","예비 대기","철수"]
 const PAPER=Color("#d6c29a")
 const INK=Color("#554735")
@@ -33,6 +34,7 @@ var action_description: Label
 var march_diagram: Dictionary={}
 var map_hint: Label
 var march_preview: Label
+var partner_caption: Label
 var partner_choice: OptionButton
 var roster: ItemList
 var info: Label
@@ -96,7 +98,7 @@ func configure(owner_game: Control,used_font: Font) -> void:
     _label("행동",Vector2(35,296),Vector2(276,24),15,SHEET_MUTED)
     action_choice=_choice(Vector2(35,326),Vector2(276,39),ACTIONS)
     action_choice.hide()
-    var labels:Array[String]=["이동","공격","사수","엄호","우회","구원","예비","철수"]
+    var labels:Array[String]=["이동","공격","사수","아군 보호","우회","구원","예비","철수"]
     for i in range(ACTIONS.size()):
         var b:Button=_button(labels[i],Vector2(35+(i%2)*141,326+floori(float(i)/2.0)*40),Vector2(135,34),_choose_action.bind(i))
         _paper_button(b)
@@ -105,7 +107,7 @@ func configure(owner_game: Control,used_font: Font) -> void:
         action_buttons.append(b)
     action_description=_label("",Vector2(35,486),Vector2(276,38),13,SHEET_MUTED)
     action_description.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    _label("협동 대상",Vector2(35,532),Vector2(276,23),15,SHEET_MUTED)
+    partner_caption=_label("협동 대상",Vector2(35,532),Vector2(276,23),15,SHEET_MUTED)
     partner_choice=_choice(Vector2(35,560),Vector2(276,38),[])
     partner_choice.item_selected.connect(func(_i: int): _mark_draft())
     _paper_button(partner_choice)
@@ -581,7 +583,14 @@ func _draw()->void:
     var selected:Dictionary=sim.find_unit(selected_id)
     if not selected.is_empty() and partner_choice.selected>=0:
         var linked:Dictionary=sim.find_unit(int(partner_choice.get_item_metadata(partner_choice.selected)))
-        if not linked.is_empty(): _dashed(_point(selected["pos"]),_point(linked["pos"]),Color("#73537c"))
+        if not linked.is_empty():
+            var start:=_point(selected["pos"])
+            var end:=_point(linked["pos"])
+            if ACTIONS[action_choice.selected] in ["전열 엄호","구원 지원"]:
+                draw_line(start,end,Color("#396856"),2.4,true)
+                CommandMarks.shield(self,end+Vector2(12,0),0.85,CommandMarks.GUARD)
+            else:
+                _dashed(start,end,Color("#365f82"))
     if has_destination:
         var u:Dictionary=sim.find_unit(selected_id)
         var target: Vector2=_point(destination)
@@ -730,11 +739,15 @@ func _choose_action(index:int)->void:
     _mark_draft()
 
 func _sync_actions()->void:
-    var descriptions:Array[String]=["지정 위치까지 이동하고 현장 판단","목표 지역의 적을 공격","지정 구역을 확보하고 방어","연계 군단의 전열을 엄호","적의 측후방으로 기동","위기에 처한 연계 군단을 지원","지정 지점에서 투입을 대기","목표 지점으로 철수"]
+    var descriptions:Array[String]=["동행 군단과 느린 쪽의 보속으로 이동","목표 지역의 적을 공격","지정 구역을 확보하고 방어","위협이 접근하면 지정 아군을 우선 보호","적의 측후방으로 기동","위기에 처한 연계 군단을 지원","지정 지점에서 투입을 대기","목표 지점으로 철수"]
     for i in range(action_buttons.size()):
         action_buttons[i].set_pressed_no_signal(i==action_choice.selected)
     if action_choice.selected>=0 and action_choice.selected<descriptions.size():
         action_description.text=descriptions[action_choice.selected]
+        match ACTIONS[action_choice.selected]:
+            "지정 위치 이동": partner_caption.text="함께 이동할 군단"
+            "전열 엄호","구원 지원": partner_caption.text="보호할 군단"
+            _: partner_caption.text="협동 대상"
 
 func _destination_text(p:Vector2)->String:
     var terrain:String=sim.terrain_at(p)

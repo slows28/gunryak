@@ -739,8 +739,41 @@ func _capture() -> void:
     if not await _capture_linked_march():
         quit(1)
         return
+    if not await _capture_field_judgment():
+        quit(1)
+        return
     print("GUNRYAK_VISUAL_CAPTURE_PASSED")
     quit(0)
+
+func _capture_field_judgment() -> bool:
+    game.queue_free()
+    await process_frame
+    game=MAIN_SCENE.instantiate()
+    root.add_child(game)
+    game.set_process(false)
+    game._leave_title(5)
+    var drill=preload("res://tests/field_judgment.gd")
+    drill.stage(game.sim)
+    game._start()
+    game.selected_id=0
+    game.camera_center=Vector2(737,766)
+    game.camera_zoom=2.10
+    game._clamp_camera()
+    var general: Dictionary=game.sim.find_unit(0)
+    for mode in ["아군 보호","공격 지속"]:
+        if mode=="공격 지속": drill.expose_opening(game.sim)
+        general["ai_cooldown"]=0.0
+        game.sim.step(0.1)
+        if general["action"]!=mode or game._field_action(general)!=mode:
+            push_error("VISUAL_CAPTURE_FAIL: missing general decision "+mode)
+            return false
+        game._refresh_hud()
+        game.map_layer.queue_redraw()
+        await process_frame
+        await RenderingServer.frame_post_draw
+        if not _save_frame("field_protect.png" if mode=="아군 보호" else "field_press.png"): return false
+    print("FIELD_JUDGMENT_VISUAL_PASS")
+    return true
 
 func _capture_linked_march() -> bool:
     game.queue_free()

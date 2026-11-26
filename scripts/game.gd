@@ -1,5 +1,6 @@
 extends Control
 ## 2D tactical screen. Simulation is entirely separate in war_sim.gd.
+const CommandMarks = preload("res://scripts/command_marks.gd")
 const WarSim = preload("res://scripts/war_sim.gd")
 const Materials = preload("res://scripts/command_materials.gd")
 const BattleHud = preload("res://scripts/battle_hud.gd")
@@ -577,6 +578,7 @@ func _field_action(u: Dictionary) -> String:
     if float(u["troops"])<=0.0: return "전멸"
     if bool(u["routed"]): return "패주"
     if sim.started and not sim.finished:
+        if not u.get("field_choice",{}).is_empty(): return u["action"]
         var age: float=sim.battle_time-float(u.get("last_visual",-100.0))
         if age>=0.0 and age<0.95:
             if str(u["type"])=="궁병": return "사격 중"
@@ -1365,7 +1367,7 @@ func _battle_brief() -> String:
         if int(u["side"])!=0: continue
         own_loss+=float(u.get("casualties_taken",0.0))
         own_damage+=float(u.get("damage_dealt",0.0))
-        if _field_action(u) in ["교전 중","사격 중"]: fighting+=1
+        if u["troops"]>0 and not u["routed"] and sim.battle_time-float(u["last_visual"])<0.95: fighting+=1
     return "교전·사격 %d개 부대  |  가한 피해 %s  ·  아군 손실 %s" % [fighting,_number_text(roundi(own_damage)),_number_text(roundi(own_loss))]
 
 func _gui_input(event: InputEvent) -> void:
@@ -1643,7 +1645,6 @@ func _draw_map(_canvas: Control) -> void:
                 map_layer.draw_arc(anchor, 28.0,0.0,TAU,32,COL_BLUE,2.0)
                 _draw_string("사수",anchor+Vector2(-12,4),11,COL_BLUE)
     if not observing_enemy:
-        _draw_cooperation_links()
         _draw_selected_bridge_route()
     _draw_active_routes()
     _draw_fortifications()
@@ -1689,6 +1690,7 @@ func _draw_map(_canvas: Control) -> void:
         if field_view.has_point(unit["pos"]):
             _draw_unit(unit)
             _draw_combat_movement(unit)
+    if not observing_enemy: _draw_cooperation_links()
     _draw_combat_effects()
     _draw_loss_markers()
     var label_areas: Array[Rect2] = map_label_areas
@@ -1934,6 +1936,11 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         if sim.started and not sim.finished and not sim.paused and previous_centers.has(id):
             var previous: Vector2=previous_centers[id]
             march_offset=previous.lerp(center,clampf(step_buffer/0.1,0.0,1.0))-center
+        if sim.six_armies and core>=3:
+            var anchors: Array[Vector2]=display_slots.slice(0,core)
+            for i in range(anchors.size()): anchors[i]+=march_offset
+            var field_ink:=Color("#244d72") if unit["side"]==0 else Color("#8a383c")
+            _draw_formation_footprint(anchors,Color(field_ink,0.30*accent.a),Color(accent,0.83*accent.a),1.15/camera_zoom)
         var scatter: float=(100.0-float(unit["cohesion"]))*0.045
         if bool(unit["routed"]): scatter+=6.5
         var last_attack_age: float=render_clock-float(unit.get("last_visual",-100.0))
@@ -1989,6 +1996,7 @@ func _draw_formation_footprint(slots: Array[Vector2], fill: Color, outline: Colo
     # shape with no usable interior. The outline is still useful there.
     if not Geometry2D.triangulate_polygon(polygon).is_empty():
         map_layer.draw_colored_polygon(polygon, fill)
+    map_layer.draw_polyline(hull,Color(Color("#21292b"),outline.a*0.82),width+1.8/camera_zoom,true)
     map_layer.draw_polyline(hull, outline, width, true)
 
 # Each strip shares its free edge with the next so the woven emblem follows the cloth.
@@ -2043,14 +2051,11 @@ func _draw_unit(unit: Dictionary) -> void:
         return
     var id: int=int(unit["id"])
     var selected: bool=id==(observed_enemy_id if observing_enemy else selected_id)
-    var show_footprint: bool=detailed_map and sim.six_armies and id==selected_id and side==0
     var drawn_slots: Array[Vector2]=[]
-    if selected or show_footprint:
+    if selected:
         if deformed_slot_cache.has(id): drawn_slots=deformed_slot_cache[id]
         elif formation_render_cache.has(id): drawn_slots=formation_render_cache[id]
         else: drawn_slots=_contact_slots(unit,_visual_slots(unit))
-    if show_footprint:
-        _draw_formation_footprint(drawn_slots,Color(accent,0.045),Color(COL_GOLD,0.35),1.2)
     _draw_corps_standard(unit,p,accent.a)
     var forward: Vector2 = unit["facing"]
     if detailed_map:
@@ -2083,6 +2088,7 @@ func _draw_active_routes() -> void:
         if float(u["troops"])<=0.0 or not _visible_unit(u): continue
         var own: bool=int(u["side"])==0
         var chosen: bool=int(u["id"])==(observed_enemy_id if observing_enemy else selected_id)
+        if own and chosen and (not u.get("field_choice",{}).is_empty() or sim.march_plans.has(u["id"])): continue
         if not own and (not chosen or fog_enabled): continue
         if not chosen and not detailed_map and camera_zoom>=0.85: continue
         if float(u.get("bridge_y",-1.0))>=0.0 and own and chosen: continue
@@ -2660,7 +2666,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
         p+=direction*(3.5 if kind==2 else 2.2)*SOLDIER_SCALE
     elif pose==2 and kind!=1: p-=direction*0.8*SOLDIER_SCALE
     if hit: p-=direction*SOLDIER_SCALE
-    var variation: float=0.88+float(posmod(index*17+int(unit["id"])*7,11))*0.012
+    var variation: float=0.95+float(posmod(index*17+int(unit["id"])*7,11))*0.012
     var shade: Color = Color(1.0,0.78,0.70,accent.a) if hit else Color(variation,variation,variation,accent.a)
     var map_offset: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
     # A shared shadow under each small file keeps densely packed feet readable.
@@ -3663,22 +3669,34 @@ func _draw_bridge(p: Vector2) -> void:
 
 func _draw_cooperation_links() -> void:
     var unit: Dictionary=sim.find_unit(selected_id)
-    if unit.is_empty() or not sim.started: return
-    var march: Dictionary=sim.march_plans.get(selected_id,{})
-    if march.is_empty() and str(unit["mission"]) not in ["전열 엄호","측후방 기동","구원 지원"]: return
-    var ally: Dictionary=sim.find_unit(int(march.get("peer",unit.get("link_id",-1))))
-    if ally.is_empty() or float(ally["troops"])<=0.0: return
+    if unit.is_empty() or not sim.started or sim.finished or unit["routed"] or unit["troops"]<=0: return
     var p: Vector2=unit["pos"]
-    var q: Vector2=ally["pos"]
     var k: float=1.0/camera_zoom
-    var d: float=p.distance_to(q)
-    var direction: Vector2=(q-p).normalized()
-    for i in range(0,int(d),int(maxf(14.0,18.0*k))):
-        var end: float=minf(float(i)+8.0*k,d)
-        map_layer.draw_line(p+direction*float(i),p+direction*end,Color(COL_BLUE,0.65),1.7*k,true)
-    var goal: Vector2=march.get("goal",unit["goal"])
-    map_layer.draw_line(p,goal,Color(COL_GOLD,0.65),1.5*k,true)
-    map_layer.draw_arc(goal,9.0*k,0,TAU,24,COL_GOLD,1.5*k,true)
+    var march: Dictionary=sim.march_plans.get(selected_id,{})
+    if not march.is_empty():
+        var peer: Dictionary=sim.find_unit(march["peer"])
+        if peer.is_empty() or peer["routed"] or peer["troops"]<=0: return
+        map_layer.draw_dashed_line(p,peer["pos"],Color(CommandMarks.MARCH,0.82),1.6*k,7*k)
+        var forward: Vector2=march["forward"]
+        for offset in [24,32]:
+            CommandMarks.chevron(map_layer,p+forward*offset*k,forward,CommandMarks.MARCH,k)
+        return
+    var choice: Dictionary=unit.get("field_choice",{})
+    var protecting: bool=unit["action"] in ["아군 보호","궁병 보호"]
+    if choice.is_empty() and not protecting: return
+    var other_id: int=choice.get("ally",unit["link_id"]) if protecting else choice["target"]
+    var other: Dictionary=sim.find_unit(other_id)
+    if other.is_empty() or other["routed"] or other["troops"]<=0 or not _visible_unit(other): return
+    var q: Vector2=other["pos"]
+    var direction:=p.direction_to(q)
+    if protecting:
+        var emblem:=q+Vector2(14,14)*k
+        CommandMarks.stroke(map_layer,PackedVector2Array([p,emblem]),Color(CommandMarks.GUARD,0.9),k)
+        CommandMarks.shield(map_layer,emblem,k,CommandMarks.GUARD)
+    elif direction!=Vector2.ZERO:
+        var tip:=q-direction*9*k
+        CommandMarks.stroke(map_layer,PackedVector2Array([p,tip]),CommandMarks.PRESS,k)
+        CommandMarks.chevron(map_layer,tip,direction,CommandMarks.PRESS,k)
 
 func _bridge_name(y: float) -> String:
     if y<600.0: return "북측 교량"

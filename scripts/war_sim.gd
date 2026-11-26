@@ -2,6 +2,7 @@ extends RefCounted
 ## Independent battle model: no UI nodes, textures, or rendering calls.
 ## Intentionally bounded fixed-step updates; safe for headless simulation tests.
 
+const FieldJudgment = preload("res://scripts/field_judgment.gd")
 const LinkedMarch = preload("res://scripts/linked_march.gd")
 const GeneralMind = preload("res://scripts/general_mind.gd")
 const FieldGeometry=preload("res://scripts/field_geometry.gd")
@@ -791,6 +792,13 @@ func _decide(unit: Dictionary) -> void:
         action = response["action"]
         reason = response["reason"]
         goal = response["goal"]
+    if long_operation:
+        var choice: Dictionary=FieldJudgment.choose(self,unit,nearest,action)
+        unit["field_choice"]=choice
+        if not choice.is_empty():
+            action=choice["action"]
+            reason=choice["reason"]
+            goal=choice["goal"]
     if action != str(unit["last_timeline_action"]):
         unit["last_timeline_action"] = action
         if int(unit["side"]) == 0 and timeline.size() < 1200:
@@ -810,10 +818,10 @@ func _decide(unit: Dictionary) -> void:
         if wanted == "방진": wanted = "방진"
         elif str(unit["type"]) == "기병": wanted = "봉시진"
         elif str(unit["type"]) == "궁병": wanted = "안행진"
-        elif action in ["돌파","반격","교전"]: wanted = "어린진"
+        elif action in ["돌파","반격","교전","공격 지속"]: wanted = "어린진"
         else: wanted = "학익진"
     if six_armies and action in ["지정 지역 사수","예비 대기"] and str(unit["type"])=="보병": wanted="방진"
-    if six_armies and action in ["협동 엄호","궁병 보호"] and str(unit["type"])=="보병": wanted="방진"
+    if six_armies and action in ["협동 엄호","궁병 보호","아군 보호"] and str(unit["type"])=="보병": wanted="방진"
     if six_armies and action in ["협동 우회","협동 대기"] and str(unit["type"])=="기병": wanted="봉시진"
     if long_operation and float(unit["bridge_y"])>=0.0 and absf(pos.x-river_x(pos.y))<130.0:
         wanted="종대"
@@ -892,7 +900,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var pos: Vector2 = unit["pos"]
     var goal: Vector2 = unit["goal"]
     var enemy: Dictionary = _nearest_visible_enemy(unit)
-    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호"]:
+    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호","아군 보호"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
@@ -1749,6 +1757,12 @@ func _update_battle_condition(dt: float) -> void:
 func _combat_target(unit: Dictionary) -> Dictionary:
     var nearest: Dictionary = _nearest_visible_enemy(unit)
     if six_armies and not nearest.is_empty():
+        var choice: Dictionary=unit.get("field_choice",{})
+        if not choice.is_empty():
+            var priority: Dictionary=find_unit(choice["target"])
+            if not priority.is_empty() and not priority["routed"] and _locally_observed(unit,priority):
+                if unit["type"]=="궁병" and (unit["pos"] as Vector2).distance_to(priority["pos"])<=173.0: return priority
+                if unit["type"]!="궁병" and not _river_separates(unit["pos"],priority["pos"]) and formation_contacts(unit,priority,30.0)>0: return priority
         if long_operation and int(unit["flank_phase"])==2 and str(unit["action"])=="돌파":
             var assigned:Dictionary=find_unit(int(unit["flank_target"]))
             if not assigned.is_empty() and _locally_observed(unit,assigned) and formation_contacts(unit,assigned,30.0)>0:
@@ -3166,6 +3180,7 @@ func _valid_partner(unit: Dictionary,partner: int) -> bool:
     return not friend.is_empty() and int(friend["id"])!=int(unit["id"]) and int(friend["side"])==int(unit["side"]) and float(friend["troops"])>0.0 and not bool(friend["routed"])
 
 func _reset_cooperation(unit: Dictionary,partner: int) -> void:
+    unit["field_choice"]={}
     march_sequence+=1
     unit["march_sequence"]=march_sequence
     unit["assigned_link"]=partner
@@ -3332,7 +3347,7 @@ func _observed_threat_to(observer:Dictionary,ally:Dictionary)->Dictionary:
         if not _locally_observed(observer,foe) or bool(foe["routed"]): continue
         if str(foe["type"])=="궁병": continue
         var d:float=(ally["pos"] as Vector2).distance_to(foe["pos"])
-        if d<score:
+        if d<score and (not long_operation or not _river_separates(ally["pos"],foe["pos"])):
             score=d
             best=foe
     return best
