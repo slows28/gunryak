@@ -581,6 +581,7 @@ func _field_action(u: Dictionary) -> String:
         if age>=0.0 and age<0.95:
             if str(u["type"])=="궁병": return "사격 중"
             return "교전 중"
+        if sim.march_plans.has(u["id"]): return str(sim.march_plans[u["id"]]["phase"])
         if str(u.get("next_formation",""))!="": return "전열 변경"
         if float(u.get("motion_speed",0.0))>2.0 and float(u.get("bridge_y",-1.0))>=0.0: return "도하 기동"
     return str(u["action"])
@@ -1030,6 +1031,9 @@ func _refresh_commander_desk() -> void:
     if not response.is_empty():
         result_lines.append(response)
     var ally: Dictionary=sim.find_unit(int(unit.get("assigned_link",-1)))
+    var march: Dictionary=sim.march_plans.get(selected_id,{})
+    if not march.is_empty():
+        result_lines.append("%s · %s · %s 보속" % [march["phase"],march["role"],march["slowest"]])
     if not ally.is_empty():
         result_lines.append("연계 "+str(ally["name"]))
     command_outcome.text="\n".join(result_lines)
@@ -3660,8 +3664,9 @@ func _draw_bridge(p: Vector2) -> void:
 func _draw_cooperation_links() -> void:
     var unit: Dictionary=sim.find_unit(selected_id)
     if unit.is_empty() or not sim.started: return
-    if str(unit["mission"]) not in ["전열 엄호","측후방 기동","구원 지원"]: return
-    var ally: Dictionary=sim.find_unit(int(unit.get("link_id",-1)))
+    var march: Dictionary=sim.march_plans.get(selected_id,{})
+    if march.is_empty() and str(unit["mission"]) not in ["전열 엄호","측후방 기동","구원 지원"]: return
+    var ally: Dictionary=sim.find_unit(int(march.get("peer",unit.get("link_id",-1))))
     if ally.is_empty() or float(ally["troops"])<=0.0: return
     var p: Vector2=unit["pos"]
     var q: Vector2=ally["pos"]
@@ -3671,7 +3676,7 @@ func _draw_cooperation_links() -> void:
     for i in range(0,int(d),int(maxf(14.0,18.0*k))):
         var end: float=minf(float(i)+8.0*k,d)
         map_layer.draw_line(p+direction*float(i),p+direction*end,Color(COL_BLUE,0.65),1.7*k,true)
-    var goal: Vector2=unit["goal"]
+    var goal: Vector2=march.get("goal",unit["goal"])
     map_layer.draw_line(p,goal,Color(COL_GOLD,0.65),1.5*k,true)
     map_layer.draw_arc(goal,9.0*k,0,TAU,24,COL_GOLD,1.5*k,true)
 

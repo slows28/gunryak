@@ -736,8 +736,56 @@ func _capture() -> void:
     if not await _capture_training_field():
         quit(1)
         return
+    if not await _capture_linked_march():
+        quit(1)
+        return
     print("GUNRYAK_VISUAL_CAPTURE_PASSED")
     quit(0)
+
+func _capture_linked_march() -> bool:
+    game.queue_free()
+    await process_frame
+    game=MAIN_SCENE.instantiate()
+    root.add_child(game)
+    game.set_process(false)
+    game._leave_title(5)
+    var sheet: Control=game.order_view
+    var destination:=Vector2(650,1460)
+    for entry in [[0,Vector2(650,400)],[1,Vector2(630,275)],[2,Vector2(500,385)]]:
+        if not game.sim.place_unit(entry[0],entry[1]): return false
+    for id in [0,2,1]:
+        sheet._select(id)
+        sheet.destination=destination
+        sheet.has_destination=true
+        if id!=0: sheet.partner_choice.select(1)
+        sheet._choose_action(0)
+        sheet._apply()
+    if sheet.march_diagram.get("group",[]).size()!=3 or not sheet.march_preview.text.contains("궁병 후열") or sheet.march_diagram["forward"].y<0.95:
+        push_error("VISUAL_CAPTURE_FAIL: southbound company missing from order sheet")
+        return false
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("linked_march_orders.png"): return false
+    sheet.launch.pressed.emit()
+    for i in range(128): game._process(0.1)
+    for id in [0,1,2]:
+        var march: Dictionary=game.sim.march_plans.get(id,{})
+        var u: Dictionary=game.sim.find_unit(id)
+        if march.get("phase","")!="연계 행군" or absf(u["motion_speed"]-march["pace"])>0.02:
+            push_error("VISUAL_CAPTURE_FAIL: displayed company moving outside its shared pace")
+            return false
+    game.selected_id=1
+    game.camera_center=Vector2(620,558)
+    game.camera_zoom=1.02
+    game._clamp_camera()
+    game._refresh_hud()
+    game.queue_redraw()
+    game.map_layer.queue_redraw()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("linked_march_field.png"): return false
+    print("LINKED_MARCH_VISUAL_PASS")
+    return true
 
 func _capture_training_field() -> bool:
     game.queue_free()

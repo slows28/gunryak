@@ -30,6 +30,9 @@ var action_choice: OptionButton
 var action_buttons: Array[Button]=[]
 var progress_label: Label
 var action_description: Label
+var march_diagram: Dictionary={}
+var map_hint: Label
+var march_preview: Label
 var partner_choice: OptionButton
 var roster: ItemList
 var info: Label
@@ -75,7 +78,7 @@ func configure(owner_game: Control,used_font: Font) -> void:
     placement.position=Vector2(1079,420)
     placement.tooltip_text="아군 배치 구역 안에서 군단의 출발점 이동"
     add_child(placement)
-    _label("지도에서 목적지 지정\n군단 말을 끌어도 됩니다.",Vector2(1082,460),Vector2(170,50),13,Color("#cdd8d9"))
+    map_hint=_label("지도에서 목적지 지정\n군단 말을 끌어도 됩니다.",Vector2(1082,460),Vector2(170,50),13,Color("#cdd8d9"))
     _label("행군로",Vector2(1082,519),Vector2(164,24),16,GOLD)
     route_summary=_label("",Vector2(1082,548),Vector2(171,60),13,Color("#f4e6c9"))
     route_summary.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
@@ -107,6 +110,7 @@ func configure(owner_game: Control,used_font: Font) -> void:
     partner_choice.item_selected.connect(func(_i: int): _mark_draft())
     _paper_button(partner_choice)
     partner_choice.add_theme_constant_override("modulate_arrow",1)
+    march_preview=_label("",Vector2(35,599),Vector2(277,22),13,SHEET_MUTED)
     apply=_button("지시 확정",Vector2(35,625),Vector2(135,43),_apply)
     game._primary_button(apply)
     var cancel := _button("초안 취소",Vector2(176,625),Vector2(135,43),func():
@@ -272,6 +276,11 @@ func _refresh_draft_roster() -> void:
 func _update_destination()->void:
     destination_label.text=_destination_text(destination) if has_destination else "지도에서 목표를 선택"
     _refresh_draft_roster()
+    march_diagram={}
+    if has_destination and ACTIONS[action_choice.selected]!="철수":
+        march_diagram=sim.LinkedMarch.preview(sim,sim.find_unit(selected_id),_selected_partner(),destination)
+    march_preview.text=march_diagram.get("caption","")
+    map_hint.text="지도에서 목적지 지정\n군단 말을 끌어도 됩니다." if march_diagram.is_empty() else "행군 대형\n%s 속도 기준" % march_diagram["limiter"]
     _refresh_route_summary()
     _refresh_survey()
     var problem: String = "지도에서 목적지를 먼저 선택하십시오."
@@ -430,10 +439,11 @@ func _draw()->void:
     draw_line(Vector2(35,118),Vector2(311,118),Color("#a68e68"))
     draw_rect(Rect2(16,76,312,4),Color("#a43d2e"))
     draw_line(Vector2(35,220),Vector2(311,220),Color("#c9b99d"))
-    draw_line(Vector2(35,613),Vector2(311,613),Color("#c9b99d"))
+    draw_line(Vector2(35,622),Vector2(311,622),Color("#c9b99d"))
     draw_style_box(lacquer,Rect2(1068,76,196,628))
     draw_line(Vector2(1081,515),Vector2(1252,515),Color("#8d7953"))
     draw_style_box(lacquer,Rect2(6,716,1268,78))
+    if not march_diagram.is_empty(): _draw_march_diagram()
     if sim==null: return
     draw_rect(Rect2(MAP.position+Vector2(3,5),MAP.size),Color(0.08,0.05,0.025,0.65))
     draw_texture_rect(Materials.SILK,MAP,false)
@@ -642,6 +652,28 @@ func _dashed(a:Vector2,b:Vector2,c:Color)->void:
     var d:float=a.distance_to(b)
     var direction:Vector2=(b-a).normalized()
     for i in range(0,int(d),10): draw_line(a+direction*i,a+direction*minf(float(i)+5,d),c,2,true)
+
+func _draw_march_diagram() -> void:
+    var center:=Vector2(1217,484)
+    var forward: Vector2=march_diagram["forward"]
+    var right:=Vector2(-forward.y,forward.x)
+    var slots: Dictionary=march_diagram["slots"]
+    var positions:=PackedVector2Array()
+    for unit in march_diagram["group"]:
+        var offset: Vector2=slots[unit["id"]]["offset"]
+        positions.append(forward*offset.x+right*offset.y)
+    var bounds:=Rect2(positions[0],Vector2.ZERO)
+    for point in positions: bounds=bounds.expand(point)
+    var scale_factor:=minf(0.22,40.0/maxf(1.0,maxf(bounds.size.x,bounds.size.y)))
+    var tip:=center+forward*30.0
+    draw_line(tip-forward*5.0-right*3.0,tip,GOLD,1.5,true)
+    draw_line(tip-forward*5.0+right*3.0,tip,GOLD,1.5,true)
+    for i in range(positions.size()):
+        var unit: Dictionary=march_diagram["group"][i]
+        var point:=center+(positions[i]-bounds.get_center())*scale_factor
+        draw_circle(point,8.5,Color("#294958"))
+        draw_arc(point,8.5,0,TAU,24,GOLD if unit["id"]==selected_id else Color("#79909a"),1,true)
+        _ink(str(unit["type"]).left(1),point+Vector2(-5,4),11,Color("#f3ead4"))
 
 func _piece(u:Dictionary,p:Vector2,selected:bool)->void:
     var c:Color=BLUE if int(u["side"])==0 else RED

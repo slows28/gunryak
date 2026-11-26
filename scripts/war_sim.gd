@@ -2,6 +2,7 @@ extends RefCounted
 ## Independent battle model: no UI nodes, textures, or rendering calls.
 ## Intentionally bounded fixed-step updates; safe for headless simulation tests.
 
+const LinkedMarch = preload("res://scripts/linked_march.gd")
 const GeneralMind = preload("res://scripts/general_mind.gd")
 const FieldGeometry=preload("res://scripts/field_geometry.gd")
 const FIELD_W: float = 900.0
@@ -85,6 +86,8 @@ var step_count: int = 0
 var intercepted_orders: int = 0
 var delivered_orders: int = 0
 var map_dispatches: Dictionary = {}
+var march_plans: Dictionary = {}
+var march_sequence: int = 0
 
 func _init() -> void:
     reset()
@@ -106,6 +109,8 @@ func reset() -> void:
     commanders.clear()
     couriers.clear()
     map_dispatches.clear()
+    march_plans.clear()
+    march_sequence=0
     events.clear()
     outposts.clear()
     scouts.clear()
@@ -303,6 +308,7 @@ func step(dt: float) -> void:
             _decide(unit)
             unit["ai_cooldown"] = 1.4 + (100.0 - _effective_stat(unit, "judgment")) * 0.015
         _formation_transition(unit, dt)
+    if six_armies: march_plans=LinkedMarch.plan(self,march_plans,dt)
     for unit in units:
         if float(unit["troops"]) > 0.0:
             _move_unit(unit, dt)
@@ -762,7 +768,7 @@ func _decide(unit: Dictionary) -> void:
         var screen: Dictionary = _infantry_screen(unit)
         if not screen.is_empty():
             var screen_pos: Vector2 = screen["pos"]
-            var behind: Vector2 = Vector2.LEFT if side == 0 else Vector2.RIGHT
+            var behind: Vector2 = -Vector2(screen["facing"]).normalized()
             goal = screen_pos+behind*100.0
             action = "전열 지원"
             reason = "보병 엄호 하에 후방 사격 위치 확보"
@@ -856,16 +862,8 @@ func _formation_transition(unit: Dictionary, dt: float) -> void:
         unit["form_remaining"] = 0.0
         unit["reforms_completed"] = int(unit["reforms_completed"]) + 1
 
-func _move_unit(unit: Dictionary, dt: float) -> void:
-    var pos: Vector2 = unit["pos"]
-    var goal: Vector2 = unit["goal"]
-    var enemy: Dictionary = _nearest_visible_enemy(unit)
-    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호"]:
-        var distance: float = pos.distance_to(enemy["pos"])
-        var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
-        if distance <= range_goal:
-            goal = pos
-            unit["goal"] = pos
+func _movement_rate(unit: Dictionary, enemy: Dictionary) -> float:
+    var pos: Vector2=unit["pos"]
     var rate: float = 54.0
     match str(unit["type"]):
         "기병": rate = 100.0
@@ -888,10 +886,32 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         rate *= 1.18
         if bool(unit["surrounded"]):
             rate *= 0.55
+    return rate
+
+func _move_unit(unit: Dictionary, dt: float) -> void:
+    var pos: Vector2 = unit["pos"]
+    var goal: Vector2 = unit["goal"]
+    var enemy: Dictionary = _nearest_visible_enemy(unit)
+    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호"]:
+        var distance: float = pos.distance_to(enemy["pos"])
+        var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
+        if distance <= range_goal:
+            goal = pos
+            unit["goal"] = pos
+    var march: Dictionary=march_plans.get(unit["id"],{})
+    var rate: float
+    if march.is_empty():
+        rate=_movement_rate(unit,enemy)
+    else:
+        goal=march["goal"]
+        rate=march["pace"]
+        if march["phase"]=="도하" and (pos.x-river_x(pos.y))*march["bank"]<0.0:
+            unit["bridge_y"]=march["bridge"]
+            unit["bridge_bank"]=march["bank"]
     if str(unit["type"]) == "기병":
         unit["charge_cooldown"] = maxf(0.0, float(unit["charge_cooldown"]) - dt)
     var actual_move: Vector2 = Vector2.ZERO
-    if pos.distance_to(goal) > 2.0:
+    if pos.distance_to(goal) > (0.001 if not march.is_empty() else 2.0):
         if long_operation:
             goal = _committed_bridge_route(unit,pos,goal)
         elif wide_field and (enemy.is_empty() or pos.distance_to(enemy["pos"]) > 180.0):
@@ -907,6 +927,8 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         if moved.length_squared() > 0.03:
             unit["fatigue"] = minf(100.0, float(unit["fatigue"]) + moved.length() * (0.030 if str(unit["type"]) == "기병" else 0.042) * (0.48 if wide_field else 1.0))
             unit["facing"] = moved.normalized()
+    if not march.is_empty() and (march["phase"]=="연계 행군" or pos.distance_to(goal)<5):
+        unit["facing"]=march["forward"]
     unit["motion_speed"] = actual_move.length()/maxf(dt,0.001)
     if six_armies:
         if str(unit["action"])=="협동 우회": unit["maneuver_distance"]+=actual_move.length()
@@ -3138,6 +3160,8 @@ func _valid_partner(unit: Dictionary,partner: int) -> bool:
     return not friend.is_empty() and int(friend["id"])!=int(unit["id"]) and int(friend["side"])==int(unit["side"]) and float(friend["troops"])>0.0 and not bool(friend["routed"])
 
 func _reset_cooperation(unit: Dictionary,partner: int) -> void:
+    march_sequence+=1
+    unit["march_sequence"]=march_sequence
     unit["assigned_link"]=partner
     unit["link_id"]=partner
     unit["flank_target"]=-1
