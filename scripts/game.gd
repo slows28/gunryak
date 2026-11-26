@@ -114,7 +114,6 @@ var general_cards: Array[BattleHud.CorpsCard]=[]
 var map_label_areas: Array[Rect2]=[]
 var fallen_marks: Array[Dictionary]=[]
 var loss_carry: Dictionary={}
-var battle_warning: String=""
 var sector_cards: Array[BattleHud.SectorCard]=[]
 var sector_snapshot: Array[Dictionary]=[]
 var sector_selection: int=-1
@@ -147,7 +146,6 @@ var dust_texture: ImageTexture
 var visibility_stamp: float = -100.0
 var render_clock: float = 0.0
 var phase_label: Label
-var warning_label: Label
 var brief_dialog: AcceptDialog
 var brief_text: Label
 var analysis_dialog: AcceptDialog
@@ -429,9 +427,6 @@ func _build_interface() -> void:
     dispatch_headline.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
     dispatch_headline.hide()
     _build_messenger_card()
-    warning_label = _label("",Vector2(420,640),Vector2(513,24),12,COL_GOLD)
-    warning_label.hide()
-    warning_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func _label(message: String, where: Vector2, extent: Vector2, font_size: int, color: Color) -> Label:
     var element := Label.new()
@@ -717,7 +712,6 @@ func _start() -> void:
     recent_losses.clear()
     fallen_marks.clear()
     loss_carry.clear()
-    battle_warning=""
     previous_centers.clear()
     contact_cache.clear()
     formation_render_cache.clear()
@@ -812,7 +806,6 @@ func _reset() -> void:
     recent_losses.clear()
     fallen_marks.clear()
     loss_carry.clear()
-    battle_warning=""
     previous_centers.clear()
     contact_cache.clear()
     formation_render_cache.clear()
@@ -938,7 +931,7 @@ func _refresh_hud() -> void:
         if sim.situation_serial==0: read_messengers.clear()
         _refresh_messenger_card(pending)
         var count: int=pending.size()
-        dispatch_headline.visible=active and sim.headquarters[0]["occupation"]>0
+        dispatch_headline.visible=active and sim.scenario_id!=2 and sim.headquarters[0]["occupation"]>0
         notice_label.size.x=284.0 if dispatch_headline.visible else 685.0
         if dispatch_headline.visible: dispatch_headline.text="본진 피습 · "+sim.headquarters_state(0)+"   ›"
         situation_btn.text="받은 전령 %d" % count if count>0 else "받은 전령"
@@ -1610,13 +1603,8 @@ func _draw_map(_canvas: Control) -> void:
         map_layer.draw_rect(Rect2(Vector2(35,22),Vector2(270*sim.layout_scale-35,sim.field_size.y-40)),Color(COL_BLUE,0.035))
         for y in range(22,int(sim.field_size.y)-18,36):
             map_layer.draw_line(Vector2(270*sim.layout_scale,y),Vector2(270*sim.layout_scale,y+16),Color(COL_BLUE,0.5),1.5)
-    # Static gate art removed: show the actual, potentially relocating supply bases only.
     for home in sim.headquarters:
-        var at: Vector2=home["pos"]
-        var own: bool=home["side"]==0
-        var tint: Color=COL_BLUE if own else COL_RED
-        _draw_field_site(2,at,0.7)
-        _map_plate(("아군 본진" if own else "적 본진"),at+Vector2(0,-38)/camera_zoom,tint,13)
+        _draw_field_site(0,home["pos"],1.08)
     # Capture sites show control, contested progress and victory holds directly.
     for site in sim.outposts:
         var site_pos: Vector2 = _screen(site["pos"])
@@ -1790,6 +1778,19 @@ func _draw_map(_canvas: Control) -> void:
             _draw_combat_movement(unit)
     if not observing_enemy: _draw_cooperation_links()
     _draw_combat_effects()
+    for home in sim.headquarters:
+        var at: Vector2=home["pos"]
+        if not field_view.has_point(at): continue
+        var own: bool=home["side"]==0
+        var observed: bool=own or not fog_enabled or sim.player_can_see(at)
+        var danger: bool=observed and home["occupation"]>0
+        var tint: Color=COL_RED if danger or not own else COL_BLUE
+        if danger:
+            map_layer.draw_arc(at,sim.RAID_RADIUS,0,TAU,48,Color(tint,0.60),2/camera_zoom,true)
+            map_layer.draw_arc(at,sim.RAID_RADIUS,-PI/2,-PI/2+TAU*home["occupation"]/sim.HQ_CAPTURE_SECONDS,48,COL_GOLD,4/camera_zoom,true)
+        var label: String="아군 본진" if own else "적 본진"
+        for offset in [Vector2(0,-75),Vector2(60,-43),Vector2(-60,-43),Vector2(0,54)]:
+            if _map_plate(label,at+offset/camera_zoom,tint,14).has_area(): break
     _draw_loss_markers()
     _draw_raid_timers()
     if objective_focus>=0 and objective_focus<objective_rows.size():
@@ -2437,7 +2438,6 @@ func _change_scenario(index: int) -> void:
         recent_losses.clear()
         fallen_marks.clear()
         loss_carry.clear()
-        battle_warning=""
         previous_centers.clear()
         contact_cache.clear()
         formation_render_cache.clear()
@@ -3059,8 +3059,6 @@ func _play_combat_audio(fx: Dictionary) -> void:
 
 func _update_audio_and_warning() -> void:
     var warning: String = "본진 피습" if sim.headquarters[0]["occupation"]>0 else ""
-    battle_warning=warning
-    warning_label.text=""
     if warning != "" and warning != last_warning:
         _play_cue(230.0,0.25)
         last_audio_clock = sim.battle_time
@@ -3358,7 +3356,6 @@ func _begin_campaign() -> void:
     _clear_journal()
     fallen_marks.clear()
     loss_carry.clear()
-    battle_warning=""
     contact_cache.clear()
     contact_cache_step=-1
     sector_selection=-1
@@ -3619,7 +3616,7 @@ func _messenger_account(report: Dictionary) -> String:
         "사수": request="장군께서 이 자리를 지키겠다고 하셨습니다."
     var account: String=" ".join(lines)
     if not request.is_empty(): account+="\n"+request
-    if report.has("relief_destination"): account+="\n"+str(report["relief_destination"])+". "
+    if report.has("relief_destination"): account+="\n"+str(report["relief_destination"])+ "."
     return account
 
 func _build_situations() -> void:

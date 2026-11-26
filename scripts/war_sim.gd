@@ -2821,7 +2821,7 @@ func _send_relief_request(sender: Dictionary, report: Dictionary) -> void:
 func _relief_decision(ally: Dictionary, sender: Dictionary) -> String:
     if sender.is_empty() or sender["troops"]<=0: return "구원 대상 소멸"
     if ally["surrounded"] or ally["routed"] or ally["morale"]<38 or ally["cohesion"]<35: return "자군 전열 재정비"
-    if sender.get("local_relief",false) and sender["tactical_until"]>battle_time and sender["tactical_target"]==ally["id"]: return "서로를 향한 중복 구원 방지"
+    if sender.get("local_relief",false) and sender["tactical_until"]>battle_time and sender["tactical_target"]==ally["id"]: return "상대 부대가 이쪽으로 합류 중"
     if command_confused(ally["side"]): return "지휘 혼란으로 현 위치 방어"
     if ally["tactical_until"]>battle_time or has_pending_courier(ally["id"]): return "기존 전령 지시 수행 중"
     if ally["mission"]=="본진 방어" and (ally["obedience"]=="명령 엄수" or headquarters[ally["side"]]["occupation"]>0):

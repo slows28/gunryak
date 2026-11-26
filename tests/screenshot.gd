@@ -1322,9 +1322,9 @@ func _capture_objectives() -> bool:
     raider["ai_cooldown"]=999.0
     for tick in range(30): sim.step(0.1)
     game._refresh_hud()
-    game.dispatch_headline.pressed.emit()
+    game.objective_buttons[0].pressed.emit()
     var view:=Rect2(game.camera_center-game.MAP_SIZE*0.5/game.camera_zoom,game.MAP_SIZE/game.camera_zoom)
-    if not game.dispatch_headline.visible or not view.has_point(hq) or "함락까지" not in game.objective_buttons[0].text: return false
+    if game.dispatch_headline.visible or not view.has_point(hq) or "함락까지" not in game.objective_buttons[0].text: return false
     if not await _deployment_frame("headquarters_under_attack.png"): return false
     game.journal_button.pressed.emit()
     await process_frame
