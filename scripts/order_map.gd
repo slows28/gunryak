@@ -307,7 +307,7 @@ func _refresh_route_summary() -> void:
     if u.is_empty() or not has_destination:
         route_summary.text="목적지를 지정하면 예상 경로를 표시합니다."
         return
-    if sim.in_open_water(destination):
+    if sim.long_operation and sim.in_open_water(destination):
         route_summary.text=_grid_ref(destination)+"  ·  하천\n교량이나 육지를 선택하십시오."
         return
     var route:=_route_points(u,destination)
@@ -329,10 +329,16 @@ func _refresh_survey() -> void:
         return
     var point: Vector2=survey_sites[survey_key]
     var note: String="이동 %d%%" % sim.terrain_movement_percent(selected_id,point)
-    if sim.in_open_water(point): note="도하 불가 · 교량 이용"
-    elif survey_key in ["성문","목책"]:
-        var structure: Dictionary=sim.structures[0 if survey_key=="성문" else 1]
-        note="적 시설 · 통행 제한" if float(structure["hp"])>0.0 else "파괴 · 통행 가능"
+    match survey_key:
+        "숲": note+=" · 은폐"
+        "고지": note+=" · 시야 확대"
+        "북측 교량","중앙 교량","남측 교량": note+=" · 도하로"
+        "하천": note="도하 불가 · 교량 이용" if sim.long_operation else note
+        "성문","목책":
+            var structure: Dictionary=sim.structures[0 if survey_key=="성문" else 1]
+            note="적 시설 · 통행 제한" if float(structure["hp"])>0.0 else "파괴 · 통행 가능"
+        "보급기지": note="군량·화살 보충" if sim.bases[0]["state"]=="가동" else str(sim.bases[0]["state"])
+        "점령 거점": note="성문 파괴 후 거점 확보"
     survey_detail.text="%s  %s\n%s" % [_grid_ref(point),survey_key,note]
 
 func _apply()->void:
@@ -453,7 +459,10 @@ func _draw()->void:
             for i in range(-2,3):
                 var y: float=i*0.28
                 var dx: float=sqrt(1.0-y*y)*radius.x*0.62
-                draw_line(center+Vector2(-dx,y*radius.y),center+Vector2(dx,y*radius.y-1),Color(0.30,0.44,0.40,0.45),1,true)
+                var start:=center+Vector2(-dx,y*radius.y)
+                draw_line(start,start+Vector2(dx*0.65,-1),Color(0.30,0.44,0.40,0.45),1,true)
+                var reed:=center+Vector2(dx*(0.50+0.22*cos(i*2.8)),y*radius.y)
+                draw_multiline(PackedVector2Array([reed,reed+Vector2(0,-7),reed,reed+Vector2(-3,-5),reed,reed+Vector2(3,-4)]),Color("#67775c"),1,true)
             _ink("습지",center+Vector2(-12,5),12,INK)
     for lane in range(3):
         var line:=PackedVector2Array()
@@ -499,6 +508,13 @@ func _draw()->void:
     draw_texture_rect_region(INK_RELIEF,Rect2(hc-ridge_extent*0.52,ridge_extent),Rect2(0,0,384,212))
     _ink("고지",hc+Vector2(39,-32),11,INK)
     draw_rect(Rect2(MAP.position,Vector2(MAP.size.x*0.30,MAP.size.y)),Color(0.20,0.35,0.45,0.05))
+    # Reserve visible army counters before placing the names of nearby sites.
+    var occupied: Array[Rect2]=[]
+    for unit in sim.units:
+        if float(unit["troops"])>0.0 and game.call("_visible_unit",unit):
+            var p: Vector2=_point(unit["pos"])
+            var half_width: float=maxf(24.0,font.get_string_size(str(unit["name"]),HORIZONTAL_ALIGNMENT_LEFT,-1,13).x*0.5+8.0)
+            occupied.append(Rect2(p-Vector2(half_width,35),Vector2(half_width*2,57)))
     # Cartographic objective symbols do not imply a castle on open ground.
     for site in sim.outposts:
         var p:Vector2=_point(site["pos"])
@@ -508,7 +524,7 @@ func _draw()->void:
         draw_circle(p,9,Color("#d8c39a"),true)
         draw_polyline(PackedVector2Array([p+Vector2(0,-7),p+Vector2(7,0),p+Vector2(0,7),p+Vector2(-7,0),p+Vector2(0,-7)]),color,1.6,true)
         if owner>=0: draw_circle(p,3,color)
-        _plate(str(site["name"]),p+Vector2(0,18),12,Color("#dbc58d"))
+        _site_label(str(site["name"]),p,18,12,occupied)
     # Actual fortification segments only: gate is part of the connected wall.
     for structure in sim.structures:
         var area:Rect2=structure["rect"]
@@ -524,7 +540,7 @@ func _draw()->void:
         if gate:
             var mid:Vector2=box.get_center()
             draw_line(mid-Vector2(5,0),mid+Vector2(5,0),INK,2.0,true)
-            _plate(str(structure["name"]),mid+Vector2(0,-18),11,Color("#dbc58d"))
+            _site_label(str(structure["name"]),mid,-18,11,occupied)
     for b in sim.bases:
         if int(b["side"])!=0 and game.fog_enabled and not sim.player_can_see(b["pos"]): continue
         var p:Vector2=_point(b["pos"])
@@ -639,6 +655,24 @@ func _art(tile:int,rect:Rect2,tint:Color=Color.WHITE)->void:
 func _portrait(name:String)->AtlasTexture:
     var side: int=0 if name in ["왕평","마속","위연","강유","관흥","장익"] else 1
     return game.call("_commander_icon",name,side)
+
+func _site_label(caption: String, location: Vector2, offset_y: int, size_px: int, occupied: Array[Rect2]) -> void:
+    var extent:=Vector2(font.get_string_size(caption,HORIZONTAL_ALIGNMENT_LEFT,-1,size_px).x+14,18)
+    var position_on_map:=location+Vector2(0,offset_y)
+    var least_overlap:=INF
+    for shift in [Vector2(0,offset_y),Vector2(0,-offset_y),Vector2(0,offset_y*2),Vector2(0,-offset_y*2),Vector2(-extent.x*0.64,offset_y),Vector2(extent.x*0.64,offset_y)]:
+        var candidate: Vector2=(location+shift).clamp(MAP.position+extent*0.5,MAP.end-extent*0.5)
+        var bounds:=Rect2(candidate-extent*0.5,extent).grow(2)
+        var overlap: float=0.0
+        for area in occupied: overlap+=bounds.intersection(area).get_area()
+        if overlap<least_overlap:
+            least_overlap=overlap
+            position_on_map=candidate
+            if is_zero_approx(overlap): break
+    if location.distance_to(position_on_map)>22:
+        draw_line(location,position_on_map,INK,1.1,true)
+    occupied.append(Rect2(position_on_map-extent*0.5,extent))
+    _plate(caption,position_on_map,size_px,Color("#dbc58d"))
 
 func _plate(t:String,p:Vector2,fs:int,c:Color)->void:
     var width:float=font.get_string_size(t,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+14.0
