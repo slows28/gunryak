@@ -742,8 +742,64 @@ func _capture() -> void:
     if not await _capture_field_judgment():
         quit(1)
         return
+    if not await _capture_deployment():
+        push_error("VISUAL_CAPTURE_FAIL: post deployment or supply ledger")
+        quit(1)
+        return
     print("GUNRYAK_VISUAL_CAPTURE_PASSED")
     quit(0)
+
+func _sheet_click(sheet: Control, point: Vector2) -> void:
+    for pressed in [true,false]:
+        var mouse:=InputEventMouseButton.new()
+        mouse.button_index=MOUSE_BUTTON_LEFT
+        mouse.pressed=pressed
+        mouse.position=sheet._point(point)
+        sheet._gui_input(mouse)
+
+func _deployment_frame(filename: String) -> bool:
+    game.map_layer.queue_redraw()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    return _save_frame(filename)
+
+func _capture_deployment() -> bool:
+    game.queue_free()
+    await process_frame
+    game=MAIN_SCENE.instantiate()
+    root.add_child(game)
+    game.set_process(false)
+    game._leave_title(5)
+    var sheet: Control=game.order_view
+    var depot:=Vector2(508,742)
+    var advisor:=Vector2(690,1050)
+    sheet.post_buttons["보급기지"].pressed.emit()
+    _sheet_click(sheet,depot)
+    sheet.post_buttons["책사"].pressed.emit()
+    _sheet_click(sheet,advisor)
+    if not (game.sim.bases[0]["pos"] as Vector2).is_equal_approx(depot) or not (game.sim.commanders[0]["pos"] as Vector2).is_equal_approx(advisor) or not sheet.drafts.is_empty(): return false
+    if not await _deployment_frame("posts_orders.png"): return false
+    sheet.launch.pressed.emit()
+    game.camera_center=depot
+    game.camera_zoom=1.25
+    game._clamp_camera()
+    game._refresh_hud()
+    if game.sim.bases[0]["state"]!="설치": return false
+    if not await _deployment_frame("depot_building.png"): return false
+    for tick in range(32): game.sim.step(0.1)
+    game._refresh_hud()
+    if not await _deployment_frame("depot_active.png"): return false
+    if not game.supply_plate_area.has_area(): return false
+    var click: Vector2=game.MAP_TOP_LEFT+game.MAP_SIZE*0.5+(game.supply_plate_area.get_center()-game.camera_center)*game.camera_zoom
+    game._map_select(click)
+    if not game.supply_ledger.visible or game.supply_ledger.rows.size()!=6: return false
+    var priority: OptionButton=game.supply_ledger.rows[1]["priority"]
+    priority.select(2)
+    priority.item_selected.emit(2)
+    if game.sim.find_unit(1)["supply_priority"]!=2: return false
+    if not await _deployment_frame("depot_ledger.png"): return false
+    print("POST_DEPLOYMENT_VISUAL_PASS")
+    return true
 
 func _capture_field_judgment() -> bool:
     game.queue_free()

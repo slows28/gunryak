@@ -23,6 +23,7 @@ var layout_scale: float = 1.0
 const TURN_SECONDS: float = 18.0
 const LAST_TURN: int = 10
 const MAX_SECONDS: float = TURN_SECONDS * float(LAST_TURN)
+const BASE_BUILD_SECONDS: float = 3.0
 const SUPPLY_RADIUS: float = 182.0
 const AI_VISION_RANGE: float = 285.0
 const MAX_TROOPS: float = 5000.0
@@ -229,6 +230,9 @@ func start() -> void:
         return
     if wide_field and not six_armies:
         _deploy_detachments()
+    if bases[0]["state"]=="착공 예정":
+        bases[0]["state"]="설치"
+        bases[0]["build_timer"]=BASE_BUILD_SECONDS
     started = true
     _log("전투 개시. " + scenario_goal)
 
@@ -275,7 +279,7 @@ func request_order(unit_id: int, mission: String, policy: String, partner: int =
 func reposition_commander(forward: bool) -> void:
     if finished:
         return
-    commanders[0]["goal"] = layout_point(Vector2(270,346) if forward else Vector2(54,515))
+    commanders[0]["goal"] = layout_point(Vector2(270,346)) if forward else commanders[0].get("home",layout_point(Vector2(54,515)))
     _log("책사 이동: %s" % ("전진 지휘" if forward else "본진 복귀"))
 
 func step(dt: float) -> void:
@@ -433,12 +437,13 @@ func _supply_logic(dt: float) -> void:
             base["pos"] = bp.move_toward(base["target"], 54.0 * dt)
             if (base["pos"] as Vector2).distance_to(base["target"]) <= 3.0:
                 base["state"] = "설치"
-                base["build_timer"] = 3.0
+                base["build_timer"] = BASE_BUILD_SECONDS
         elif str(base["state"]) == "설치":
             base["build_timer"] = float(base["build_timer"]) - dt
             if float(base["build_timer"]) <= 0.0:
                 base["state"] = "가동"
-                _log("%s 보급기지 재설치 완료" % ("아군" if side == 0 else "적군"))
+                base["build_timer"] = 0.0
+                _log("%s 보급기지 구축 완료 · 배급 개시" % ("아군" if side == 0 else "적군"))
         elif not bool(base.get("fixed", false)) and battle_time - float(base["last_relocate"]) > 26.0:
             var desired: Vector2 = _best_supply_position(side)
             if bp.distance_to(desired) > 135.0:
@@ -498,11 +503,14 @@ func _supply_under_threat(side: int) -> bool:
                 return true
     return false
 
+func supply_radius() -> float:
+    return SUPPLY_RADIUS*1.6 if six_armies else SUPPLY_RADIUS
+
 func _has_supply(side: int, position: Vector2) -> bool:
     for base in bases:
         if int(base["side"]) == side and bool(base["alive"]) and str(base["state"]) == "가동":
             var bp: Vector2 = base["pos"]
-            if bp.distance_to(position) <= (SUPPLY_RADIUS*1.6 if six_armies else SUPPLY_RADIUS):
+            if bp.distance_to(position) <= supply_radius():
                 return true
     return false
 
@@ -2205,6 +2213,34 @@ func swap_generals(first_id: int, second_id: int) -> bool:
         var temporary: Variant = first[key]
         first[key] = second[key]
         second[key] = temporary
+    return true
+
+# Posts use the friendly half of the field. Corps deployment has its own, narrower area.
+func post_placement_issue(post: String, point: Vector2) -> String:
+    if started or finished: return "개전 전에만 배치할 수 있습니다."
+    if post not in ["보급기지","책사"]: return "배치할 대상을 선택하세요."
+    if not point.is_finite() or _field_point(point)!=point or point.x>field_size.x*0.5:
+        return "지도 서쪽의 아군 배치 구역을 선택하세요."
+    var terrain:=terrain_at(point)
+    if terrain=="하천": return "강물 위에는 배치할 수 없습니다."
+    if post=="보급기지" and terrain in ["교량","습지"]: return "기지는 다리와 습지를 벗어난 땅에 구축하세요."
+    for structure in structures:
+        if structure["hp"]>0 and (structure["rect"] as Rect2).has_point(point):
+            return "구조물을 벗어난 위치를 선택하세요."
+    return ""
+
+func place_post(post: String, point: Vector2) -> bool:
+    if not post_placement_issue(post,point).is_empty(): return false
+    if post=="책사":
+        commanders[0]["pos"]=point
+        commanders[0]["goal"]=point
+        commanders[0]["home"]=point
+    else:
+        var base: Dictionary=bases[0]
+        base["pos"]=point
+        base["target"]=point
+        base["fixed"]=true
+        base["state"]="착공 예정"
     return true
 
 func place_unit(unit_id: int, position: Vector2) -> bool:

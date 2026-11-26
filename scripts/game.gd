@@ -84,6 +84,8 @@ var start_btn: Button
 var pause_btn: Button
 var speed_btn: Button
 var apply_btn: Button
+var supply_ledger:=preload("res://scripts/supply_ledger.gd").new()
+var supply_plate_area:=Rect2()
 var planning_dialog: AcceptDialog
 var timeline_dialog: AcceptDialog
 var timeline_view: TextEdit
@@ -218,6 +220,7 @@ func _ready() -> void:
     dust_texture = TerrainArt.dust_cloud()
     _reset_camera()
     _build_interface()
+    add_child(supply_ledger)
     _build_presentation()
     _setup_sound()
     _build_title_screen()
@@ -879,7 +882,11 @@ func _process(delta: float) -> void:
         _play_cue(520.0, 0.28)
         _show_outcome()
 
+func open_supply_ledger() -> void:
+    if sim.started: supply_ledger.open_for(sim)
+
 func _refresh_hud() -> void:
+    if supply_ledger.visible: supply_ledger.refresh()
     var phase: String = "준비 중"
     clock_label.text=_operation_clock(sim.operation_elapsed())
     battle_title_label.text = sim.scenario_title
@@ -1430,6 +1437,10 @@ func _map_select(mouse_pos: Vector2) -> void:
     var nearest_id: int = -1
     var best: float = 47.0/maxf(0.5,camera_zoom)
     var world: Vector2 = _world_mouse(mouse_pos)
+    if sim.started and sim.bases[0]["alive"] and supply_plate_area.has_point(world):
+        open_supply_ledger()
+        accept_event()
+        return
     for unit in sim.units:
         if float(unit["troops"]) <= 0.0 or not _visible_unit(unit) or unit.has("parent_id"): continue
         var i: int=int(unit["id"])
@@ -1556,6 +1567,7 @@ func _draw_map(_canvas: Control) -> void:
             var progress: float = clampf(float(site["progress"]) / sim.capture_duration(), 0.0, 1.0)
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60, 4)), Color("#243138"))
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60.0 * progress, 4)), COL_BLUE if int(site["challenger"]) == 0 else COL_RED)
+    supply_plate_area=Rect2()
     for base in sim.bases:
         if not bool(base["alive"]):
             continue
@@ -1564,12 +1576,18 @@ func _draw_map(_canvas: Control) -> void:
         var p: Vector2 = _screen(base["pos"])
         var side: int = int(base["side"])
         var accent: Color = COL_BLUE if side == 0 else COL_RED
-        if str(base["state"]) == "가동" and not sim.started:
-            map_layer.draw_arc(p,WarSim.SUPPLY_RADIUS,0.0,TAU,56,Color(accent,0.18),1.0)
+        if not sim.started:
+            map_layer.draw_arc(p,sim.supply_radius(),0.0,TAU,56,Color(accent,0.18),1.0)
         _draw_field_site(2,p,0.96)
         _paint_tile(44,Rect2(p+Vector2(27,-3),Vector2(32,28)))
         map_layer.draw_circle(p+Vector2(15,-10),4.0,accent)
-        _map_plate("군량 %d" % int(base.get("stock",100.0)),p+Vector2(0,32),accent,11)
+        var caption: String="군량 %d" % int(base["stock"])
+        if base["state"]=="설치": caption="기지 구축 · %d초" % ceili(base["build_timer"]*sim.operation_scale())
+        elif base["state"]=="착공 예정": caption="기지 예정지"
+        elif base["state"]=="이동": caption="보급대 이동"
+        elif side==0 and sim.started: caption="배급 명부 · 재고 %d" % int(base["stock"])
+        var plate:=_map_plate(caption,p+Vector2(0,32),accent,11)
+        if side==0: supply_plate_area=plate
     for commander in sim.commanders:
         if fog_enabled and not sim.finished and int(commander["side"]) != 0 and not sim.player_can_see(commander["pos"]):
             continue
@@ -3582,7 +3600,7 @@ func _primary_button(btn: Button) -> void:
     btn.add_theme_stylebox_override("hover",_ui_box(Color("#be503c")))
     btn.add_theme_stylebox_override("pressed",_ui_box(Color("#853022")))
 
-func _map_plate(value: String,p: Vector2,accent: Color,fs: int) -> void:
+func _map_plate(value: String,p: Vector2,accent: Color,fs: int) -> Rect2:
     var pixel_font: int = clampi(roundi(float(fs)*camera_zoom),12,14)
     var w: float = korean_font.get_string_size(value,HORIZONTAL_ALIGNMENT_LEFT,-1,pixel_font).x+14.0
     var origin: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
@@ -3595,12 +3613,13 @@ func _map_plate(value: String,p: Vector2,accent: Color,fs: int) -> void:
         if prior.grow(3.0/camera_zoom).intersects(world_rect): blocked=true
     if blocked:
         map_layer.draw_set_transform(origin,0.0,Vector2.ONE*camera_zoom)
-        return
+        return Rect2()
     map_label_areas.append(world_rect)
     map_layer.draw_rect(rect,Color(0.07,0.10,0.09,0.86))
     map_layer.draw_rect(Rect2(rect.position,Vector2(2,21)),accent)
     _draw_string(value,Vector2(-w*0.5+7,3),pixel_font,COL_TEXT)
     map_layer.draw_set_transform(origin,0.0,Vector2.ONE*camera_zoom)
+    return world_rect
 
 func _refresh_visibility() -> void:
     # Only an indication of the same actual player visibility used for unit disclosure.

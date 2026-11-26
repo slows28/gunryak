@@ -43,6 +43,9 @@ var destination_label: Label
 var title: Label
 var launch: Button
 var apply: Button
+var post_buttons: Dictionary={}
+var post_mode: String=""
+var post_cursor:=Vector2.INF
 var placement: CheckButton
 var selected_id: int=0
 var destination: Vector2=Vector2.ZERO
@@ -76,11 +79,18 @@ func configure(owner_game: Control,used_font: Font) -> void:
     add_child(roster)
     roster.item_selected.connect(func(index: int): _select(int(roster.get_item_metadata(index))))
     placement=CheckButton.new()
-    placement.text="초기 배치"
-    placement.position=Vector2(1079,420)
+    placement.text="군단 초기 배치"
+    placement.position=Vector2(1079,410)
     placement.tooltip_text="아군 배치 구역 안에서 군단의 출발점 이동"
     add_child(placement)
-    map_hint=_label("지도에서 목적지 지정\n군단 말을 끌어도 됩니다.",Vector2(1082,460),Vector2(170,50),13,Color("#cdd8d9"))
+    placement.toggled.connect(func(enabled: bool):
+        if enabled: _set_post_mode(""))
+    for post: String in ["보급기지","책사"]:
+        var button:=_button("기지 구축" if post=="보급기지" else "책사 배치",Vector2(1078 if post=="보급기지" else 1169,445),Vector2(86,33),_pick_post.bind(post))
+        button.toggle_mode=true
+        button.add_theme_font_size_override("font_size",14)
+        post_buttons[post]=button
+    map_hint=_label("지도에서 목적지 지정\n군단 말을 끌어도 됩니다.",Vector2(1082,480),Vector2(170,33),12,Color("#cdd8d9"))
     _label("행군로",Vector2(1082,519),Vector2(164,24),16,GOLD)
     route_summary=_label("",Vector2(1082,548),Vector2(171,60),13,Color("#f4e6c9"))
     route_summary.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
@@ -181,6 +191,13 @@ func open(mid_battle:bool=false)->void:
     launch.text="전장 복귀" if mid_battle else "전투 개시"
     placement.disabled=mid_battle
     placement.set_pressed_no_signal(false)
+    post_mode=""
+    post_cursor=Vector2.INF
+    for post: String in post_buttons:
+        post_buttons[post].set_pressed_no_signal(false)
+    post_buttons["보급기지"].text="배급 명부" if mid_battle else "기지 구축"
+    post_buttons["보급기지"].toggle_mode=not mid_battle
+    post_buttons["책사"].visible=not mid_battle
     roster.clear()
     for id in sim.command_ids(0):
         var u:Dictionary=sim.find_unit(id)
@@ -284,7 +301,7 @@ func _update_destination()->void:
         march_diagram=sim.LinkedMarch.preview(sim,unit,_selected_partner(),projected)
     destination_label.text=_destination_text(destination) if has_destination else "지도에서 목표를 선택"
     march_preview.text=march_diagram.get("caption","")
-    map_hint.text="지도에서 목적지 지정\n군단 말을 끌어도 됩니다." if march_diagram.is_empty() else "행군 대형\n%s 속도 기준" % march_diagram["limiter"]
+    _refresh_map_hint()
     _refresh_route_summary()
     _refresh_survey()
     var problem: String = "지도에서 목적지를 먼저 선택하십시오."
@@ -303,6 +320,42 @@ func _update_destination()->void:
         progress_label.text="군단 선택 → 목적지 지정 → 지시 확정"
     if in_battle or draft_dirty:
         feedback.text=problem if not problem.is_empty() else ("도착 전까지 현재 지시를 유지합니다." if in_battle else "지시를 확정하거나 다른 군단의 계획을 작성할 수 있습니다.")
+
+func _refresh_map_hint() -> void:
+    if post_mode=="":
+        map_hint.text="지도에서 목적지 지정\n군단 말을 끌어도 됩니다." if march_diagram.is_empty() else "행군 대형\n%s 속도 기준" % march_diagram["limiter"]
+        return
+    if post_cursor==Vector2.INF:
+        map_hint.text="아군 구역에 "+post_mode+" 위치 지정"
+        return
+    if not sim.post_placement_issue(post_mode,post_cursor).is_empty():
+        map_hint.text="배치 불가 · 다른 땅 선택"
+    elif post_mode=="보급기지":
+        var count:=0
+        for unit in sim.units:
+            if unit["side"]==0 and unit["troops"]>0 and post_cursor.distance_to(unit["pos"])<=sim.supply_radius(): count+=1
+        map_hint.text="배급권 안 아군 %d개 군단\n개전 후 %d초에 배급 시작" % [count,roundi(sim.BASE_BUILD_SECONDS*sim.operation_scale())]
+    else:
+        map_hint.text="전령 출발지 · "+_grid_ref(post_cursor)+"\n클릭해 책사 위치 확정"
+
+func _pick_post(post: String) -> void:
+    if in_battle:
+        if post=="보급기지": game.open_supply_ledger()
+        return
+    _set_post_mode("" if post==post_mode else post)
+
+func _set_post_mode(mode: String) -> void:
+    post_mode=mode
+    drag_origin=Vector2.ZERO
+    drag_id=-1
+    dragging=false
+    post_cursor=Vector2.INF if mode=="" else (sim.bases[0]["pos"] if mode=="보급기지" else sim.commanders[0]["pos"])
+    for post: String in post_buttons: post_buttons[post].set_pressed_no_signal(post==mode)
+    if mode!="":
+        placement.set_pressed_no_signal(false)
+        feedback.text="기지 위치를 직접 정하면 전투 중 그 자리에 머뭅니다." if mode=="보급기지" else "책사를 배치할 위치를 클릭하세요. 전령은 책사가 있는 곳에서 출발합니다."
+    _refresh_map_hint()
+    queue_redraw()
 
 func _grid_ref(point: Vector2) -> String:
     var relative: Vector2=point/sim.field_size
@@ -397,6 +450,26 @@ func _world(p:Vector2)->Vector2:
     return ((p-MAP.position)/MAP.size*sim.field_size).clamp(Vector2(1,1),sim.field_size-Vector2(1,1))
 
 func _gui_input(event:InputEvent)->void:
+    if post_mode!="":
+        if event is InputEventMouseMotion:
+            post_cursor=_world(event.position) if MAP.has_point(event.position) else Vector2.INF
+            _refresh_map_hint()
+            queue_redraw()
+        elif event is InputEventMouseButton and event.button_index==MOUSE_BUTTON_LEFT:
+            if event.pressed: drag_origin=event.position
+            elif MAP.has_point(drag_origin) and MAP.has_point(event.position):
+                var point:=_world(event.position)
+                var problem: String=sim.post_placement_issue(post_mode,point)
+                if problem.is_empty() and sim.place_post(post_mode,point):
+                    feedback.text="%s %s · %s" % [post_mode,_grid_ref(point),"개전과 함께 구축 시작" if post_mode=="보급기지" else "책사 배치 완료"]
+                    survey_sites=sim.training_sites()
+                    _refresh_survey()
+                    _set_post_mode("")
+                else:
+                    feedback.text=problem
+                drag_origin=Vector2.ZERO
+            accept_event()
+        return
     if event is InputEventMouseButton and event.button_index==MOUSE_BUTTON_LEFT:
         if event.pressed and MAP.has_point(event.position):
             drag_origin=event.position
@@ -564,7 +637,22 @@ func _draw()->void:
             var mid:Vector2=box.get_center()
             draw_line(mid-Vector2(5,0),mid+Vector2(5,0),INK,2.0,true)
             _site_label(str(structure["name"]),mid,-18,11,occupied)
+    if post_mode!="":
+        var edge:=_point(Vector2(sim.field_size.x*0.5,0))
+        draw_rect(Rect2(edge,MAP.end-edge),Color(0.18,0.13,0.10,0.16))
+        draw_dashed_line(edge,Vector2(edge.x,MAP.end.y),INK,1.5,7.0)
+    if post_mode=="보급기지" or sim.bases[0]["state"]=="착공 예정":
+        var center: Vector2=post_cursor if post_mode=="보급기지" and post_cursor!=Vector2.INF else sim.bases[0]["pos"]
+        if sim.post_placement_issue("보급기지",center).is_empty():
+            var previous:=_point(center+Vector2.RIGHT*sim.supply_radius())
+            for step in range(1,65):
+                var next:=_point(center+Vector2.from_angle(TAU*step/64.0)*sim.supply_radius())
+                if MAP.has_point(previous) and MAP.has_point(next):
+                    draw_line(previous,next,Color("#387065"),1.8,true)
+                previous=next
     for b in sim.bases:
+        if not b["alive"]: continue
+        if b["side"]==0: continue
         if int(b["side"])!=0 and game.fog_enabled and not sim.player_can_see(b["pos"]): continue
         var p:Vector2=_point(b["pos"])
         draw_rect(Rect2(p-Vector2(8,8),Vector2(16,16)),INK,false,2)
@@ -624,6 +712,22 @@ func _draw()->void:
         if float(u["troops"])<=0: continue
         if not game.call("_visible_unit",u): continue
         _piece(u,_point(u["pos"]),int(u["id"])==selected_id)
+    var depot: Dictionary=sim.bases[0]
+    var advisor:=_point(sim.commanders[0]["pos"])
+    var depot_point:=_point(depot["pos"])
+    if depot["alive"]:
+        draw_rect(Rect2(depot_point-Vector2(6,6),Vector2(12,12)),Color("#2a534d"))
+        draw_rect(Rect2(depot_point-Vector2(6,6),Vector2(12,12)),Color("#eedca8"),false,1.4)
+        _post_label("기지 예정지" if depot["state"]=="착공 예정" else "보급기지",depot_point,1)
+    draw_circle(advisor,5,Color("#513c52"))
+    draw_circle(advisor,5,Color("#ead6a4"),false,1.4,true)
+    _post_label("책사",advisor,-1)
+    if post_mode!="" and post_cursor!=Vector2.INF:
+        var mark:=_point(post_cursor)
+        var ink:=BLUE if sim.post_placement_issue(post_mode,post_cursor).is_empty() else RED
+        draw_arc(mark,10,0,TAU,32,ink,2,true)
+        draw_line(mark-Vector2(5,0),mark+Vector2(5,0),ink,1.5)
+        draw_line(mark-Vector2(0,5),mark+Vector2(0,5),ink,1.5)
     if dragging and drag_id>=0 and MAP.has_point(drag_position):
         var u:Dictionary=sim.find_unit(drag_id)
         if not u.is_empty(): _piece(u,drag_position,true)
@@ -654,6 +758,11 @@ func _draw()->void:
     _ink("행군로",legend+Vector2(32,4),12,INK)
     _dashed(legend+Vector2(88,0),legend+Vector2(116,0),Color("#73537c"))
     _ink("협동",legend+Vector2(122,4),12,INK)
+
+func _post_label(caption: String, point: Vector2, side: int) -> void:
+    var offset: float=font.get_string_size(caption,HORIZONTAL_ALIGNMENT_LEFT,-1,12).x*0.5+14
+    var pos: Vector2=(point+Vector2(side*offset,side*11)).clamp(MAP.position+Vector2(offset,12),MAP.end-Vector2(offset,12))
+    _plate(caption,pos,12,Color("#e9dfbc"))
 
 func _ink(t:String,p:Vector2,fs:int,c:Color)->void:
     if font!=null: draw_string(font,p,t,HORIZONTAL_ALIGNMENT_LEFT,-1,fs,c)
