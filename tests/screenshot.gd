@@ -764,6 +764,10 @@ func _capture() -> void:
     if not await _capture_linked_march():
         quit(1)
         return
+    if not await _capture_opening_screen():
+        push_error("VISUAL_CAPTURE_FAIL: opening ranks and screened archer")
+        quit(1)
+        return
     if not await _capture_field_judgment():
         quit(1)
         return
@@ -1438,4 +1442,29 @@ func _capture_messenger() -> bool:
     if not await _deployment_frame("relief_reply_inbox.png"): return false
     print("RELIEF_RETURNED ",letter["relief_answer"])
     game.journal_dialog.hide()
+    return true
+
+func _capture_opening_screen() -> bool:
+    game.queue_free()
+    await process_frame
+    game=MAIN_SCENE.instantiate()
+    root.add_child(game)
+    game.set_process(false)
+    await process_frame
+    game._leave_title(5)
+    var drill=preload("res://tests/linked_march.gd")
+    drill.stage_opening_screen(game.sim)
+    game._start()
+    game.selected_id=6
+    game._select_unit()
+    game.camera_center=Vector2(710,440)
+    game.camera_zoom=1.32
+    game._clamp_camera()
+    for tick in range(240):
+        if tick==70: drill.introduce_screen_contact(game.sim)
+        game.sim.step(0.1)
+        if tick in [40,239]:
+            game.render_clock=game.sim.battle_time
+            game._refresh_hud()
+            if not await _deployment_frame("screen_assembly.png" if tick==40 else "screen_firing.png"): return false
     return true

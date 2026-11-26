@@ -2,13 +2,13 @@ extends RefCounted
 ## March orders for one movement tick, calculated before any corps takes its step.
 ## Local offsets use forward / right coordinates, independent of the faction.
 const COOPERATIVE_MISSIONS = ["전열 엄호","측후방 기동","구원 지원","궁병 보호"]
-const INTERRUPTS = ["후퇴","패주","재집결","전술 재집결","휴식","탄약 보충","보급 복귀","전술 철수","거리 유지","측면 방어","긴급 방어","긴급 지원","아군 보호","공격 지속","궁병 보호","교전","반격"]
+const INTERRUPTS = ["후퇴","패주","재집결","전술 재집결","휴식","탄약 보충","보급 복귀","전술 철수","거리 유지","측면 방어","긴급 방어","긴급 지원","아군 보호","공격 지속","궁병 보호","교전","반격","전열 유지","후열 정렬","엄호 사격"]
 
 static func _partner(unit: Dictionary, now: float) -> int:
     if int(unit["assigned_link"])>=0: return unit["assigned_link"]
     if now<float(unit["ai_role_until"]) and unit["ai_role"] in COOPERATIVE_MISSIONS:
         return unit["ai_partner"]
-    return unit["link_id"] if unit["mission"] in COOPERATIVE_MISSIONS else -1
+    return unit["link_id"] if unit["mission"] in COOPERATIVE_MISSIONS else int(unit.get("opening_screen",-1))
 
 static func _available(unit: Dictionary) -> bool:
     return unit["troops"]>0 and not unit["routed"] and unit["mission"]!="철수" and unit["action"] not in INTERRUPTS
@@ -162,7 +162,8 @@ static func _plan_group(sim, group: Array[Dictionary], previous: Dictionary, dt:
         crossing=origin.distance_to(entry)<135.0 or (origin.x-sim.river_x(origin.y))*bank>=0 or (prior.get("phase","")=="도하" and prior.get("bank",0)==bank)
         if not crossing: target=entry
     var forward: Vector2=prior.get("forward",guide["facing"])
-    if origin.distance_to(target)>6.0: forward=origin.direction_to(target)
+    var settling: bool=prior.get("target",Vector2.INF)==target and origin.distance_to(target)<42.0
+    if not settling and origin.distance_to(target)>6.0: forward=origin.direction_to(target)
     if forward.is_zero_approx(): forward=Vector2.RIGHT if guide["side"]==0 else Vector2.LEFT
     if crossing or deck: forward=Vector2(bank,0)
     var right:=Vector2(-forward.y,forward.x)
@@ -183,7 +184,27 @@ static func _plan_group(sim, group: Array[Dictionary], previous: Dictionary, dt:
             var guide_bank: int=1 if origin.x>=sim.river_x(origin.y) else -1
             if sim.long_operation and unit["id"]!=guide["id"] and not sim.near_crossing(point.y) and (point.x-sim.river_x(point.y))*guide_bank<34.0:
                 point.x=sim.river_x(point.y)+guide_bank*34.0
-            if Vector2(unit["pos"]).distance_to(point)>42.0: waiting=true
+            # When deployed ahead of its guide, the rear rank passes beside
+            # the infantry. Walking straight through it shoves the guide back.
+            var member: Vector2=unit["pos"]
+            if unit["type"]=="궁병" and guide["type"]=="보병":
+                var depth: float=(member-origin).dot(forward)
+                var across: float=(member-origin).dot(right)
+                var clearance: float=clampf(sim._body_distance(guide,unit)+20.0,110.0,160.0)
+                var pass_side: float=previous.get(unit["id"],{}).get("pass_side",0.0)
+                if pass_side==0.0 and depth>0 and Geometry2D.get_closest_point_to_segment(origin,member,point).distance_to(origin)<clearance:
+                    pass_side=signf(across) if absf(across)>1.0 else (1.0 if int(unit["id"])%2==0 else -1.0)
+                    var outside:=origin+right*pass_side*clearance
+                    if sim._field_point(outside).distance_to(outside)>8.0 or sim.in_open_water(outside) or sim._river_separates(member,outside):
+                        pass_side=-pass_side
+                if pass_side!=0.0 and depth>local.x+3.0:
+                    var along:=depth if across*pass_side<clearance-10.0 and depth>0.0 else local.x
+                    var bypass: Vector2=sim._field_point(origin+right*pass_side*clearance+forward*along)
+                    if (bypass-origin).dot(right)*pass_side>=clearance-10.0 and not sim.in_open_water(bypass) and not sim._river_separates(member,bypass):
+                        point=bypass
+                        slot["pass_side"]=pass_side
+                        waiting=true
+            if member.distance_to(point)>42.0: waiting=true
         slot["point"]=point
     var shift:=Vector2.ZERO
     if not waiting and not crossing and not deck: shift=origin.move_toward(target,pace*dt)-origin
@@ -194,5 +215,5 @@ static func _plan_group(sim, group: Array[Dictionary], previous: Dictionary, dt:
         if not waiting and not crossing and origin.distance_to(target)<=2.0: phase="대형 유지"
         if deck: phase="교량 집결" if waiting else "대형 유지"
         var peer: Dictionary=guide if id!=guide["id"] else (group[1] if group[0]["id"]==id else group[0])
-        plans[id]={"goal":sim._field_point(slot["point"]+shift),"forward":forward,"pace":pace,
+        plans[id]={"pass_side":slot.get("pass_side",0.0),"target":target,"goal":sim._field_point(slot["point"]+shift),"forward":forward,"pace":pace,
             "role":slot["role"],"phase":phase,"slowest":slowest["name"],"peer":peer["id"],"bridge":bridge,"bank":bank,"deck_target":target if deck else Vector2.INF}

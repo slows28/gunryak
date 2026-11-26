@@ -281,6 +281,7 @@ func start() -> void:
         supply_crews[0]["state"]="구축"
         bases[0]["state"]="설치"
         bases[0]["build_timer"]=BASE_BUILD_SECONDS
+    if long_operation: _pair_opening_ranks()
     for unit in units: unit["supply_mark"]=unit["pos"]
     started = true
     _log("전투 개시. " + scenario_goal)
@@ -914,7 +915,7 @@ func _decide(unit: Dictionary) -> void:
         var screen: Dictionary = _infantry_screen(unit)
         if not screen.is_empty():
             var screen_pos: Vector2 = screen["pos"]
-            var behind: Vector2 = -Vector2(screen["facing"]).normalized()
+            var behind: Vector2 = -_screen_forward(screen,nearest) if long_operation else -Vector2(screen["facing"]).normalized()
             goal = screen_pos+behind*100.0
             action = "전열 지원"
             reason = "보병 엄호 하에 후방 사격 위치 확보"
@@ -944,6 +945,12 @@ func _decide(unit: Dictionary) -> void:
             action=choice["action"]
             reason=choice["reason"]
             goal=choice["goal"]
+    if long_operation and not nearest.is_empty() and unit["field_choice"].is_empty():
+        var station:=_screen_station(unit,nearest,action)
+        if not station.is_empty():
+            action=station["action"]
+            reason=station["reason"]
+            goal=station["goal"]
     if scenario_id==2 and side==1 and enemy_distance>165.0 and not unit["routed"] and str(unit["mission"])=="중앙 진격" and action in ["진격","거점 점령","명령 수행"]:
         action="본진 공략"
         reason="적 본진 점거"
@@ -969,7 +976,7 @@ func _decide(unit: Dictionary) -> void:
         elif str(unit["type"]) == "궁병": wanted = "안행진"
         elif action in ["돌파","반격","교전","공격 지속"]: wanted = "어린진"
         else: wanted = "학익진"
-    if six_armies and action in ["지정 지역 사수","예비 대기"] and str(unit["type"])=="보병": wanted="방진"
+    if six_armies and action in ["지정 지역 사수","예비 대기","전열 유지"] and str(unit["type"])=="보병": wanted="방진"
     if six_armies and action in ["협동 엄호","궁병 보호","아군 보호"] and str(unit["type"])=="보병": wanted="방진"
     if six_armies and action in ["협동 우회","협동 대기"] and str(unit["type"])=="기병": wanted="봉시진"
     if long_operation and float(unit["bridge_y"])>=0.0 and absf(pos.x-river_x(pos.y))<130.0:
@@ -1052,7 +1059,8 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var pos: Vector2 = unit["pos"]
     var goal: Vector2 = unit["goal"]
     var enemy: Dictionary = _nearest_visible_enemy(unit)
-    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호","아군 보호"]:
+    var dressing_line: bool=long_operation and not enemy.is_empty() and unit["action"] in ["후열 정렬","엄호 사격","전열 유지","거리 유지","궁병 보호","협동 엄호"]
+    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호","아군 보호","후열 정렬","엄호 사격","전열 유지"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
@@ -1092,7 +1100,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         actual_move = moved
         if moved.length_squared() > 0.03:
             unit["fatigue"] = minf(100.0, float(unit["fatigue"]) + moved.length() * (0.030 if str(unit["type"]) == "기병" else 0.042) * (0.48 if wide_field else 1.0))
-            unit["facing"] = moved.normalized()
+            if not dressing_line: unit["facing"] = moved.normalized()
     if not march.is_empty() and (march["phase"]=="연계 행군" or pos.distance_to(goal)<5):
         unit["facing"]=march["forward"]
     unit["motion_speed"] = actual_move.length()/maxf(dt,0.001)
@@ -1105,10 +1113,14 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     if six_armies: _emit_march_dust(unit,pos,actual_move)
     if str(unit["type"]) == "기병":
         _update_charge(unit, actual_move, dt)
-    if not enemy.is_empty() and pos.distance_to(enemy["pos"]) < 168.0 and str(unit["action"]) not in ["후퇴", "패주", "재집결", "측면 우회", "기지 습격", "보급 복귀", "탄약 보충", "매복","협동 우회","협동 엄호"]:
+    if not enemy.is_empty() and (dressing_line or pos.distance_to(enemy["pos"]) < 168.0) and (dressing_line or str(unit["action"]) not in ["후퇴", "패주", "재집결", "측면 우회", "기지 습격", "보급 복귀", "탄약 보충", "매복","협동 우회","협동 엄호"]):
         var front: Vector2 = (enemy["pos"] as Vector2) - (unit["pos"] as Vector2)
         if front.length_squared() > 1.0:
-            unit["facing"] = (unit["facing"] as Vector2).lerp(front.normalized(), minf(1.0, dt * 2.0)).normalized()
+            if dressing_line:
+                var heading: Vector2=unit["facing"]
+                unit["facing"]=heading.rotated(clampf(heading.angle_to(front),-2.0*dt,2.0*dt)) if not heading.is_zero_approx() else front.normalized()
+            else:
+                unit["facing"] = (unit["facing"] as Vector2).lerp(front.normalized(),minf(1.0,dt*2.0)).normalized()
 
 
 # M2-1: Keep formation bodies separate. This applies to friends and enemies.
@@ -1994,6 +2006,7 @@ func _support_target(unit: Dictionary) -> Dictionary:
     for ally in units:
         if int(ally["side"]) != int(unit["side"]) or int(ally["id"]) == int(unit["id"]) or float(ally["troops"]) <= 0.0:
             continue
+        if ally.get("opening_screen",-1)==unit["id"]: continue
         if p.distance_to(ally["pos"]) > 210.0:
             continue
         var pressure: float = float(ally["front_pressure"])
@@ -3316,6 +3329,96 @@ func command_ids(side: int) -> Array[int]:
             ids.append(int(unit["id"]))
     return ids
 
+# Automatic opening ranks share an existing objective. A delivered player order
+# releases the pair through _reset_cooperation, just like a changed manual link.
+func _pair_opening_ranks() -> void:
+    if not convoy.is_empty(): return
+    var claimed: Dictionary={}
+    for u in units:
+        if int(u["assigned_link"])>=0:
+            claimed[u["id"]]=true
+            claimed[u["assigned_link"]]=true
+    for bow in units:
+        if bow["type"]!="궁병" or not _free_opening_rank(bow) or claimed.has(bow["id"]): continue
+        var best: Dictionary={}
+        var distance:=460.0
+        for foot in units:
+            if foot["type"]!="보병" or foot["side"]!=bow["side"] or foot["mission"]!=bow["mission"]: continue
+            if claimed.has(foot["id"]) or not _free_opening_rank(foot): continue
+            var gap: float=Vector2(foot["pos"]).distance_to(bow["pos"])
+            if gap<distance and not _river_separates(foot["pos"],bow["pos"]):
+                distance=gap
+                best=foot
+        if not best.is_empty():
+            bow["opening_screen"]=best["id"]
+            claimed[best["id"]]=true
+
+func _free_opening_rank(unit: Dictionary) -> bool:
+    return unit["troops"]>=600 and not unit["routed"] and not unit["reserve"] and not unit["has_destination"] and not unit["defense_set"] and unit["waypoints"].is_empty() and unit.get("march_sequence",0)==0
+
+# The battle line follows the order or a visible opponent. A sideways step to
+# separate two formations must not send the rear rank around its own front.
+func _screen_forward(anchor: Dictionary, enemy: Dictionary) -> Vector2:
+    var p: Vector2=anchor["pos"]
+    if not enemy.is_empty() and p.distance_to(enemy["pos"])>8.0:
+        return p.direction_to(enemy["pos"])
+    var march: Dictionary=march_plans.get(anchor["id"],{})
+    if not march.is_empty(): return march["forward"]
+    var destination: Vector2=anchor["order_destination"]
+    if not anchor["has_destination"]:
+        var site:=_assigned_outpost(anchor)
+        destination=site["pos"] if not site.is_empty() else _mission_point(anchor["side"],anchor["mission"])
+    if p.distance_to(destination)>65: return p.direction_to(destination)
+    return Vector2.RIGHT if anchor["side"]==0 else Vector2.LEFT
+
+func _screen_partner(unit: Dictionary) -> Dictionary:
+    var id: int=LinkedMarch._partner(unit,battle_time)
+    var partner:=find_unit(id)
+    if id<0:
+        for other in units:
+            if other["side"]==unit["side"] and LinkedMarch._partner(other,battle_time)==unit["id"] and other["type"]!=unit["type"] and other["type"] in ["궁병","보병"] and other["troops"]>=600 and not other["routed"]:
+                partner=other
+                break
+    if partner.is_empty() or partner["side"]!=unit["side"] or partner["type"]==unit["type"] or partner["type"] not in ["궁병","보병"]: return {}
+    if partner["troops"]<600 or partner["routed"] or partner["rallying"] or Vector2(unit["pos"]).distance_to(partner["pos"])>205: return {}
+    if _river_separates(unit["pos"],partner["pos"]): return {}
+    return partner
+
+func _screen_station(unit: Dictionary, enemy: Dictionary, action: String) -> Dictionary:
+    if unit["type"] not in ["궁병","보병"] or unit["troops"]<600 or unit["routed"] or enemy["routed"] or battle_time<unit["tactical_until"]: return {}
+    if action not in ["거점 방어","거점 점령","방어","거리 유지","전열 지원","협동 엄호","궁병 보호","교전","진격","측면 방어","본진 공략"]: return {}
+    if unit["has_destination"] and unit["mission"] not in ["전열 엄호","궁병 보호"]: return {}
+    var partner:=_screen_partner(unit)
+    if partner.is_empty(): return {}
+    var archer: bool=unit["type"]=="궁병"
+    var bow: Dictionary=unit if archer else partner
+    var front: Dictionary=partner if archer else unit
+    if bow["ammo"]<12 or front["cohesion"]<40: return {}
+    var p: Vector2=front["pos"]
+    var rear: Vector2=bow["pos"]
+    var foe: Vector2=enemy["pos"]
+    var gap:=p.distance_to(foe)
+    if gap>210 or _river_separates(p,foe): return {}
+    var axis:=p.direction_to(foe)
+    if axis.is_zero_approx(): axis=front["facing"]
+    var depth: float=(p-rear).dot(axis)
+    var lateral: float=absf((p-rear).cross(axis))
+    if archer:
+        if rear.distance_to(foe)<110 and (depth<24 or lateral>50): return {}
+        var point:=p-axis*clampf(151.0-gap,52.0,98.0)
+        if in_open_water(point) or _river_separates(rear,point): return {}
+        var ready:=depth>=36 and depth<=136 and lateral<=42 and rear.distance_to(foe)<=173.0
+        return {"action":"엄호 사격" if ready else "후열 정렬","reason":str(front["name"])+("군 뒤 사격 위치 유지" if ready else "군 뒤 사격 위치로 이동"),"goal":rear if ready else point}
+    if depth<26 or lateral>60:
+        if rear.distance_to(foe)>140.0: return {}
+        var intercept:=rear.lerp(foe,0.5)
+        if in_open_water(intercept) or _river_separates(p,intercept): return {}
+        return {"action":"궁병 보호","reason":str(bow["name"])+"군의 노출된 사격 위치를 엄호","goal":intercept}
+    if action not in ["방어","측면 방어","궁병 보호","협동 엄호"]: return {}
+    # A defensive front closes only the gap needed for the rear to fire.
+    var step_in:=maxf(0.0,gap-92.0) if rear.distance_to(foe)>173.0 else 0.0
+    return {"action":"전열 유지","reason":str(bow["name"])+"군 앞에서 사격선 확보","goal":p+axis*step_in}
+
 func _infantry_screen(unit: Dictionary) -> Dictionary:
     var best: Dictionary = {}
     var score: float = 380.0
@@ -3478,6 +3581,8 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
     var ap: Vector2=ally["pos"]
     var forward: Vector2=ally["facing"]
     if forward.length_squared()<0.01: forward=Vector2.RIGHT if int(unit["side"])==0 else Vector2.LEFT
+    if long_operation and mission in ["궁병 보호","전열 엄호"]:
+        forward=_screen_forward(ally,enemy)
     if (mission=="궁병 보호" or mission=="전열 엄호") and str(unit["type"])=="보병" and str(ally["type"])=="궁병":
         var threat:Dictionary=_observed_threat_to(unit,ally)
         if not threat.is_empty():
@@ -3601,6 +3706,9 @@ func _valid_partner(unit: Dictionary,partner: int) -> bool:
     return not friend.is_empty() and int(friend["id"])!=int(unit["id"]) and int(friend["side"])==int(unit["side"]) and float(friend["troops"])>0.0 and not bool(friend["routed"])
 
 func _reset_cooperation(unit: Dictionary,partner: int) -> void:
+    unit.erase("opening_screen")
+    for other in units:
+        if other.get("opening_screen",-1)==unit["id"]: other.erase("opening_screen")
     unit["field_choice"]={}
     march_sequence+=1
     unit["march_sequence"]=march_sequence

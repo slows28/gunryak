@@ -37,6 +37,7 @@ func company(sim, origin: Vector2, direction: Vector2) -> void:
     sim.start()
 
 func _initialize() -> void:
+    _check_opening_screen()
     for heading: Vector2 in [Vector2.RIGHT,Vector2.DOWN,Vector2.LEFT,Vector2.UP,Vector2(1,1).normalized()]:
         var sim=field()
         company(sim,Vector2(625,700),heading)
@@ -157,3 +158,67 @@ func _initialize() -> void:
     check(sim.march_plans.is_empty(),"new deployment clears the previous march")
     print("GUNRYAK_LINKED_MARCH_PASS" if failures==0 else "GUNRYAK_LINKED_MARCH_FAIL")
     quit(0 if failures==0 else 1)
+
+static func stage_opening_screen(sim) -> void:
+    # The rear starts ahead of the infantry on the same unedited mission.
+    for u in sim.units:
+        if u["id"] not in [0,6,3]: u["troops"]=0.0
+    var foot: Dictionary=sim.find_unit(0)
+    var bow: Dictionary=sim.find_unit(6)
+    var foe: Dictionary=sim.find_unit(3)
+    foot["pos"]=Vector2(505,465)
+    bow["pos"]=Vector2(610,542)
+    foe["pos"]=Vector2(2450,440)
+    foe["ai_cooldown"]=10000.0
+    for u in [foot,bow,foe]: u["goal"]=u["pos"]
+    sim.enemy_strategy_enabled=false
+
+static func introduce_screen_contact(sim) -> void:
+    var foe: Dictionary=sim.find_unit(3)
+    foe["pos"]=Vector2(1010,420)
+    foe["goal"]=foe["pos"]
+
+func _check_opening_screen() -> void:
+    var sim:=WarSim.new()
+    sim.set_long_operation(true)
+    sim.set_scenario(WarSim.TRAINING_SCENARIO)
+    stage_opening_screen(sim)
+    sim.start()
+    var foot:=sim.find_unit(0)
+    var bow:=sim.find_unit(6)
+    var foe:=sim.find_unit(3)
+    var stationary_shots:=0
+    var screened:=0
+    for tick in range(400):
+        if tick==70: introduce_screen_contact(sim)
+        var prior_shots: float=bow["shots_used"]
+        sim.step(0.1)
+        if tick==0:
+            check(sim.march_plans[6]["role"]=="후열" and sim.march_plans[0]["phase"]=="대형 집결","unedited corps with a common objective form up on deployment")
+        if tick==40:
+            check(Vector2(foot["pos"]).distance_to(Vector2(505,465))<6,"front holds its ground while the archer passes outside its formation")
+        if tick<70: continue
+        var axis:=Vector2(bow["pos"]).direction_to(foe["pos"])
+        var offset: Vector2=foot["pos"]-bow["pos"]
+        if offset.dot(axis)>0 and offset.dot(axis)<Vector2(bow["pos"]).distance_to(foe["pos"]) and absf(offset.cross(axis))<45:
+            screened+=1
+        if bow["shots_used"]>prior_shots and bow["motion_speed"]<2: stationary_shots+=1
+    check(screened>=290 and stationary_shots>=150,"archer fires from a settled rear rank with infantry between it and the opponent")
+    print("OPENING_LINE samples=330 guarded=",screened," stationary_volleys_steps=",stationary_shots)
+    # A sidestep by the front rank must not send the same escort to its opposite flank.
+    bow["mission"]="전열 엄호"
+    bow["assigned_link"]=foot["id"]
+    foot["facing"]=Vector2.UP
+    var first:=sim._coordinated_order(bow,foe,"진격","",foot["pos"])
+    foot["facing"]=Vector2.DOWN
+    var second:=sim._coordinated_order(bow,foe,"진격","",foot["pos"])
+    check(Vector2(first["goal"]).distance_to(second["goal"])<1 and Vector2(foot["pos"]).direction_to(foe["pos"]).dot(Vector2(second["goal"])-foot["pos"])<0,"escort station follows the visible front, independent of the guard's turning animation")
+    foot["pos"]=Vector2(600,520)
+    bow["pos"]=Vector2(674,510)
+    foe["pos"]=Vector2(760,510)
+    var rescue:=sim._screen_station(foot,foe,"교전")
+    check(rescue.get("action")=="궁병 보호" and Vector2(rescue["goal"]).x>bow["pos"].x and Vector2(rescue["goal"]).x<foe["pos"].x,"infantry moves between the exposed rear rank and its observed opponent")
+    foot["tactical_until"]=sim.battle_time+8
+    check(sim._screen_station(foot,foe,"방어").is_empty(),"active courier instruction takes priority over local screening")
+    sim._reset_cooperation(foot,-1)
+    check(not bow.has("opening_screen"),"new orders release the opening deployment")
