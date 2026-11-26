@@ -746,6 +746,10 @@ func _capture() -> void:
         push_error("VISUAL_CAPTURE_FAIL: supply crews or independent command")
         quit(1)
         return
+    if not await _capture_objectives():
+        push_error("VISUAL_CAPTURE_FAIL: mission target, camera or debrief")
+        quit(1)
+        return
     print("GUNRYAK_VISUAL_CAPTURE_PASSED")
     quit(0)
 
@@ -1258,4 +1262,48 @@ func _save_frame(filename: String) -> bool:
         push_error("VISUAL_CAPTURE_FAIL: cannot write " + filename + " code " + str(result))
         return false
     print("GUNRYAK_SCREENSHOT_SAVED: " + output + " " + str(png.get_width()) + "x" + str(png.get_height()))
+    return true
+
+func _capture_objectives() -> bool:
+    game._leave_title(3)
+    game._start()
+    var sim=game.sim
+    var wagon: Dictionary=sim.convoy
+    wagon["pos"]=(wagon["pos"] as Vector2).lerp(wagon["goal"],0.4)
+    for u in sim.units:
+        if u["side"]==0: u["pos"]=wagon["pos"]+Vector2(34,24)
+    game._refresh_hud()
+    game.objective_buttons[0].pressed.emit()
+    var before: Vector2=game.camera_center
+    var previous: Vector2=wagon["pos"]
+    for tick in range(50): sim._update_convoy(0.1)
+    game._refresh_hud()
+    if wagon["pos"]==previous or game.camera_center==before or game.objective_focus!=0: return false
+    game.sector_cards[0].pressed.emit()
+    if game.objective_focus!=-1: return false
+    game._leave_title(2)
+    var site:=Vector2(508,742)
+    if not sim.place_post("보급기지",site): return false
+    game._start()
+    for tick in range(31): sim.step(0.1)
+    var raider: Dictionary=sim.find_unit(3)
+    for u in sim.units:
+        if u["side"]==0 and site.distance_to(u["pos"])<240.0: u["pos"]=site+Vector2(300+u["id"]*14,0)
+        u["goal"]=u["pos"]
+        u["ai_cooldown"]=999.0
+    raider["pos"]=site
+    raider["goal"]=site
+    for tick in range(15): sim.step(0.1)
+    game._refresh_hud()
+    game.objective_buttons[0].pressed.emit()
+    if game.camera_center.distance_to(site)>1.0 or sim.paused or not sim.couriers.is_empty(): return false
+    if "파괴까지 18초" not in game.objective_buttons[0].text: return false
+    if not await _deployment_frame("objective_depot_raid.png"): return false
+    for tick in range(55): sim.step(0.1)
+    if not sim.finished or sim.winning_side!=1: return false
+    game._refresh_hud()
+    game._show_outcome()
+    if sim.result_detail not in game.outcome_text.text: return false
+    if not await _deployment_frame("objective_debrief.png"): return false
+    print("OBJECTIVE_FOCUS_VISUAL_PASS")
     return true

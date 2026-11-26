@@ -31,6 +31,7 @@ TESTS = [
     ("terrain_range", ["--headless", "--path", "{project}", "--script", "res://tests/terrain_range.gd"], "GUNRYAK_TERRAIN_RANGE_PASS"),
     ("wide_field", ["--headless", "--path", "{project}", "--script", "res://tests/wide_field.gd"], "GUNRYAK_WIDE_PASS"),
     ("six_armies", ["--headless", "--path", "{project}", "--script", "res://tests/six_armies.gd"], "GUNRYAK_SIX_PASS"),
+    ("objectives", ["--headless", "--path", "{project}", "--script", "res://tests/objectives.gd"], "GUNRYAK_OBJECTIVES_PASS"),
     ("scene", ["--headless", "--path", "{project}", "--script", "res://tests/scene_smoke.gd"], "GUNRYAK_SCENE_PASS"),
 ]
 

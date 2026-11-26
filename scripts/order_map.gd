@@ -29,6 +29,7 @@ var sim
 var font: Font
 var action_choice: OptionButton
 var action_buttons: Array[Button]=[]
+var goal_label: Label
 var progress_label: Label
 var action_description: Label
 var march_diagram: Dictionary={}
@@ -66,7 +67,9 @@ func configure(owner_game: Control,used_font: Font) -> void:
     mouse_filter=Control.MOUSE_FILTER_STOP
     _label("軍略",Vector2(20,8),Vector2(82,39),24,GOLD)
     title=_label("",Vector2(111,7),Vector2(555,38),24,Color("#f3ecdc"))
-    progress_label=_label("",Vector2(682,13),Vector2(578,30),14,Color("#cdd8d9"))
+    goal_label=_label("",Vector2(630,4),Vector2(630,25),16,Color("#eadbb7"))
+    goal_label.horizontal_alignment=HORIZONTAL_ALIGNMENT_RIGHT
+    progress_label=_label("",Vector2(630,30),Vector2(630,20),13,Color("#cdd8d9"))
     progress_label.horizontal_alignment=HORIZONTAL_ALIGNMENT_RIGHT
     progress_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
     _label("아군 군단",Vector2(1082,86),Vector2(160,29),20,Color("#f3ecdc"))
@@ -187,6 +190,7 @@ func _paper_button(button: Button) -> void:
 
 func open(mid_battle:bool=false)->void:
     in_battle=mid_battle
+    goal_label.text="승리 목표   "+sim.scenario_goal
     title.text=("전령 지시" if mid_battle else "작전 지도")+"   /   "+sim.scenario_title
     progress_label.text="군단 선택 → 목적지 지정 → 지시 확정"
     launch.text="전장 복귀" if mid_battle else "전투 개시"
@@ -315,7 +319,9 @@ func _update_destination()->void:
     apply.disabled=not problem.is_empty()
     apply.tooltip_text=problem
     var dispatch: String=game.dispatch_line(selected_id)
-    if not drafts.is_empty():
+    if sim.commander_captured(0):
+        progress_label.text=sim.command_status(0)
+    elif not drafts.is_empty():
         progress_label.text="미확정 %d개 · * 표시 군단" % drafts.size()
     elif not dispatch.is_empty():
         progress_label.text=dispatch
@@ -716,7 +722,9 @@ func _draw()->void:
         var point:=_point(base["pos"])
         draw_rect(Rect2(point-Vector2(6,6),Vector2(12,12)),Color("#2a534d") if base["side"]==0 else RED)
         draw_rect(Rect2(point-Vector2(6,6),Vector2(12,12)),Color("#eedca8"),false,1.4)
-        _post_label(sim.supply_caption(base),point,1)
+        var caption: String=sim.supply_caption(base)
+        if sim.scenario_id==2 and base==sim.bases[0]: caption="방어 목표 · 첫 "+caption
+        _post_label(caption,point,1)
     for crew in sim.supply_crews:
         if crew["strength"]<=0 or (crew["side"]==1 and game.fog_enabled and not sim.player_can_see(crew["pos"])): continue
         var at:=_point(crew["pos"])

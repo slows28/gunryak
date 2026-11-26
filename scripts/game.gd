@@ -29,8 +29,8 @@ const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const PAINTED_FX = preload("res://assets/art/painted_fx.webp")
 const TITLE_ART = preload("res://assets/art/title_art.webp")
 const SOLDIER_SCALE: float = 0.72
-const MAP_TOP_LEFT: Vector2 = Vector2(16, 124)
-const MAP_SIZE: Vector2 = Vector2(934, 550)
+const MAP_TOP_LEFT: Vector2 = Vector2(16, 142)
+const MAP_SIZE: Vector2 = Vector2(934, 532)
 const MINIMAP_AREA = Rect2(1128,609,126,80)
 const COL_BG: Color = Color("#131a22")
 const COL_PANEL: Color = Color("#1c2732")
@@ -60,6 +60,9 @@ var battle_title_label: Label
 var clock_label: Label
 var turn_label: Label
 var objective_label: Label
+var objective_buttons: Array[Button]=[]
+var objective_rows: Array[Dictionary]=[]
+var objective_focus: int=-1
 var selected_label: Label
 var details_label: Label
 var readiness_label: Label
@@ -320,9 +323,15 @@ func _build_interface() -> void:
     enemy_strength=_label("",Vector2(1156,2),Vector2(101,28),19,COL_TEXT)
     status_label = _label("",Vector2(969,29),Vector2(288,20),12,COL_MUTED)
     status_label.clip_text=true
-    _label("목표",Vector2(17,104),Vector2(37,19),13,COL_GOLD)
-    objective_label = _label("",Vector2(60,104),Vector2(890,19),13,COL_TEXT)
+    _label("승리 목표",Vector2(17,103),Vector2(114,17),12,COL_GOLD)
+    objective_label=_label("",Vector2(17,119),Vector2(331,20),14,COL_TEXT)
     objective_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    for i in range(3):
+        var button:=_button("",Vector2.ZERO,Vector2(196,31),_focus_objective.bind(i))
+        button.add_theme_font_size_override("font_size",13)
+        button.toggle_mode=true
+        button.mouse_default_cursor_shape=Control.CURSOR_POINTING_HAND
+        objective_buttons.append(button)
     _label("지휘 본부",Vector2(970,69),Vector2(156,32),23,COL_TEXT)
     friendly_tab=_button("아군 6",Vector2(970,108),Vector2(91,28),_show_friendly_roster)
     enemy_tab=_button("적군 6",Vector2(1067,108),Vector2(91,28),_show_enemy_roster)
@@ -883,7 +892,7 @@ func _refresh_hud() -> void:
     var phase: String = "준비 중"
     clock_label.text=_operation_clock(sim.operation_elapsed())
     battle_title_label.text = sim.scenario_title
-    objective_label.text = sim.scenario_goal
+    _refresh_objectives()
     phase_label.text="북벌 전략 %d턴" % int(campaign.state["turn"]) if campaign_active else "작전 준비"
     if sim.finished:
         phase = "전투 종료"
@@ -1291,6 +1300,38 @@ func _refresh_sector_board() -> void:
         card.present(row,_number_text(row["own"]),_number_text(row["enemy"]),fog_enabled and not sim.finished,sector_selection==i)
         card.tooltip_text="구역 내 병력 합계 · 교전 중 공격 부대 %d개 · 아군 최대 전열 압박 %.0f%%\n클릭하면 이 전선을 봅니다." % [int(row["contacts"]),float(row["pressure"])*100.0]
 
+func _refresh_objectives() -> void:
+    objective_label.text=sim.scenario_goal
+    if sim.started and not sim.finished and sim.scenario_id in [2,3]:
+        objective_label.text=("첫 보급기지 사수" if sim.scenario_id==2 else "군량 수레 호위")+" · 남은 "+_operation_clock(ceilf(maxf(0.0,sim.operation_limit()-sim.operation_elapsed())-0.00001))
+    objective_label.tooltip_text=sim.scenario_goal
+    objective_rows=FrontView.objective_targets(sim,fog_enabled)
+    var count:=objective_rows.size()
+    var width:=minf(292.0,591.0/maxi(1,count)-5.0)
+    for i in range(objective_buttons.size()):
+        var button:=objective_buttons[i]
+        button.visible=i<count
+        if not button.visible: continue
+        var row:=objective_rows[i]
+        button.position=Vector2(950-(count-i)*(width+5.0)+5.0,106)
+        button.size=Vector2(width,31)
+        button.text="%s  ·  %s" % [row["name"],row["state"]]
+        button.tooltip_text=button.text+"\n누르면 전장에서 이 목표를 봅니다."
+        button.accessibility_name=button.text
+        button.add_theme_color_override("font_color",COL_RED if row["alert"] else COL_TEXT)
+        button.set_pressed_no_signal(i==objective_focus)
+    if objective_focus>=0 and objective_focus<count:
+        camera_center=objective_rows[objective_focus]["pos"]
+        _clamp_camera(-1,objective_focus)
+
+func _focus_objective(index: int) -> void:
+    if index<0 or index>=objective_rows.size(): return
+    camera_center=objective_rows[index]["pos"]
+    camera_zoom=maxf(1.20,camera_zoom)
+    _clamp_camera(-1,index)
+    map_layer.queue_redraw()
+    queue_redraw()
+
 func _focus_sector(index: int) -> void:
     if index<0 or index>=sector_snapshot.size(): return
     camera_center=sector_snapshot[index]["focus"]
@@ -1470,7 +1511,7 @@ func _map_select(mouse_pos: Vector2) -> void:
 func _draw() -> void:
     draw_rect(Rect2(0,0,1280,800),COL_BG)
     draw_style_box(desk_plaque,Rect2(0,0,1280,56))
-    draw_rect(Rect2(0,56,954,68),Color("#182725"))
+    draw_rect(Rect2(0,56,954,86),Color("#182725"))
     draw_texture_rect(Materials.WALNUT,Rect2(0,694,1280,106),false,Color("#8e978c"))
     draw_line(Vector2(369,8),Vector2(369,44),Color("#59615a"))
     draw_line(Vector2(953,8),Vector2(953,44),Color("#59615a"))
@@ -1723,6 +1764,11 @@ func _draw_map(_canvas: Control) -> void:
     _draw_combat_effects()
     _draw_loss_markers()
     _draw_raid_timers()
+    if objective_focus>=0 and objective_focus<objective_rows.size():
+        var point: Vector2=objective_rows[objective_focus]["pos"]
+        for i in range(4):
+            var start:=PI*(0.25+0.5*i)
+            map_layer.draw_arc(point,24.0/camera_zoom,start,start+PI*0.24,9,COL_GOLD,2.0/camera_zoom,true)
     for crew in sim.supply_crews:
         var p: Vector2=crew["pos"]
         if crew["strength"]<=0 or not field_view.has_point(p): continue
@@ -2475,7 +2521,11 @@ func _build_map_layer() -> void:
 func _world_mouse(p: Vector2) -> Vector2:
     return (p - MAP_TOP_LEFT - MAP_SIZE*0.5)/camera_zoom + camera_center
 
-func _clamp_camera(focused_sector: int=-1) -> void:
+func _clamp_camera(focused_sector: int=-1, focused_objective: int=-1) -> void:
+    if objective_focus!=focused_objective:
+        objective_focus=focused_objective
+        for i in range(objective_buttons.size()):
+            objective_buttons[i].set_pressed_no_signal(i==objective_focus)
     if sector_selection!=focused_sector:
         sector_selection=focused_sector
         for i in range(sector_cards.size()):
@@ -3202,6 +3252,8 @@ func _show_outcome() -> void:
     outcome_heading.add_theme_font_size_override("font_size",25)
     outcome_heading.add_theme_color_override("font_color",COL_GOLD if sim.winning_side == 0 else COL_RED)
     outcome_text.text = "%s  /  %s  /  전령 도착 %d · 차단 %d\n긴급 지시 수락 %d · 거부 %d" % [sim.scenario_title,_operation_clock(sim.operation_elapsed()),sim.delivered_orders,sim.intercepted_orders,sim.tactical_delivered,sim.tactical_refused]
+    if not sim.result_detail.is_empty():
+        outcome_text.text+="\n판정 근거   "+sim.result_detail
     if campaign_active:
         if not battle_recorded:
             battle_recorded = campaign.conclude(sim)

@@ -87,6 +87,7 @@ var started: bool = false
 var paused: bool = false
 var finished: bool = false
 var result: String = ""
+var result_detail: String = ""
 var next_id: int = 0
 var reinforcements_used: Array[int] = [0, 0]
 var step_count: int = 0
@@ -147,6 +148,7 @@ func reset() -> void:
     paused = false
     finished = false
     result = ""
+    result_detail = ""
     reinforcements_used = [0, 0]
     _add_unit(0, "왕평", "보병", "신중", 86.0, Vector2(130, 153), "북측 확보", 145.0)
     _add_unit(0, "마속", "궁병", "균형", 55.0, Vector2(105, 278), "중앙 진격", 108.0)
@@ -1608,6 +1610,7 @@ func _update_outposts(dt: float) -> void:
                     blue = true
                 else:
                     red = true
+        site["contested"]=blue and red
         if blue == red:
             site["hold"] = 0.0
             site["challenger"] = -1
@@ -1618,6 +1621,7 @@ func _update_outposts(dt: float) -> void:
             if int(unit["side"]) == faction and float(unit["troops"]) > 0.0 and not bool(unit["routed"]) and (unit["pos"] as Vector2).distance_to(site["pos"]) <= OUTPOST_RADIUS:
                 unit["objective_time"] = float(unit["objective_time"]) + dt
         if int(site["owner"]) == faction:
+            site["challenger"]=-1
             site["hold"] = float(site["hold"]) + dt
             site["progress"] = 0.0
             continue
@@ -1633,6 +1637,20 @@ func _update_outposts(dt: float) -> void:
             site["progress"] = 0.0
             _log("%s: %s 점령" % [str(site["name"]), "아군" if faction == 0 else "적군"])
 
+func objective_hold_duration() -> float:
+    match scenario_id:
+        1: return 45.0 if long_operation else (30.0 if wide_field else 18.0)
+        4,TRAINING_SCENARIO: return 30.0 if long_operation else 12.0
+    return 45.0 if long_operation and six_armies else OUTPOST_HOLD_SECONDS
+
+func _secured_site_names(side: int) -> PackedStringArray:
+    var names:=PackedStringArray()
+    var count:=outposts.size() if scenario_id==0 else 1
+    for i in range(count):
+        var site: Dictionary=outposts[i]
+        if site["owner"]==side and site["hold"]>=objective_hold_duration(): names.append(str(site["name"]))
+    return names
+
 func _objective_winner() -> int:
     if long_operation and battle_time < LONG_OBJECTIVE_OPEN: return -1
     if outposts.size() < 2 or turn < (6 if wide_field else 3):
@@ -1640,20 +1658,20 @@ func _objective_winner() -> int:
     if scenario_id == 1:
         if six_armies and battle_time < 125.0: return -1
         var central: Dictionary = outposts[0]
-        if int(central["owner"]) >= 0 and float(central["hold"]) >= (45.0 if long_operation else (30.0 if wide_field else 18.0)):
+        if int(central["owner"]) >= 0 and float(central["hold"]) >= objective_hold_duration():
             return int(central["owner"])
         return -1
     if scenario_id in [2,3]:
         return -1
     if scenario_id in [4,TRAINING_SCENARIO]:
-        if not structures.is_empty() and float(structures[0]["hp"]) <= 0.0 and int(outposts[0]["owner"]) == 0 and float(outposts[0]["hold"]) >= (30.0 if long_operation else 12.0):
+        if not structures.is_empty() and float(structures[0]["hp"]) <= 0.0 and int(outposts[0]["owner"]) == 0 and float(outposts[0]["hold"]) >= objective_hold_duration():
             return 0
         return -1
     if six_armies and scenario_id == 0:
         var secured: Array[int] = [0,0]
         for site in outposts:
             var faction: int = int(site["owner"])
-            if faction >= 0 and float(site["hold"]) >= (45.0 if long_operation else OUTPOST_HOLD_SECONDS): secured[faction] += 1
+            if faction >= 0 and float(site["hold"]) >= objective_hold_duration(): secured[faction] += 1
         for faction in range(2):
             if secured[faction] >= 2: return faction
         return -1
@@ -1661,7 +1679,7 @@ func _objective_winner() -> int:
     if owner < 0:
         return -1
     for site in outposts:
-        if int(site["owner"]) != owner or float(site["hold"]) < OUTPOST_HOLD_SECONDS:
+        if int(site["owner"]) != owner or float(site["hold"]) < objective_hold_duration():
             return -1
     return owner
 
@@ -1735,21 +1753,25 @@ func _check_victory() -> void:
     _check_command_capture()
     if scenario_id == 3 and not convoy.is_empty():
         if float(convoy["hp"]) <= 0.0:
-            _finish("군량 수레 파괴 — 패배")
+            _finish("군량 수레 파괴 — 패배","군량 수레 내구도 0%")
             return
         if (convoy["pos"] as Vector2).distance_to(convoy["goal"]) < 12.0:
-            _finish("군량 수레 호위 성공 — 아군 승리")
+            _finish("군량 수레 호위 성공 — 아군 승리","동쪽 도착점 도달 · 수레 내구도 %d%%" % ceili(convoy["hp"]))
             return
     var winner: int = _objective_winner()
+    var held: String=""
+    if winner>=0:
+        held="%s · %d초 연속 유지" % [", ".join(_secured_site_names(winner)),roundi(objective_hold_duration()*operation_scale())]
+        if scenario_id in [4,TRAINING_SCENARIO]: held="성문 파괴 · "+held
     if scenario_id==TRAINING_SCENARIO:
-        if winner==0: _finish("시험장 거점 확보 — 아군 승리")
-        elif battle_time>=scenario_limit: _finish("훈련 종료 — 제한 시간 내 거점 확보 실패 (패배)")
+        if winner==0: _finish("시험장 거점 확보 — 아군 승리",held)
+        elif battle_time>=scenario_limit: _finish("훈련 종료 — 제한 시간 내 거점 확보 실패 (패배)",_siege_result_detail())
         return
     if winner == 0 and scenario_id == 4:
-        _finish("천수 돌파 성공 — 아군 승리")
+        _finish("천수 돌파 성공 — 아군 승리",held)
         return
     if winner >= 0:
-        _finish(("양측 요충지 확보 — 아군 승리" if winner == 0 else "적 요충지 장악 — 패배") if scenario_id == 0 else ("중앙 고지 확보 — 아군 승리" if winner == 0 else "적 중앙 고지 장악 — 패배"))
+        _finish(("양측 요충지 확보 — 아군 승리" if winner == 0 else "적 요충지 장악 — 패배") if scenario_id == 0 else ("중앙 고지 확보 — 아군 승리" if winner == 0 else "적 중앙 고지 장악 — 패배"),held)
         return
 
     var side_alive: Array[int] = [0, 0]
@@ -1758,23 +1780,23 @@ func _check_victory() -> void:
             side_alive[int(unit["side"])] += 1
     if side_alive[0] == 0:
         if reinforcements_used[0] >= reserve_limit[0]:
-            _finish("아군 전투부대 전멸 또는 패주 — 패배")
+            _finish("아군 전투부대 전멸 또는 패주 — 패배","전투 가능 부대 · 아군 %d / 적군 %d" % side_alive)
     elif side_alive[1] == 0:
         if reinforcements_used[1] >= reserve_limit[1]:
-            _finish("적 전투부대 전멸 또는 패주 — 승리")
+            _finish("적 전투부대 전멸 또는 패주 — 승리","전투 가능 부대 · 아군 %d / 적군 %d" % side_alive)
     if not finished and scenario_id == 2 and not bool(bases[0]["alive"]):
-        _finish("아군 보급기지 상실 — 패배")
+        _finish("아군 보급기지 상실 — 패배","방어 목표였던 첫 보급기지가 파괴됨")
     if not finished and scenario_id == 2 and battle_time >= scenario_limit:
-        _finish("보급기지 방어 성공 — 아군 승리")
+        _finish("보급기지 방어 성공 — 아군 승리","첫 보급기지 생존 · 방어 시간 %d초" % roundi(operation_limit()))
     if not finished and battle_time >= scenario_limit and scenario_id in [3,4]:
-        _finish("작전 제한 시간 초과 — 패배")
+        _finish("작전 제한 시간 초과 — 패배",_siege_result_detail() if scenario_id==4 else "수레 이동 %d%% · 도착점까지 %d" % [floori(convoy_status()["progress"]*100.0),ceili(convoy_status()["remaining"])])
     if not finished and battle_time >= scenario_limit and six_armies and scenario_id == 0:
         var control: Array[int] = [0,0]
         for site in outposts:
             var faction: int = int(site["owner"])
             if faction >= 0: control[faction] += 1
         if control[0] != control[1]:
-            _finish("작전 종료 — 거점 우세: %s" % ("아군" if control[0]>control[1] else "적군"))
+            _finish("작전 종료 — 거점 우세: %s" % ("아군" if control[0]>control[1] else "적군"),"종료 시 점령 거점 · 아군 %d / 적군 %d" % control)
             return
     if not finished and battle_time >= scenario_limit:
         var blue: float = 0.0
@@ -1786,12 +1808,18 @@ func _check_victory() -> void:
                 blue += float(unit["troops"])
             else:
                 red += float(unit["troops"])
-        _finish("시간 종료 — 전력 우세: %s" % ("아군" if blue >= red else "적군"))
+        _finish("시간 종료 — 전력 우세: %s" % ("아군" if blue >= red else "적군"),"패주 병력 제외 · 아군 %d명 / 적군 %d명" % [roundi(blue),roundi(red)])
 
-func _finish(msg: String) -> void:
+func _siege_result_detail() -> String:
+    var gate: Dictionary=structures[0]
+    var hold: float=minf(outposts[0]["hold"],objective_hold_duration()) if outposts[0]["owner"]==0 else 0.0
+    return "성문 내구도 %d%% · 아군 거점 유지 %d/%d초" % [ceili(100.0*gate["hp"]/gate["max_hp"]),floori(hold*operation_scale()),roundi(objective_hold_duration()*operation_scale())]
+
+func _finish(msg: String, evidence: String="") -> void:
     if finished:
         return
     result = msg
+    result_detail = evidence
     winning_side = 1 if "패배" in msg or msg.ends_with("적군") else 0
     finished = true
     _update_response_outcomes()
@@ -2282,7 +2310,7 @@ func _configure_scenario() -> void:
                 unit["mission"] = "중앙 진격"
     elif scenario_id == 2:
         scenario_title = "보급로 사수"
-        scenario_goal = "120초 동안 아군 보급기지 사수"
+        scenario_goal = "120초 동안 첫 보급기지 사수"
         scenario_limit = 120.0
         forests = [Rect2(205,95,160,110),Rect2(310,365,150,125)]
         hill = Rect2(510,215,110,95)
@@ -2673,7 +2701,7 @@ func _detour_goal(unit: Dictionary,p: Vector2,goal: Vector2) -> Vector2:
 func order_retreat() -> bool:
     if not started or finished or commander_captured(0):
         return false
-    _finish("책사 철수 결정 — 패배")
+    _finish("책사 철수 결정 — 패배","아군 철수 명령")
     return true
 
 
@@ -2976,7 +3004,7 @@ func _expand_layout() -> void:
     if scenario_id == 1:
         scenario_goal = "6턴 이후 중앙 고지 30초 연속 확보"
     elif scenario_id == 2:
-        scenario_goal = "300초 동안 아군 보급기지 사수"
+        scenario_goal = "300초 동안 첫 보급기지 사수"
     reserve_next = [36.0,36.0]
     if long_operation:
         scenario_limit = 420.0 if scenario_id == 3 else LONG_LIMIT
@@ -2984,7 +3012,7 @@ func _expand_layout() -> void:
         match scenario_id:
             0: scenario_goal="18분 이후 세 거점 중 두 곳을 3분 연속 확보"
             1: scenario_goal="18분 이후 중앙 고지 3분 연속 확보"
-            2: scenario_goal="25분 동안 아군 보급기지 사수"
+            2: scenario_goal="25분 동안 첫 보급기지 사수"
             3: scenario_goal="28분 이내 군량 수레를 동쪽 도착점까지 호위"
             4: scenario_goal="18분 이후 성문 파괴 및 중앙 거점 2분 확보"
             TRAINING_SCENARIO: scenario_goal="18분 이후 연습 성문 파괴 및 동쪽 거점 2분 확보"

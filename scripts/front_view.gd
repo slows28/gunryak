@@ -136,3 +136,48 @@ static func milestones(sim,limited: bool) -> Dictionary:
     for report in sim.open_situations():
         found["report:"+str(report["id"])]={"label":str(report["title"]),"point":report["pos"],"unit_id":int(report["unit_id"])}
     return found
+
+# Mission locations are public. Live enemy control and gate condition require observation.
+static func objective_targets(sim, limited: bool) -> Array[Dictionary]:
+    var rows: Array[Dictionary]=[]
+    if sim.scenario_id==2:
+        var home: Dictionary=sim.bases[0]
+        var state: String=str(home["state"])
+        if state=="설치": state="구축 %d초" % ceili(home["build_timer"]*sim.operation_scale())
+        if home["raid_rate"]>0: state="파괴까지 %d초" % sim.raid_seconds_left(home)
+        rows.append({"name":"첫 보급기지","pos":home["pos"],"state":state,"alert":home["raid_rate"]>0 or not home["alive"]})
+        return rows
+    if sim.scenario_id==3:
+        var convoy: Dictionary=sim.convoy
+        if convoy.is_empty(): return rows
+        var cargo: Dictionary=sim.convoy_status()
+        rows.append({"name":"군량 수레","pos":convoy["pos"],"state":"%s · 내구도 %d%%" % [cargo["state"],ceili(convoy["hp"])],"alert":cargo["state"] in ["파괴","교전 정체","호위 대기"]})
+        rows.append({"name":"도착점","pos":convoy["goal"],"state":"이동 %d%%" % floori(cargo["progress"]*100.0),"alert":false})
+        return rows
+    if sim.scenario_id in [4,sim.TRAINING_SCENARIO]:
+        var gate: Dictionary=sim.structures[0]
+        var center: Vector2=(gate["rect"] as Rect2).get_center()
+        var state: String="미확인"
+        if not limited or sim.finished or sim.player_can_see(center):
+            state="돌파" if gate["hp"]<=0 else "내구도 %d%%" % ceili(100.0*gate["hp"]/gate["max_hp"])
+        rows.append({"name":gate["name"],"pos":center,"state":state,"alert":false})
+    var sites: int=sim.outposts.size() if sim.scenario_id==0 else 1
+    for index in range(sites):
+        var site: Dictionary=sim.outposts[index]
+        var state: String="미확인"
+        var alert:=false
+        if not limited or sim.finished or sim.player_can_see(site["pos"]):
+            state="미점령"
+            if site.get("contested",false):
+                state="경합 · 유지 중단"
+                alert=true
+            elif site["challenger"]>=0:
+                state="%s 점령 %d%%" % ["아군" if site["challenger"]==0 else "적군",floori(100.0*site["progress"]/sim.capture_duration())]
+                alert=site["challenger"]==1
+            elif site["owner"]>=0:
+                var required:=roundi(sim.objective_hold_duration()*sim.operation_scale())
+                var held:=mini(required,floori(site["hold"]*sim.operation_scale()+0.00001))
+                state="%s %d/%d초" % ["아군" if site["owner"]==0 else "적군",held,required]
+                alert=site["owner"]==1
+        rows.append({"name":site["name"],"pos":site["pos"],"state":state,"alert":alert})
+    return rows
