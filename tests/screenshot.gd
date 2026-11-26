@@ -109,6 +109,15 @@ func _capture() -> void:
         quit(1)
         return
     game.call("_toggle_fog",true)
+    if game.enemy_strength.text!="정찰 제한":
+        push_error("VISUAL_CAPTURE_FAIL: hidden total shown in top bar")
+        quit(1)
+        return
+    for sector in game.sector_cards:
+        if sector.own_bar.visible or sector.enemy_bar.visible or not sector.enemy.text.begins_with("관측 적군"):
+            push_error("VISUAL_CAPTURE_FAIL: front balance must respect limited observation")
+            quit(1)
+            return
     for row in range(game.enemy_list.item_count):
         var id: int=int(game.enemy_list.get_item_metadata(row))
         if id<0: continue
@@ -117,6 +126,19 @@ func _capture() -> void:
             quit(1)
             return
     game.call("_toggle_fog",false)
+    var strength_sum: int=0
+    for i in range(game.sector_cards.size()):
+        var sector=game.sector_cards[i]
+        var front: Dictionary=game.sector_snapshot[i]
+        strength_sum+=int(front["own"])
+        if sector.state.text!=front["state"] or sector.enemy.text!="적군  "+game.call("_number_text",front["enemy"]):
+            push_error("VISUAL_CAPTURE_FAIL: front label disagrees with current observed forces")
+            quit(1)
+            return
+    if strength_sum!=game.sim.total_troops(0) or game.friendly_strength.text!=game.call("_number_text",strength_sum):
+        push_error("VISUAL_CAPTURE_FAIL: friendly strength does not match fronts")
+        quit(1)
+        return
     game.call("_show_friendly_roster")
     game.call("_reset_camera")
     if game.combat_sounds.size()!=3 or game.combat_players.size()!=4:
@@ -209,6 +231,11 @@ func _capture() -> void:
         push_error("VISUAL_CAPTURE_FAIL: general portrait atlas unavailable")
         quit(1)
         return
+    var officers: Texture2D=load("res://assets/art/shu_commanders.webp")
+    if officers==null or officers.get_size()!=Vector2(768,512):
+        push_error("VISUAL_CAPTURE_FAIL: friendly portrait sheet unavailable")
+        quit(1)
+        return
     var regions: Array[String]=[]
     var painted: Texture2D=load("res://assets/art/painted_atlas.webp")
     for side in range(2):
@@ -216,7 +243,7 @@ func _capture() -> void:
             var u: Dictionary=game.sim.find_unit(id)
             var icon: AtlasTexture=game.call("_commander_icon",str(u["name"]),side)
             var key: String=icon.atlas.resource_path+":"+str(icon.region)
-            if icon.atlas not in [portraits,painted] or regions.has(key):
+            if (side==0 and icon.atlas!=officers) or (side==1 and icon.atlas not in [portraits,painted]) or regions.has(key):
                 push_error("VISUAL_CAPTURE_FAIL: commander portrait reused or missing")
                 quit(1)
                 return
@@ -231,7 +258,10 @@ func _capture() -> void:
         quit(1)
         return
     for i in range(6):
-        if not game.general_cards[i].visible or game.general_cards[i].text.is_empty():
+        var card=game.general_cards[i]
+        var officer_id: int=game.sim.command_ids(0)[i]
+        var expected_troops: String=game.call("_number_text",roundi(game.sim.corps_report(officer_id)["troops"]))+"명"
+        if not card.visible or card.commander.text!=game.sim.find_unit(officer_id)["name"] or card.strength.text!=expected_troops or card.action.text.is_empty() or card.mood.text.is_empty() or card.note.text.is_empty():
             push_error("VISUAL_CAPTURE_FAIL: commander card missing live state")
             quit(1)
             return
@@ -250,8 +280,13 @@ func _capture() -> void:
                 quit(1)
                 return
         occupied.append(box)
+    game.sector_cards[2].pressed.emit()
+    if not game.sector_cards[2].button_pressed or game.sector_selection!=2:
+        push_error("VISUAL_CAPTURE_FAIL: south front focus did not respond")
+        quit(1)
+        return
     game.call("_select_general_card",2)
-    if game.selected_id!=game.sim.command_ids(0)[2]:
+    if game.sector_cards[2].button_pressed or game.selected_id!=game.sim.command_ids(0)[2]:
         push_error("VISUAL_CAPTURE_FAIL: commander card did not select real leader")
         quit(1)
         return
@@ -874,7 +909,8 @@ func _capture_field_report() -> bool:
         return false
     game.call("_refresh_hud")
     var report: Dictionary=game.call("_prioritized_situations")[0]
-    if not game.dispatch_headline.visible or not game.dispatch_headline.text.contains(report["title"]):
+    var reporter_index: int=game.sim.command_ids(0).find(int(report["unit_id"]))
+    if reporter_index<0 or not game.general_cards[reporter_index].report_mark.visible or not game.dispatch_headline.visible or not game.dispatch_headline.text.contains(report["title"]):
         push_error("VISUAL_CAPTURE_FAIL: current field dispatch is missing from the battlefield")
         return false
     game.dispatch_headline.pressed.emit()
@@ -892,6 +928,10 @@ func _capture_field_report() -> bool:
     btn.pressed.emit()
     if report["status"]!="전령 파견" or int(report["executor"])!=int(support["id"]) or not game.situation_record.text.contains(support["name"]):
         push_error("VISUAL_CAPTURE_FAIL: issuing support did not retain the report and actual executor")
+        return false
+    var support_index: int=game.sim.command_ids(0).find(int(support["id"]))
+    if support_index<0 or game.general_cards[support_index].note_kind.text!="전령" or not game.general_cards[support_index].note.text.contains("지원"):
+        push_error("VISUAL_CAPTURE_FAIL: tactical courier is missing from the receiving commander's card")
         return false
     game.situation_dialog.get_ok_button().pressed.emit()
     await process_frame

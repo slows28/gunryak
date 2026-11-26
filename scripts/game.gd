@@ -1,6 +1,7 @@
 extends Control
 ## 2D tactical screen. Simulation is entirely separate in war_sim.gd.
 const WarSim = preload("res://scripts/war_sim.gd")
+const BattleHud = preload("res://scripts/battle_hud.gd")
 const BattleAudio = preload("res://scripts/battle_audio.gd")
 const FrontView=preload("res://scripts/front_view.gd")
 const TerrainArt = preload("res://scripts/terrain_art.gd")
@@ -18,6 +19,7 @@ const VOLLEY_ARROW_SPREAD: Array[Vector2] = [
 ]
 const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
 const CORPS_STANDARDS = preload("res://assets/art/corps_standards.webp")
+const SHU_COMMANDERS=preload("res://assets/art/shu_commanders.webp")
 const GENERAL_PORTRAITS=preload("res://assets/art/general_portraits.svg")
 const FIELD_SITES=preload("res://assets/art/field_sites.svg")
 const PORTRAIT_NAMES=["왕평","마속","위연","강유","관흥","장익","장합","위군 궁대","위군 기병","곽회","비요","왕쌍"]
@@ -49,6 +51,8 @@ var runtime_notice: String = ""
 var game_speed: float = 1.0
 var ignore_options: bool = false
 var status_label: Label
+var friendly_strength: Label
+var enemy_strength: Label
 var battle_title_label: Label
 var clock_label: Label
 var turn_label: Label
@@ -101,12 +105,12 @@ var mind_dialog: AcceptDialog
 var mind_report: RichTextLabel
 var mind_button: Button
 var battle_feed: PanelContainer
-var general_cards: Array[Button]=[]
+var general_cards: Array[BattleHud.CorpsCard]=[]
 var map_label_areas: Array[Rect2]=[]
 var fallen_marks: Array[Dictionary]=[]
 var loss_carry: Dictionary={}
 var battle_warning: String=""
-var sector_cards: Array[Button]=[]
+var sector_cards: Array[BattleHud.SectorCard]=[]
 var sector_snapshot: Array[Dictionary]=[]
 var sector_selection: int=-1
 var contact_cache: Dictionary={}
@@ -272,6 +276,14 @@ func _install_korean_font() -> void:
     window_frame.expand_margin_top=33
     ui_theme.set_stylebox("embedded_border","Window",window_frame)
     ui_theme.set_stylebox("embedded_unfocused_border","Window",window_frame)
+    for variation in [&"CorpsCard",&"SectorCard"]:
+        ui_theme.set_type_variation(variation,&"Button")
+        ui_theme.set_stylebox("normal",variation,_ui_box(Color("#20332f"),Color("#41504a")))
+        ui_theme.set_stylebox("hover",variation,_ui_box(Color("#30433d"),Color("#a99a76")))
+        var selected_bg:=Color("#e8dbb8") if variation==&"CorpsCard" else Color("#354641")
+        var selected_card:=_ui_box(selected_bg,Color("#dfbe80"))
+        ui_theme.set_stylebox("pressed",variation,selected_card)
+        ui_theme.set_stylebox("hover_pressed",variation,selected_card)
     theme = ui_theme
 
 func _ui_box(background: Color, border: Color=Color.TRANSPARENT) -> StyleBoxFlat:
@@ -287,7 +299,10 @@ func _ui_box(background: Color, border: Color=Color.TRANSPARENT) -> StyleBoxFlat
     return style
 
 func _build_interface() -> void:
-    _button("軍略",Vector2(16,10),Vector2(78,37),_show_title).add_theme_font_size_override("font_size",24)
+    var seal:=_button("軍略",Vector2(16,8),Vector2(75,39),_show_title)
+    seal.add_theme_font_size_override("font_size",24)
+    seal.add_theme_stylebox_override("normal",_ui_box(Color("#593a30"),Color("#987456")))
+    seal.add_theme_color_override("font_color",Color("#f6e2b7"))
     battle_title_label = _label("",Vector2(111,5),Vector2(260,29),24,COL_TEXT)
     phase_label = _label("",Vector2(112,34),Vector2(258,17),12,COL_MUTED)
     phase_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -297,9 +312,14 @@ func _build_interface() -> void:
     _primary_button(start_btn)
     pause_btn = _button("일시정지",Vector2(488,11),Vector2(92,35),_pause)
     speed_btn = _button("속도 ×1",Vector2(588,11),Vector2(78,35),_speed)
-    status_label = _label("",Vector2(968,7),Vector2(290,40),13,COL_TEXT)
+    _label("아군",Vector2(969,3),Vector2(34,26),14,COL_BLUE)
+    friendly_strength=_label("",Vector2(1008,2),Vector2(93,28),19,COL_TEXT)
+    _label("적군",Vector2(1118,3),Vector2(34,26),14,COL_RED)
+    enemy_strength=_label("",Vector2(1156,2),Vector2(101,28),19,COL_TEXT)
+    status_label = _label("",Vector2(969,29),Vector2(288,20),12,COL_MUTED)
     status_label.clip_text=true
-    objective_label = _label("",Vector2(16,104),Vector2(934,18),13,COL_TEXT)
+    _label("목표",Vector2(17,104),Vector2(37,19),13,COL_GOLD)
+    objective_label = _label("",Vector2(60,104),Vector2(890,19),13,COL_TEXT)
     objective_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
     _label("지휘 본부",Vector2(970,69),Vector2(156,32),23,COL_TEXT)
     friendly_tab=_button("아군 6",Vector2(970,108),Vector2(91,28),_show_friendly_roster)
@@ -342,9 +362,9 @@ func _build_interface() -> void:
     enemy_intel=_label("",Vector2(978,431),Vector2(268,104),15,COL_TEXT)
     enemy_intel.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     enemy_intel.hide()
-    feed_toggle=_button("전황 기록 보기",Vector2(1128,697),Vector2(136,24),_toggle_feed)
+    feed_toggle=_button("전황 기록 보기",Vector2(818,675),Vector2(132,21),_toggle_feed)
     feed_toggle.add_theme_font_size_override("font_size",12)
-    notice_label = _label("",Vector2(16,675),Vector2(930,21),13,COL_MUTED)
+    notice_label = _label("",Vector2(124,675),Vector2(685,21),13,COL_MUTED)
     notice_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
     highlight_button=_button("다음 주요 상황 ▶",Vector2(674,11),Vector2(128,35),_advance_highlight)
     highlight_button.tooltip_text="새 교전·위기·거점 변화·긴급 보고까지 진행"
@@ -370,21 +390,19 @@ func _build_interface() -> void:
     _button("철수",Vector2(1048,651),Vector2(70,34),_ask_retreat)
     contact_button=_button("최근 교전",Vector2(316,632),Vector2(94,32),_focus_combat)
     contact_button.tooltip_text="가장 최근에 관측한 교전으로 이동 · 다시 누르면 다른 교전 · C"
-    _label("아군 장수",Vector2(16,698),Vector2(180,22),15,COL_TEXT)
+    _label("아군 군단",Vector2(17,674),Vector2(102,23),16,COL_GOLD)
     _build_battle_feed()
     for i in range(6):
-        var card: Button=_button("",Vector2(16+i*209,730),Vector2(201,61),_select_general_card.bind(i))
-        card.add_theme_font_size_override("font_size",13)
-        card.expand_icon=true
-        card.toggle_mode=true
-        card.add_theme_constant_override("icon_max_width",39)
-        card.add_theme_constant_override("h_separation",6)
-        card.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
-        card.alignment=HORIZONTAL_ALIGNMENT_LEFT
+        var card:=BattleHud.CorpsCard.new()
+        card.position=Vector2(16+i*209,700)
+        card.size=Vector2(201,94)
+        card.pressed.connect(_select_general_card.bind(i))
+        add_child(card)
         general_cards.append(card)
     _build_sector_board()
-    situation_btn = _button("긴급 보고",Vector2(830,61),Vector2(120,40),_open_situations)
-    dispatch_headline=_button("",Vector2(150,695),Vector2(795,28),_open_situations)
+    situation_btn = _button("긴급 보고",Vector2(830,58),Vector2(120,45),_open_situations)
+    dispatch_headline=_button("",Vector2(417,675),Vector2(395,21),_open_situations)
+    dispatch_headline.add_theme_font_size_override("font_size",13)
     dispatch_headline.alignment=HORIZONTAL_ALIGNMENT_LEFT
     dispatch_headline.add_theme_stylebox_override("normal",_ui_box(Color("#372e23"),Color("#836b44")))
     dispatch_headline.add_theme_color_override("font_color",COL_GOLD)
@@ -860,7 +878,7 @@ func _refresh_hud() -> void:
     var phase: String = "준비 중"
     clock_label.text=_operation_clock(sim.operation_elapsed())
     battle_title_label.text = sim.scenario_title
-    objective_label.text = "목표  ·  "+sim.scenario_goal
+    objective_label.text = sim.scenario_goal
     phase_label.text="북벌 전략 %d턴" % int(campaign.state["turn"]) if campaign_active else "작전 준비"
     if sim.finished:
         phase = "전투 종료"
@@ -874,7 +892,9 @@ func _refresh_hud() -> void:
     turn_label.text=phase
     _refresh_enemy_roster()
     var enemy_text: String = "정찰 제한" if fog_enabled and not sim.finished else _number_text(sim.total_troops(1))
-    status_label.text = "아군 %s   /   적군 %s\n전령 %d 이동 · %d 도착 · %d 차단" % [_number_text(sim.total_troops(0)),enemy_text,sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
+    friendly_strength.text=_number_text(sim.total_troops(0))
+    enemy_strength.text=enemy_text
+    status_label.text="전령    이동 %d    도착 %d    차단 %d" % [sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
     var own_guards: int = sim.commander_guard_count(0)
     status_label.tooltip_text = "책사 보호 반경 내 전투부대 %d개" % own_guards
     if own_guards == 0 and sim.started and not sim.finished:
@@ -882,12 +902,13 @@ func _refresh_hud() -> void:
     if not sim.convoy.is_empty():
         var transport: Dictionary = sim.convoy_status()
         status_label.tooltip_text += "\n수레 %s · 진행 %d%% · 내구도 %d%% · 호위 %d개" % [str(transport["state"]),roundi(float(transport["progress"])*100.0),roundi(sim.convoy["hp"]),int(transport["guards"])]
+    var pending: Array[Dictionary]=[]
     if is_instance_valid(situation_btn):
         var active: bool=sim.started and not sim.finished
-        var pending: Array[Dictionary]=[]
         if active: pending=_prioritized_situations()
         var count: int=pending.size()
         dispatch_headline.visible=count>0
+        notice_label.size.x=284.0 if count>0 else 685.0
         if count>0:
             var lead: Dictionary=pending[0]
             dispatch_headline.text="야전 보고    %s   ·   %s     ›" % [_report_sector(lead),lead["title"]]
@@ -910,22 +931,23 @@ func _refresh_hud() -> void:
     live_order_button.text="작전 지도 열기" if not sim.started else "작전 지도 · 전령 지시"
     _refresh_commander_desk()
     if battle_feed.visible: _refresh_battle_feed()
-    _refresh_general_cards()
+    _refresh_general_cards(pending)
     _refresh_sector_board()
     if is_instance_valid(mind_dialog) and mind_dialog.visible: _refresh_mind_report()
     if not sim.started:
-        notice_label.text = sim.scenario_goal + "\n작전실: 병력·부장·배치·경유점\n지도 모드: " + map_mode
+        notice_label.text = "작전 지도에서 장수별 배치와 지시를 정할 수 있습니다."
     elif sim.finished:
         notice_label.text = "작전실 → 전투 타임라인\n장수별 결산은 아래 전황 창\n[초기화]로 재실행"
     elif sim.turn < 6:
-        notice_label.text = "최초 5분은 사전 명령 수행.\n이후부터 전령 전달이 가능합니다."
+        notice_label.text = "사전 작전 수행 중 · 6턴부터 전령 파견 가능"
     else:
-        notice_label.text = "장수 선택 후 전령 파견\n실제 전장 이동 중 차단될 수 있습니다."
+        notice_label.text = "전령 파견 가능 · 장수를 선택해 작전 지도에서 지시"
     notice_label.text=notice_label.text.replace("\n","  ·  ")
     if runtime_notice != "":
         notice_label.text = runtime_notice
     elif not battle_warning.is_empty():
         notice_label.text = battle_warning
+    notice_label.tooltip_text=notice_label.text
 
 func _refresh_commander_desk() -> void:
     var hero_top: float=333.0 if observing_enemy else 143.0
@@ -1179,17 +1201,23 @@ func _select_general_card(index: int) -> void:
     _on_unit_selected(index)
     _focus_selected()
 
-func _fit_card_line(value:String,width:float) -> String:
-    if korean_font.get_string_size(value,HORIZONTAL_ALIGNMENT_LEFT,-1,13).x<=width: return value
-    var shortened:String=value
-    while shortened.length()>1 and korean_font.get_string_size(shortened+"…",HORIZONTAL_ALIGNMENT_LEFT,-1,13).x>width:
-        shortened=shortened.substr(0,shortened.length()-1)
-    return shortened+"…"
-
-func _refresh_general_cards() -> void:
+func _refresh_general_cards(reports: Array[Dictionary]) -> void:
+    var reporting: Dictionary={}
+    for report in reports:
+        var sender: Dictionary=sim.find_unit(int(report["unit_id"]))
+        reporting[sender.get("parent_id",report["unit_id"])]=true
+    var courier_orders: Dictionary={}
+    if not sim.finished:
+        for letter in sim.couriers:
+            if int(letter["side"])!=0: continue
+            var recipient: Dictionary=sim.find_unit(int(letter["unit_id"]))
+            var leader: int=int(recipient.get("parent_id",letter["unit_id"]))
+            var order: String="부장 승계" if letter.get("appoint_deputy",false) else str(letter.get("tactical_order",letter["mission"]))
+            if recipient.has("parent_id"): order="분견대 "+order
+            courier_orders[leader]=str(courier_orders[leader])+", "+order if courier_orders.has(leader) else order
     var ids: Array[int]=sim.command_ids(0)
     for i in range(general_cards.size()):
-        var card: Button=general_cards[i]
+        var card:=general_cards[i]
         if i>=ids.size():
             card.hide()
             continue
@@ -1199,44 +1227,31 @@ func _refresh_general_cards() -> void:
         var mood: String=str(mind.get("mood","준비"))
         var reason: String=str(mind.get("reason","초기 배치"))
         var suggestion: String=str(mind.get("proposal",""))
-        var pending: bool=sim.map_dispatches.get(ids[i],{}).get("status","")=="이동 중" and not sim.finished
-        var headline: String="%s · %s" % [str(u["name"]),_field_action(u)]
-        var strength: String=_number_text(roundi(sim.corps_report(ids[i])["troops"]))+"명"
-        var state: String="%s · %s" % [strength,mood]
-        if pending: state+=" · 전령"
-        elif not suggestion.is_empty(): state+=" · 건의"
+        var kind: String="건의" if not suggestion.is_empty() else "판단"
         var detail: String=suggestion if not suggestion.is_empty() else reason
-        card.text="\n".join([_fit_card_line(headline,137.0),_fit_card_line(state,137.0),_fit_card_line(detail,137.0)])
-        if card.icon==null or str(card.get_meta("general_name",""))!=str(u["name"]):
-            card.icon=_commander_icon(str(u["name"]),0)
-            card.set_meta("general_name",str(u["name"]))
-        card.tooltip_text="기분: "+mood+"\n판단: "+reason+"\n관측: "+str(mind.get("observed",""))+"\n우려: "+str(mind.get("concern",""))+"\n최근 명령: "+str(mind.get("last_order",""))
-        card.add_theme_color_override("font_color",_mood_color(mood) if mood not in ["침착","준비","전투 준비"] else COL_TEXT)
-        card.add_theme_color_override("font_hover_color",COL_GOLD)
-        card.set_pressed_no_signal(ids[i]==selected_id and not observing_enemy)
-        if ids[i]==selected_id and not observing_enemy:
-            card.add_theme_color_override("font_color",COL_GOLD)
+        if courier_orders.has(ids[i]):
+            kind="전령"
+            detail="이동 · "+str(courier_orders[ids[i]])
+        var officer: String=str(u["name"])
+        if card.portrait.texture==null or card.portrait_name!=officer:
+            card.portrait.texture=_commander_icon(officer,0)
+            card.portrait_name=officer
+        var troops: String=_number_text(roundi(sim.corps_report(ids[i])["troops"]))+"명"
+        card.present(officer,troops,_field_action(u),mood,_mood_color(mood),kind,detail,ids[i]==selected_id and not observing_enemy)
+        card.report_mark.visible=reporting.has(ids[i])
+        card.accessibility_description="도착한 야전 보고 있음" if card.report_mark.visible else ""
+        card.tooltip_text="%s  ·  단축키 %d\n기분: %s\n판단: %s\n관측: %s\n우려: %s\n최근 명령: %s" % [officer,i+1,mood,reason,mind.get("observed",""),mind.get("concern",""),mind.get("last_order","")]
+        if not suggestion.is_empty(): card.tooltip_text+="\n건의: "+suggestion
 
 # Three live fronts, persistent and clickable. Display counts are actual current
 # manpower in each geographical sector, never invented territorial control.
 func _build_sector_board() -> void:
     for i in range(3):
-        var card: Button=_button("",Vector2(16+i*271,61),Vector2(263,40),_focus_sector.bind(i))
-        card.add_theme_font_size_override("font_size",12)
-        card.alignment=HORIZONTAL_ALIGNMENT_LEFT
-        card.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
-        var panel:=StyleBoxFlat.new()
-        panel.bg_color=COL_PANEL
-        panel.border_color=COL_LINE
-        panel.set_border_width_all(1)
-        panel.set_corner_radius_all(4)
-        panel.content_margin_left=10
-        panel.content_margin_right=8
-        card.add_theme_stylebox_override("normal",panel)
-        var hover: StyleBoxFlat=panel.duplicate()
-        hover.bg_color=Color("#24383a")
-        hover.border_color=COL_GOLD
-        card.add_theme_stylebox_override("hover",hover)
+        var card:=BattleHud.SectorCard.new()
+        card.position=Vector2(16+i*271,58)
+        card.size=Vector2(263,46)
+        card.pressed.connect(_focus_sector.bind(i))
+        add_child(card)
         sector_cards.append(card)
 
 func _refresh_sector_board() -> void:
@@ -1244,21 +1259,15 @@ func _refresh_sector_board() -> void:
     sector_snapshot=FrontView.summarize(sim,fog_enabled and not sim.finished)
     for i in range(3):
         var row: Dictionary=sector_snapshot[i]
-        var card: Button=sector_cards[i]
-        var enemy: String=_number_text(int(row["enemy"]))
-        if fog_enabled and not sim.finished: enemy="관측 "+enemy
-        card.text="%s  |  %s\n아 %s  /  적 %s" % [str(row["name"]),str(row["state"]),_number_text(int(row["own"])),enemy]
-        card.tooltip_text="해당 구역 병력 합계 · 영토 점유율 아님\n교전 중 공격 부대 %d개 / 아군 최대 전열 압박 %.0f%%\n클릭: 해당 전선으로 이동" % [int(row["contacts"]),float(row["pressure"])*100.0]
-        var color: Color=COL_RED if str(row["state"])=="아군 압박" else (COL_GOLD if int(row["contacts"])>0 else COL_TEXT)
-        card.add_theme_color_override("font_color",color)
-        card.modulate=Color.WHITE if sector_selection==i else Color(0.94,0.96,0.95)
+        var card:=sector_cards[i]
+        card.present(row,_number_text(row["own"]),_number_text(row["enemy"]),fog_enabled and not sim.finished,sector_selection==i)
+        card.tooltip_text="구역 내 병력 합계 · 교전 중 공격 부대 %d개 · 아군 최대 전열 압박 %.0f%%\n클릭하면 이 전선을 봅니다." % [int(row["contacts"]),float(row["pressure"])*100.0]
 
 func _focus_sector(index: int) -> void:
     if index<0 or index>=sector_snapshot.size(): return
-    sector_selection=index
     camera_center=sector_snapshot[index]["focus"]
     camera_zoom=1.20
-    _clamp_camera()
+    _clamp_camera(index)
     map_layer.queue_redraw()
     queue_redraw()
 
@@ -1432,9 +1441,13 @@ func _map_select(mouse_pos: Vector2) -> void:
 
 func _draw() -> void:
     draw_rect(Rect2(0,0,1280,800),COL_BG)
-    draw_rect(Rect2(0,0,1280,56),Color("#202c38"))
+    draw_rect(Rect2(0,0,1280,56),Color("#1d302f"))
+    draw_rect(Rect2(0,56,954,68),Color("#182725"))
+    draw_rect(Rect2(0,694,1280,106),Color("#182420"))
+    draw_line(Vector2(369,8),Vector2(369,44),Color("#59615a"))
+    draw_line(Vector2(953,8),Vector2(953,44),Color("#59615a"))
     draw_rect(Rect2(0,0,6,56),Color("#cf674e"))
-    draw_line(Vector2(0,55),Vector2(1280,55),COL_LINE,1.0)
+    draw_line(Vector2(0,55),Vector2(1280,55),Color("#76664c"),1.0)
     var elapsed: float=clampf(sim.operation_elapsed()/maxf(1.0,sim.operation_limit()),0,1)
     draw_rect(Rect2(383,51,555,2),Color("#354653"))
     if elapsed>0.0: draw_rect(Rect2(383,51,555*elapsed,2),COL_GOLD)
@@ -1445,7 +1458,7 @@ func _draw() -> void:
     draw_rect(Rect2(970,hero_top,286,85),Color("#263747"))
     draw_rect(Rect2(970,hero_top,3,85),COL_RED if observing_enemy else COL_BLUE)
     draw_line(Vector2(970,601),Vector2(1256,601),COL_LINE,1.0)
-    draw_line(Vector2(16,697),Vector2(1264,697),COL_LINE,1.0)
+    draw_line(Vector2(16,698),Vector2(1264,698),Color("#76664c"),1.0)
     _draw_force_balance()
     _draw_minimap()
 
@@ -2398,7 +2411,11 @@ func _build_map_layer() -> void:
 func _world_mouse(p: Vector2) -> Vector2:
     return (p - MAP_TOP_LEFT - MAP_SIZE*0.5)/camera_zoom + camera_center
 
-func _clamp_camera() -> void:
+func _clamp_camera(focused_sector: int=-1) -> void:
+    if sector_selection!=focused_sector:
+        sector_selection=focused_sector
+        for i in range(sector_cards.size()):
+            sector_cards[i].set_pressed_no_signal(i==focused_sector)
     var half: Vector2 = MAP_SIZE*0.5/camera_zoom
     camera_center.x = clampf(camera_center.x,minf(half.x,sim.field_size.x*0.5),maxf(sim.field_size.x-half.x,sim.field_size.x*0.5))
     camera_center.y = clampf(camera_center.y,minf(half.y,sim.field_size.y*0.5),maxf(sim.field_size.y-half.y,sim.field_size.y*0.5))
@@ -2416,6 +2433,7 @@ func _reset_camera() -> void:
     render_clock = sim.battle_time
     camera_zoom = _overview_zoom()
     camera_center = sim.field_size*0.5
+    _clamp_camera()
     if not sim.started:
         visibility_stamp = -100.0
         visibility_texture = null
@@ -3713,7 +3731,11 @@ func _field_art(tile:int,rect:Rect2,tint:Color=Color.WHITE)->void:
 func _commander_icon(name:String,side:int)->AtlasTexture:
     var icon:=AtlasTexture.new()
     var id: int=PORTRAIT_NAMES.find(name)
-    if name in ["왕평","마속","위연","장합"]:
+    if side==0 and id>=0 and id<6:
+        icon.atlas=SHU_COMMANDERS
+        icon.region=Rect2((id%3)*256,floori(float(id)/3.0)*256,256,256)
+        icon.filter_clip=true
+    elif name in ["왕평","마속","위연","장합"]:
         icon.atlas=PAINTED_ART
         icon.region=_art_region(_portrait_tile(name))
     elif id>=0:
