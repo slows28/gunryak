@@ -5,6 +5,30 @@ const TRAINING_SCENARIO := 5
 # Wide-field coordinates. Elliptical basins sit clear of the roads and river.
 const TRAINING_MARSHES := [Rect2(650,576,338,168),Rect2(1630,1452,318,148)]
 
+# World-space ellipses clear of the roads, bridges, woodland and ridgeline.
+const MARSHES := [
+    [Rect2(655,1000,290,160)],                                  # north/south crossings
+    [Rect2(790,580,280,160)],                                   # western foot of the plateau
+    [Rect2(670,590,260,150),Rect2(540,1000,280,160)],           # defense approaches
+    [Rect2(1310,1000,280,160),Rect2(1760,580,280,160)],        # convoy lowlands
+    [Rect2(1860,1090,280,160)],                                 # southern siege approach
+    TRAINING_MARSHES,
+]
+const REEDBEDS := [
+    [Rect2(1470,585,280,160),Rect2(795,1370,270,160)],
+    [Rect2(1170,1000,280,160)],
+    [Rect2(1470,1000,280,160)],
+    [Rect2(660,674,280,150)],
+    [Rect2(790,590,280,150),Rect2(1470,920,280,160)],
+    [Rect2(1310,920,280,160)],
+]
+
+static func in_basins(point: Vector2, basins: Array) -> bool:
+    for basin: Rect2 in basins:
+        if basin.has_point(point) and basin_radius(point, basin) < 1.0:
+            return true
+    return false
+
 static func basin_radius(point: Vector2, basin: Rect2) -> float:
     return ((point-basin.get_center())/(basin.size*0.5)).length()
 

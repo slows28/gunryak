@@ -161,8 +161,8 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             var edge_v: float = minf(minf(float(x)/bake,extent.x-float(x)/bake),minf(float(y)/bake,extent.y-float(y)/bake))
             ground = ground.darkened((1.0-smoothstep(0.0,55.0,edge_v))*0.23)
             image.set_pixel(x,y,ground)
-    if scenario==FieldGeometry.TRAINING_SCENARIO:
-        for basin: Rect2 in FieldGeometry.TRAINING_MARSHES:
+    if scale > 1.0:
+        for basin: Rect2 in FieldGeometry.MARSHES[scenario]:
             var area:=Rect2i(basin).intersection(Rect2i(0,0,w,h))
             for yy in range(area.position.y,area.end.y):
                 for xx in range(area.position.x,area.end.x):
@@ -173,6 +173,8 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                     var pigment:=Color("#6c7850").lerp(Color("#74958c"),water)
                     var cover: float=(1.0-smoothstep(0.68,1.0,edge))*0.82
                     image.set_pixel(xx,yy,image.get_pixel(xx,yy).lerp(pigment,cover))
+        for bed: Rect2 in FieldGeometry.REEDBEDS[scenario]:
+            _paint_reedbed(image, bed, noise)
     var rng := RandomNumberGenerator.new()
     rng.seed = 2148+scenario*37
     # Cached grass tufts and pebbles, kept off roads, waterways and forest interiors.
@@ -320,6 +322,26 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             image.blend_rect(deck,Rect2i(Vector2i.ZERO,deck.get_size()),origin)
     image.generate_mipmaps()
     return ImageTexture.create_from_image(image)
+
+static func _paint_reedbed(image: Image, bed: Rect2, noise: FastNoiseLite) -> void:
+    var rng := RandomNumberGenerator.new()
+    rng.seed = int(bed.position.x + bed.position.y * 271)
+    var area := Rect2i(bed)
+    for y in range(area.position.y,area.end.y):
+        for x in range(area.position.x,area.end.x):
+            var edge := FieldGeometry.basin_radius(Vector2(x,y),bed)
+            if edge >= 1.0: continue
+            var light := smoothstep(-0.5,0.45,noise.get_noise_2d(x,y*1.8))
+            var pigment := Color("#746237").lerp(Color("#bfa65e"),light)
+            image.set_pixel(x,y,image.get_pixel(x,y).lerp(pigment,0.76*(1.0-smoothstep(0.76,1.0,edge))))
+    for i in range(int(bed.get_area()/27.0)):
+        var stem := Vector2i(rng.randi_range(area.position.x,area.end.x-1),rng.randi_range(area.position.y,area.end.y-1))
+        if FieldGeometry.basin_radius(stem,bed) > 0.94: continue
+        var height := rng.randi_range(3,8)
+        var straw := image.get_pixelv(stem).lerp(Color("#dec886"),0.6)
+        for j in range(height):
+            image.set_pixelv(stem+Vector2i(j/3,-j),straw.darkened(0.27*(1.0-float(j)/height)))
+        image.set_pixelv(stem+Vector2i(height/3,-height),Color("#aa8853"))
 
 static func _tree(index: int) -> Image:
     var img := Image.create_empty(43,43,false,Image.FORMAT_RGBA8)

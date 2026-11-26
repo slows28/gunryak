@@ -28,8 +28,7 @@ static func sector_for(p: Vector2, extent: Vector2) -> int:
 
 static func observes_unit(sim, unit: Dictionary, limited: bool) -> bool:
     if int(unit["side"]) == 0 or not limited or sim.finished: return true
-    var concealed: bool=sim.terrain_at(unit["pos"])=="숲" or float(unit.get("ambush_ready",0.0))>=3.0
-    return sim.player_can_see(unit["pos"],concealed)
+    return sim.player_sees_enemy(unit)
 
 static func summarize(sim,limited: bool) -> Array[Dictionary]:
     var sectors: Array[Dictionary]=[]

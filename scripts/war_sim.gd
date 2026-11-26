@@ -72,6 +72,8 @@ var scenario_title: String = "북남 요충지"
 var scenario_goal: String = "두 요충지를 동시에 점령하고 유지"
 var scenario_limit: float = MAX_SECONDS
 var forests: Array[Rect2] = []
+var marshes: Array = []
+var reedbeds: Array = []
 var hill: Rect2 = Rect2(400, 213, 108, 89)
 var timeline: Array[Dictionary] = []
 var visual_effects: Array[Dictionary] = []
@@ -179,6 +181,8 @@ func reset() -> void:
         var manpower: Array[int] = [4500,3500,3200,4800,3300,3200,4000,3800,4500,4100,3600,4200]
         var shapes: Array[String] = ["방진","안행진","봉시진","어린진","안행진","봉시진","학익진","어린진","방진","학익진","봉시진","방진"]
         for i in range(units.size()):
+            if long_operation and scenario_id in [0, 1, 2, 3] and units[i]["side"] == 1:
+                manpower[i] = mini(int(MAX_TROOPS), manpower[i] + 600)
             units[i]["troops"] = float(manpower[i])
             units[i]["initial_troops"] = float(manpower[i])
             units[i]["formation"] = shapes[i]
@@ -679,20 +683,14 @@ func _nearest_enemy(unit: Dictionary) -> Dictionary:
 
 func _nearest_visible_enemy(unit: Dictionary) -> Dictionary:
     var nearest: Dictionary = {}
-    var nearest_distance: float = AI_VISION_RANGE * 1.25
+    var sight := _vision_range(unit)
+    var nearest_distance := sight
     var position: Vector2 = unit["pos"]
     for enemy in units:
         if int(enemy["side"]) == int(unit["side"]) or float(enemy["troops"]) <= 0.0:
             continue
         var distance: float = position.distance_to(enemy["pos"])
-        var vision: float = AI_VISION_RANGE * (0.85 + _effective_stat(unit, "intelligence") * 0.002)
-        if _in_forest(enemy["pos"]):
-            vision *= 0.68
-            if float(enemy["ambush_ready"]) >= 3.0:
-                vision *= 0.48
-        if terrain_at(position) == "고지":
-            vision *= 1.15
-        if distance < minf(nearest_distance, vision):
+        if distance < nearest_distance and distance < sight * unit_exposure(enemy):
             nearest_distance = distance
             nearest = enemy
     return nearest
@@ -1225,9 +1223,8 @@ func terrain_at(p: Vector2) -> String:
     for lane in range(3):
         if absf(p.y-road_y(p.x,lane)) <= (16.0 if wide_field else 10.0):
             return "도로"
-    if scenario_id==TRAINING_SCENARIO:
-        for basin: Rect2 in FieldGeometry.TRAINING_MARSHES:
-            if basin.has_point(p) and FieldGeometry.basin_radius(p,basin)<1.0: return "습지"
+    if FieldGeometry.in_basins(p, marshes): return "습지"
+    if FieldGeometry.in_basins(p, reedbeds): return "갈대밭"
     return "평지"
 
 func on_river_channel(p: Vector2) -> bool:
@@ -1242,6 +1239,7 @@ func terrain_movement_percent(id: int, position: Vector2) -> int:
 
 func _terrain_movement_multiplier(unit: Dictionary, p: Vector2) -> float:
     match terrain_at(p):
+        "갈대밭": return 0.63 if unit["type"] == "기병" else 0.84
         "습지": return 0.48 if str(unit["type"])=="기병" else 0.66
         "교량": return 1.08
         "하천": return 0.34 if str(unit["type"]) == "기병" else 0.48
@@ -1255,6 +1253,28 @@ func _terrain_movement_multiplier(unit: Dictionary, p: Vector2) -> float:
         "고지":
             return 0.82
     return 1.0
+
+# Observation is a property of the observer's position. Concealment applies
+# only when identifying troops, never when inspecting the ground itself.
+func terrain_sight_factor(p: Vector2) -> float:
+    if wide_field and _in_forest(p): return 0.86
+    if hill.has_point(p) and not on_river_channel(p): return 1.15
+    if FieldGeometry.in_basins(p, reedbeds): return 0.82
+    return 1.0
+
+func terrain_exposure(p: Vector2) -> float:
+    if _in_forest(p): return 0.68
+    if FieldGeometry.in_basins(p, reedbeds): return 0.72
+    return 1.0
+
+func unit_exposure(unit: Dictionary) -> float:
+    var exposure := terrain_exposure(unit["pos"])
+    if unit.get("ambush_ready",0.0) >= 3.0 and _in_forest(unit["pos"]):
+        exposure *= 0.48
+    return exposure
+
+func _vision_range(unit: Dictionary) -> float:
+    return AI_VISION_RANGE * (0.85 + _effective_stat(unit, "intelligence") * 0.002) * terrain_sight_factor(unit["pos"])
 
 func _in_forest(p: Vector2) -> bool:
     for region in forests:
@@ -2132,11 +2152,12 @@ func _update_scouts(dt: float) -> void:
         var p: Vector2 = scout["pos"]
         var threat: Dictionary = {}
         var threat_d: float = 10000.0
+        var sight := 190.0 * terrain_sight_factor(p)
         for enemy in units:
             if int(enemy["side"]) == side or float(enemy["troops"]) <= 0.0 or bool(enemy["routed"]):
                 continue
             var d: float = p.distance_to(enemy["pos"])
-            if d < threat_d:
+            if d < threat_d and d < sight * unit_exposure(enemy):
                 threat = enemy
                 threat_d = d
         if threat_d < 23.0:
@@ -2144,7 +2165,7 @@ func _update_scouts(dt: float) -> void:
             _log("%s 정찰대 차단" % ("아군" if side == 0 else "적군"))
             continue
         scout["report_timer"] = maxf(0.0, float(scout["report_timer"]) - dt)
-        if not threat.is_empty() and threat_d < (125.0 if _in_forest(threat["pos"]) else 190.0) and float(scout["report_timer"]) <= 0.0:
+        if not threat.is_empty() and float(scout["report_timer"]) <= 0.0:
             var scout_bonus: float = 0.0
             for ally in units:
                 if int(ally["side"]) == side and ally.get("specialty","") == "정찰" and float(ally["troops"]) > 0.0 and not bool(ally["routed"]):
@@ -2417,12 +2438,18 @@ func _configure_scenario() -> void:
 # The survey uses actual map locations, including the current supply base.
 func training_sites() -> Dictionary:
     if scenario_id!=TRAINING_SCENARIO: return {}
-    return {"평지":Vector2(360,615),"도로":Vector2(520,road_y(520,1)),
+    return {"갈대밭":FieldGeometry.REEDBEDS[scenario_id][0].get_center(),"평지":Vector2(360,615),"도로":Vector2(520,road_y(520,1)),
         "숲":forests[0].get_center(),"고지":hill.get_center(),"습지":FieldGeometry.TRAINING_MARSHES[0].get_center(),
         "하천":Vector2(river_x(612),612),"북측 교량":Vector2(river_x(390),390),
         "중앙 교량":Vector2(river_x(850),850),"남측 교량":Vector2(river_x(1300),1300),
         "성문":(structures[0]["rect"] as Rect2).get_center(),"목책":(structures[1]["rect"] as Rect2).get_center(),
         "보급기지":bases[0]["pos"],"점령 거점":outposts[0]["pos"]}
+
+func field_survey_sites() -> Dictionary:
+    if scenario_id == TRAINING_SCENARIO: return training_sites()
+    if not wide_field: return {}
+    return {"습지": marshes[0].get_center(), "갈대밭": reedbeds[0].get_center(),
+        "숲": forests[0].get_center(), "고지": hill.position + hill.size * Vector2(0.15, 0.5)}
 
 func transfer_troops(receiver_id: int, donor_id: int, amount: int) -> bool:
     if started or amount <= 0 or receiver_id == donor_id:
@@ -2569,19 +2596,23 @@ func _deliver_intel() -> void:
         pending_reports.remove_at(i)
 
 func player_can_see(position: Vector2, concealed: bool = false) -> bool:
-    var factor: float = 0.60 if concealed else 1.0
-    if not commander_captured(0) and (commanders[0]["pos"] as Vector2).distance_to(position) <= 170.0 * factor:
+    return _player_observes(position, 0.60 if concealed else 1.0)
+
+func player_sees_enemy(unit: Dictionary) -> bool:
+    return _player_observes(unit["pos"], unit_exposure(unit))
+
+func _player_observes(position: Vector2, factor: float) -> bool:
+    if not commander_captured(0) and (commanders[0]["pos"] as Vector2).distance_to(position) <= 170.0 * factor * terrain_sight_factor(commanders[0]["pos"]):
         return true
     for unit in units:
         if int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0 or bool(unit["routed"]):
             continue
         var sight: float = 200.0 * factor * (0.85 + _effective_stat(unit,"intelligence")*0.002)
-        if terrain_at(unit["pos"]) == "고지":
-            sight *= 1.15
+        sight *= terrain_sight_factor(unit["pos"])
         if (unit["pos"] as Vector2).distance_to(position) <= sight:
             return true
     for scout in scouts:
-        if int(scout["side"]) == 0 and bool(scout["alive"]) and (scout["pos"] as Vector2).distance_to(position) <= 145.0 * factor:
+        if int(scout["side"]) == 0 and bool(scout["alive"]) and (scout["pos"] as Vector2).distance_to(position) <= 145.0 * factor * terrain_sight_factor(scout["pos"]):
             return true
     return false
 
@@ -3128,6 +3159,8 @@ func road_y(x: float,lane: int) -> float:
 func _expand_layout() -> void:
     layout_scale = 3.0 if wide_field else 1.0
     field_size = Vector2(FIELD_W,FIELD_H)*layout_scale
+    marshes = FieldGeometry.MARSHES[scenario_id] if wide_field else []
+    reedbeds = FieldGeometry.REEDBEDS[scenario_id] if wide_field else []
     if not wide_field: return
     for unit in units:
         for key in ["pos","goal","defense_anchor","tactical_anchor"]:
@@ -3533,18 +3566,14 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
 func _tactical_target(unit: Dictionary,nearest: Dictionary) -> Dictionary:
     var p: Vector2=unit["pos"]
     var reach: float=173.0 if str(unit["type"])=="궁병" else 30.0
+    var sight := _vision_range(unit)
     var best: Dictionary=nearest
     var score_best: float=-INF
     for enemy in units:
         if int(enemy["side"])==int(unit["side"]) or float(enemy["troops"])<=0.0: continue
         var ep: Vector2=enemy["pos"]
         var d: float=p.distance_to(ep)
-        var vision: float=AI_VISION_RANGE*(0.85+_effective_stat(unit,"intelligence")*0.002)
-        if _in_forest(ep):
-            vision*=0.68
-            if float(enemy["ambush_ready"])>=3.0: vision*=0.48
-        if terrain_at(p)=="고지": vision*=1.15
-        if d>minf(vision,reach+100.0): continue
+        if d > reach + 100.0 or d > sight * unit_exposure(enemy): continue
         var direction: Vector2=(p-ep).normalized()
         var flank: bool=direction.dot(enemy["facing"])<0.3
         var score: float=110.0-d*0.6+45.0*(tactical_matchup(unit,enemy,flank)-1.0)
@@ -3581,12 +3610,7 @@ func _locally_observed(unit: Dictionary,enemy: Dictionary) -> bool:
     if int(unit["side"])==int(enemy["side"]) or float(enemy["troops"])<=0.0: return false
     var p: Vector2=unit["pos"]
     var ep: Vector2=enemy["pos"]
-    var vision: float=AI_VISION_RANGE*(0.85+_effective_stat(unit,"intelligence")*0.002)
-    if _in_forest(ep):
-        vision*=0.68
-        if float(enemy["ambush_ready"])>=3.0: vision*=0.48
-    if terrain_at(p)=="고지": vision*=1.15
-    return p.distance_to(ep)<=vision
+    return p.distance_to(ep) <= _vision_range(unit) * unit_exposure(enemy)
 
 # A real healthy infantry line must lie between a melee attacker and its
 # archer target. Mere proximity never grants protection.

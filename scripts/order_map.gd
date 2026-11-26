@@ -102,7 +102,7 @@ func configure(owner_game: Control,used_font: Font) -> void:
     survey=_choice(Vector2(1080,613),Vector2(173,31),[])
     survey.tooltip_text="지점을 표시하고 선택한 군단의 통행 조건을 확인"
     survey.item_selected.connect(_survey_site)
-    survey_detail=_label("",Vector2(1082,648),Vector2(170,49),13,Color("#e2d1a6"))
+    survey_detail=_label("",Vector2(1082,648),Vector2(170,55),13,Color("#e2d1a6"))
     survey_detail.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     _label("군령서",Vector2(35,88),Vector2(276,30),21,SHEET_TEXT)
     info=_label("",Vector2(111,126),Vector2(202,85),14,SHEET_TEXT)
@@ -218,7 +218,7 @@ func open(mid_battle:bool=false)->void:
         feedback.text=sim.command_status(0)
         progress_label.text="장수 자율 지휘 · 전황 관측"
     if not mid_battle: drafts.clear()
-    survey_sites=sim.training_sites()
+    survey_sites=sim.field_survey_sites()
     survey.clear()
     survey_key=""
     if not survey_sites.is_empty():
@@ -413,10 +413,10 @@ func _refresh_survey() -> void:
         survey_detail.text=""
         return
     var point: Vector2=survey_sites[survey_key]
-    var note: String="이동 %d%%" % sim.terrain_movement_percent(selected_id,point)
+    var note: String = "이동 %d%% · 시야 %d%%" % [sim.terrain_movement_percent(selected_id,point), roundi(sim.terrain_sight_factor(point)*100)]
+    if survey_key in ["숲","갈대밭"]:
+        note += "\n적이 발견하는 거리 %d%%" % roundi(sim.terrain_exposure(point)*100)
     match survey_key:
-        "숲": note+=" · 은폐"
-        "고지": note+=" · 시야 확대"
         "북측 교량","중앙 교량","남측 교량": note+=" · 도하로"
         "하천": note="도하 불가 · 교량 이용" if sim.long_operation else note
         "성문","목책":
@@ -476,7 +476,7 @@ func _gui_input(event:InputEvent)->void:
                 var problem: String=sim.post_placement_issue(post_mode,point)
                 if problem.is_empty() and sim.place_post(post_mode,point):
                     feedback.text="%s %s · %s" % [post_mode,_grid_ref(point),"개전과 함께 구축 시작" if post_mode=="보급기지" else "책사 배치 완료"]
-                    survey_sites=sim.training_sites()
+                    survey_sites=sim.field_survey_sites()
                     _refresh_survey()
                     _set_post_mode("")
                 else:
@@ -555,22 +555,22 @@ func _draw()->void:
         _ink(String.chr(65+column),MAP.position+Vector2((column+0.5)*MAP.size.x/8.0-4,20),11,INK)
     for row in range(6):
         _ink(str(row+1),MAP.position+Vector2(10,(row+0.5)*MAP.size.y/6.0),11,INK)
-    if sim.scenario_id==FieldGeometry.TRAINING_SCENARIO:
-        for basin: Rect2 in FieldGeometry.TRAINING_MARSHES:
+    for terrain in ["습지","갈대밭"]:
+        for basin: Rect2 in (sim.marshes if terrain=="습지" else sim.reedbeds):
             var rim:=PackedVector2Array()
             var center:=_point(basin.get_center())
             var radius:=_point(basin.end)-center
             for i in range(41): rim.append(center+Vector2.from_angle(i*TAU/40.0)*radius)
-            draw_colored_polygon(rim.slice(0,40),Color(0.28,0.43,0.35,0.30))
+            draw_colored_polygon(rim.slice(0,40),Color(0.28,0.43,0.35,0.30) if terrain=="습지" else Color(0.63,0.48,0.16,0.38))
             draw_polyline(rim,Color("#798666"),1.0,true)
             for i in range(-2,3):
                 var y: float=i*0.28
                 var dx: float=sqrt(1.0-y*y)*radius.x*0.62
                 var start:=center+Vector2(-dx,y*radius.y)
-                draw_line(start,start+Vector2(dx*0.65,-1),Color(0.30,0.44,0.40,0.45),1,true)
+                if terrain=="습지": draw_line(start,start+Vector2(dx*0.65,-1),Color(0.30,0.44,0.40,0.45),1,true)
                 var reed:=center+Vector2(dx*(0.50+0.22*cos(i*2.8)),y*radius.y)
                 draw_multiline(PackedVector2Array([reed,reed+Vector2(0,-7),reed,reed+Vector2(-3,-5),reed,reed+Vector2(3,-4)]),Color("#67775c"),1,true)
-            _ink("습지",center+Vector2(-12,5),12,INK)
+            _ink(terrain,center+Vector2(-18,5),12,INK)
     for lane in range(3):
         var line:=PackedVector2Array()
         for x in range(0,int(sim.field_size.x)+1,35): line.append(_point(Vector2(x,sim.road_y(float(x),lane))))
@@ -899,12 +899,12 @@ func _sync_actions()->void:
 
 func _destination_text(p:Vector2)->String:
     var terrain:String=sim.terrain_at(p)
-    var detail: String="이동 속도 %d%%" % int(sim.terrain_movement_percent(selected_id,p))
+    var detail: String="이동 %d%% · 시야 %d%%" % [sim.terrain_movement_percent(selected_id,p), roundi(sim.terrain_sight_factor(p)*100)]
     var crossing: float=march_diagram.get("bridge",sim.map_order_crossing(selected_id,p))
     if terrain=="하천" and sim.long_operation:
         detail="목표 지정 불가"
     elif crossing>=0.0:
-        detail+=" · "+str(game.call("_bridge_name",crossing))+" 예상"
+        detail+=" · 도하 예상"
     var nearest:String=""
     var distance:float=220.0
     for site in sim.outposts:

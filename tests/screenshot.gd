@@ -63,6 +63,21 @@ func _capture() -> void:
         quit(1)
         return
     var orders: Control=game.order_view
+    var reed_index: int=orders.survey_sites.keys().find("갈대밭")+1
+    if reed_index<=0:
+        push_error("VISUAL_CAPTURE_FAIL: reedbed missing on operation map")
+        quit(1)
+        return
+    orders.survey.select(reed_index)
+    orders.survey.item_selected.emit(reed_index)
+    if not orders.survey_detail.text.contains("시야 82%") or not orders.survey_detail.text.contains("72%"):
+        push_error("VISUAL_CAPTURE_FAIL: incorrect reedbed survey")
+        quit(1)
+        return
+    await RenderingServer.frame_post_draw
+    if not _save_frame("operation_reed_orders.png"): return
+    orders.survey.select(0)
+    orders.survey.item_selected.emit(0)
     var east:=Vector2(1920,910)
     orders.destination=east
     orders.has_destination=true
@@ -962,7 +977,7 @@ func _capture_training_field() -> bool:
         return false
     entry.pressed.emit()
     var sheet: Control=game.order_view
-    if not sheet.visible or not sheet.survey.visible or sheet.survey_sites.size()!=13:
+    if not sheet.visible or not sheet.survey.visible or sheet.survey_sites.size()!=14 or not sheet.survey_sites.has("갈대밭"):
         push_error("VISUAL_CAPTURE_FAIL: training field is missing survey landmarks")
         return false
     sheet.destination=sheet.survey_sites["점령 거점"]
@@ -990,6 +1005,11 @@ func _capture_training_field() -> bool:
     await process_frame
     await RenderingServer.frame_post_draw
     if not _save_frame("training_marsh.png"): return false
+    game.camera_center=sheet.survey_sites["갈대밭"]
+    game.call("_clamp_camera")
+    game.map_layer.queue_redraw()
+    await RenderingServer.frame_post_draw
+    if not _save_frame("training_reeds.png"): return false
     game.call("_reset_camera")
     await process_frame
     await RenderingServer.frame_post_draw
