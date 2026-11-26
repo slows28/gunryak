@@ -217,7 +217,8 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             var tile: Image=scenery.get_region(Rect2i(kind*256,0,256,256))
             for variant in range(3):
                 var patch: Image=tile.duplicate()
-                var size: int=roundi((19.0+variant*10.0+(12.0 if kind==0 else 0.0))*bake)
+                var width: float=11.0+variant*7.0 if kind==2 else 19.0+variant*10.0
+                var size: int=roundi((width+(12.0 if kind==0 else 0.0))*bake)
                 patch.resize(size,size,Image.INTERPOLATE_LANCZOS)
                 if variant==1: patch.flip_x()
                 details.append(patch)
@@ -235,7 +236,10 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             if density < -0.04 and i%6!=0: continue
             if bank<105.0 or hill.has_point(p): kind=0 if i%3==0 else 1
             elif i%9==0 and density>0.22: kind=1
-            decor.append({"pos":p,"tile":kind*3+rng.randi_range(0,2)})
+            var tile_index: int=kind*3+rng.randi_range(0,2)
+            # Leave open stubble between patches. Retain the tree layout when thinning brush.
+            if kind==2 and (i%3!=0 or density<0.10): continue
+            decor.append({"pos":p,"tile":tile_index})
         decor.sort_custom(func(a: Dictionary,b: Dictionary) -> bool: return (a["pos"] as Vector2).y<(b["pos"] as Vector2).y)
         for item in decor:
             var patch: Image=details[int(item["tile"])]
