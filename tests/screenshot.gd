@@ -156,7 +156,7 @@ func _capture() -> void:
         return
     game.call("_show_friendly_roster")
     game.call("_reset_camera")
-    if game.combat_sounds.size()!=3 or game.combat_players.size()!=4:
+    if game.combat_sounds.size()!=4 or not game.combat_sounds.has_all(["근접", "화살", "질주", "돌격"]) or game.combat_players.size()!=4:
         push_error("VISUAL_CAPTURE_FAIL: battle Foley not initialized")
         quit(1)
         return

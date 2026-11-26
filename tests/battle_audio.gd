@@ -78,6 +78,23 @@ func _run() -> void:
         check(peak>0.001 and not is_equal_approx(peak,previous),"distinct audible effect "+kind)
         previous=peak
     sim.visual_effects.clear()
+    var rider: Dictionary = sim.find_unit(2)
+    rider["pos"] = point
+    rider["charge"] = 45.0
+    var cursor: int = game.combat_audio_cursor
+    game._update_audio_and_warning()
+    check(game.combat_audio_cursor == cursor + 1 and await _sample("gallop", 0.74) > 0.001,
+        "an approaching visible charge has an audible hoofbeat before contact")
+    rider["charge"] = 0.0
+    sim.battle_time += 0.1
+    for kind in ["근접", "돌격", "근접"]:
+        sim.visual_effects.append({"from":point, "to":point, "kind":kind, "time":sim.battle_time})
+    game._update_audio_and_warning()
+    var impact: AudioStreamPlayer = game.combat_players[(cursor + 1) % game.combat_players.size()]
+    check(impact.stream in game.combat_sounds["돌격"] and impact.stream not in game.combat_sounds["질주"],
+        "first contact is audible above simultaneous melee with a distinct impact")
+    await create_timer(0.65).timeout
+    sim.visual_effects.clear()
     sim.battle_time+=1.0
     sim.urgent_deliveries+=1
     game._update_audio_and_warning()

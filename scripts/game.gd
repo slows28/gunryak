@@ -600,6 +600,7 @@ func _field_action(u: Dictionary) -> String:
     if float(u["troops"])<=0.0: return "전멸"
     if bool(u["routed"]): return "패주"
     if sim.started and not sim.finished:
+        if u["type"] == "기병" and u["charge"] >= 32.0: return "돌격 가속"
         if not u.get("field_choice",{}).is_empty(): return u["action"]
         var age: float=sim.battle_time-float(u.get("last_visual",-100.0))
         if age>=0.0 and age<0.95:
@@ -1121,6 +1122,7 @@ func _engagement_note(entry: Dictionary) -> String:
     if bool(entry.get("ambush",false)): return "매복 기습"
     if bool(entry.get("screened",false)):
         return "아군 전열 너머 사격" if entry["kind"]=="화살" else "보병 엄호"
+    if entry.get("kind", "") == "돌격": return "기병 충돌"
     if bool(entry.get("rear",false)): return "후방 타격"
     if bool(entry.get("flank",false)): return "측면 타격"
     if bool(entry.get("linked",false)): return "협동 타격"
@@ -1941,6 +1943,11 @@ func _update_contact_fronts(dt: float) -> void:
             var front: Dictionary=contact_fronts.get(ordered,{})
             var pressed: float=float(shift.get("pressure",0.0)) if shift.get("loser",-1)==ordered.x else 0.0
             front["pressure"]=lerpf(float(front.get("pressure",pressed)),minf(1.0,pressed*2.0),minf(1.0,dt*4.0))
+            var incoming: Dictionary = sim.combat_contacts.get(ordered.y, {})
+            if incoming.get("defender_id", -1) == ordered.x and incoming.has("recoil"):
+                var recoil: Vector2 = incoming["recoil"]
+                front["pressure"] = maxf(front["pressure"], minf(1.0, recoil.length() / 32.0))
+                front["strength"] = 1.0
             front["edge"]=Vector2(front.get("edge",edge)).lerp(edge,minf(1.0,dt*5.0))
             front["axis"]=Vector2(front.get("axis",normal)).slerp(normal,minf(1.0,dt*6.0)).normalized()
             # Close part of the measured gap so the buckling files meet the
@@ -2826,6 +2833,14 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
         var stride: float=sin(phase)*SOLDIER_SCALE
         p+=direction*stride*(2.0 if kind==2 else 1.0)
         p.y+=stride*0.9
+    if moving and kind == 2 and unit["charge"] > 0.0:
+        var gallop := smoothstep(8.0, 80.0, unit["charge"])
+        var stride_phase := render_clock * 16.0 + float(index % 7) * 0.7
+        var extension := sin(stride_phase)
+        p += direction * extension * 2.4 * gallop * SOLDIER_SCALE
+        p.y -= maxf(0.0, extension) * 2.0 * gallop * SOLDIER_SCALE
+        tilt = (0.12 + 0.06 * extension) * gallop
+        extent.x *= 1.0 + gallop * (0.14 + 0.08 * extension)
     if pose==3 and kind!=1 and visual_contact:
         p+=direction*(3.5 if kind==2 else 2.2)*SOLDIER_SCALE
     elif pose==2 and kind!=1: p-=direction*0.8*SOLDIER_SCALE
@@ -2943,11 +2958,14 @@ func _draw_combat_effects() -> void:
                     _draw_charge_stop(p,target,age,alpha)
                 else:
                     var contact: Vector2=p.lerp(target,0.70)
-                    _paint_fx(3,contact,34.0+age*22.0,alpha*0.65)
-                    var axis: Vector2=(target-p).normalized()
-                    for k in range(5):
-                        var start: Vector2=contact+axis.orthogonal()*(float(k)-2.0)*4.0
-                        map_layer.draw_line(start,start+axis*(8.0+age*22.0),Color(COL_GOLD,alpha*0.75),1.5,true)
+                    var axis: Vector2 = (fx["from"] as Vector2).direction_to(fx["to"])
+                    var impulse: Vector2 = fx.get("recoil", Vector2.ZERO)
+                    var progress := 1.0 - pow(1.0 - minf(age / 0.42, 1.0), 2)
+                    for k in range(-2, 3):
+                        var spread := float(k)
+                        var plume := contact + axis.orthogonal() * spread * (2.5 + 4.0 * progress)
+                        plume += impulse * progress * (0.8 - absf(spread) * 0.18)
+                        _paint_fx(3, plume, 13.0 + 15.0 * progress, alpha * (0.55 - absf(spread) * 0.08))
             _:
                 var impact: Vector2=(p+target)*0.5
                 _paint_fx(4,impact,26.0,alpha*0.65)
@@ -3081,7 +3099,8 @@ func _play_combat_audio(fx: Dictionary) -> void:
     combat_audio_cursor+=1
     var midpoint: Vector2=(fx["from"] as Vector2).lerp(fx["to"],0.5)
     var distance: float=camera_center.distance_to(midpoint)
-    channel.volume_db=-13.0-clampf(distance/55.0,0.0,18.0)
+    var level := -10.0 if kind == "돌격" else (-18.0 if kind == "질주" else -13.0)
+    channel.volume_db = level - clampf(distance / 55.0, 0.0, 18.0)
     channel.pitch_scale=0.96+float(combat_audio_cursor%7)*0.014
     channel.stream=takes[index]
     channel.play()
@@ -3096,22 +3115,31 @@ func _update_audio_and_warning() -> void:
         _play_cue(BattleAudio.DISPATCH)
     heard_urgent_deliveries=sim.urgent_deliveries
     last_warning = warning
-    if sim.visual_effects.is_empty():
-        return
-    var sounding: Dictionary={}
-    var latest: float=last_audio_event
+    var sounding: Dictionary = {}
+    var impact: Dictionary = {}
+    var latest := last_audio_event
     for fx in sim.visual_effects:
-        var release_at: float=float(fx["time"])
-        if fx["kind"]=="화살": release_at+=FrontView.VOLLEY_RELEASE
-        if release_at>sim.battle_time or release_at<=latest: continue
-        if fog_enabled and not sim.player_can_see(fx["from"]): continue
-        sounding=fx
-        latest=release_at
-    if sounding.is_empty(): return
-    last_audio_event=latest
-    if sim.battle_time-last_audio_clock>0.23:
+        var release_at: float = fx["time"]
+        if fx["kind"] == "화살": release_at += FrontView.VOLLEY_RELEASE
+        if release_at > sim.battle_time or release_at <= last_audio_event: continue
+        if not _combat_effect_visible(fx): continue
+        if fx["kind"] == "돌격": impact = fx
+        if release_at >= latest:
+            latest = release_at
+            sounding = fx
+    last_audio_event = latest
+    if not impact.is_empty():
+        _play_combat_audio(impact)
+        last_audio_clock = sim.battle_time
+    elif not sounding.is_empty() and sim.battle_time - last_audio_clock > 0.23:
         _play_combat_audio(sounding)
-        last_audio_clock=sim.battle_time
+        last_audio_clock = sim.battle_time
+    elif sound_enabled and Time.get_ticks_msec() >= int(next_combat_ms.get("질주", 0)):
+        for unit in sim.units:
+            if unit["type"] != "기병" or unit["troops"] <= 0 or unit["charge"] < 24.0: continue
+            if camera_center.distance_to(unit["pos"]) > 460.0 or not _visible_unit(unit): continue
+            _play_combat_audio({"kind":"질주", "from":unit["pos"], "to":unit["pos"]})
+            break
 
 func _unhandled_key_input(event: InputEvent) -> void:
     if event is InputEventKey and event.pressed and not event.echo:

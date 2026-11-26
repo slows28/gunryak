@@ -233,7 +233,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "obedience":"성향 기반", "deviations":0, "last_deviation":-100.0,
         "memory_pos":Vector2.ZERO, "memory_time":-100.0, "memory_id":-1,
         "ambush_ready":0.0, "ambush_until":-1.0, "ambushes":0,
-        "charge_dir":Vector2.ZERO, "charge_speed":0.0, "charge_cooldown":0.0, "charges":0,
+        "charge_dir":Vector2.ZERO, "charge_speed":0.0, "charge_cooldown":0.0, "charges":0, "charge_recoil":Vector2.ZERO,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
         "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
         "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
@@ -1055,6 +1055,8 @@ func _movement_rate(unit: Dictionary, enemy: Dictionary) -> float:
 func _move_unit(unit: Dictionary, dt: float) -> void:
     if command_confused(unit["side"]) and not unit["routed"]:
         unit["motion_speed"]=0.0
+        unit["charge"]=0.0
+        unit["charge_speed"]=0.0
         return
     var pos: Vector2 = unit["pos"]
     var goal: Vector2 = unit["goal"]
@@ -1076,8 +1078,12 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         if march["phase"]=="도하" and (pos.x-river_x(pos.y))*march["bank"]<0.0:
             unit["bridge_y"]=march["bridge"]
             unit["bridge_bank"]=march["bank"]
+    var running_in := false
     if str(unit["type"]) == "기병":
         unit["charge_cooldown"] = maxf(0.0, float(unit["charge_cooldown"]) - dt)
+        running_in = march.is_empty() and _can_run_in(unit, enemy, pos, goal)
+        if long_operation and running_in:
+            rate *= 1.0 + 0.55 * smoothstep(0.0, 80.0, unit["charge"])
     var actual_move: Vector2 = Vector2.ZERO
     if pos.distance_to(goal) > (0.001 if not march.is_empty() else 2.0):
         if long_operation:
@@ -1112,7 +1118,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
                 unit["support_seconds"]+=dt
     if six_armies: _emit_march_dust(unit,pos,actual_move)
     if str(unit["type"]) == "기병":
-        _update_charge(unit, actual_move, dt)
+        _update_charge(unit, actual_move, dt, running_in)
     if not enemy.is_empty() and (dressing_line or pos.distance_to(enemy["pos"]) < 168.0) and (dressing_line or str(unit["action"]) not in ["후퇴", "패주", "재집결", "측면 우회", "기지 습격", "보급 복귀", "탄약 보충", "매복","협동 우회","협동 엄호"]):
         var front: Vector2 = (enemy["pos"] as Vector2) - (unit["pos"] as Vector2)
         if front.length_squared() > 1.0:
@@ -1159,10 +1165,30 @@ func _frontline_power(unit: Dictionary, enemy: Dictionary, direction: Vector2) -
         factor *= 1.06
     return maxf(1.0, float(unit["troops"]) * (0.25 + 0.75 * float(unit["morale"]) / 100.0) * factor * (0.55 + 0.45 * float(unit["cohesion"]) / 100.0) * (1.0 - 0.25 * float(unit["fatigue"]) / 100.0))
 
+# Move on the simulation clock. Small steps use the same gate and river checks
+# as ordinary movement, then the frontage solver separates nearby formations.
+func _advance_charge_recoil(unit: Dictionary, dt: float) -> void:
+    var remaining: Vector2 = unit["charge_recoil"]
+    var travel := minf(remaining.length(), 96.0 * dt)
+    unit["charge_recoil"] = remaining.move_toward(Vector2.ZERO, travel)
+    var direction := remaining.normalized()
+    while travel > 0.001:
+        var step_length := minf(6.0, travel)
+        var old: Vector2 = unit["pos"]
+        var goal := old + direction * step_length
+        var legal := _structure_move(unit, old, _field_point(goal))
+        unit["pos"] = _land_motion(unit, old, legal)
+        if not (unit["pos"] as Vector2).is_equal_approx(goal):
+            unit["charge_recoil"] = Vector2.ZERO
+            break
+        travel -= step_length
+
 func _resolve_frontline(dt: float) -> void:
     front_shifts.clear()
     for unit in units:
         unit["front_pressure"] = 0.0
+        if unit["troops"] > 0 and unit.get("charge_recoil", Vector2.ZERO) != Vector2.ZERO:
+            _advance_charge_recoil(unit, dt)
     for i in range(units.size()):
         var a: Dictionary = units[i]
         if float(a["troops"]) <= 0.0:
@@ -1479,7 +1505,7 @@ func _combat(dt: float) -> void:
             attack *= 0.78
         var shock: float = 0.0
         var braced: bool=false
-        if unit_type == "기병" and distance < 70.0 and float(unit["charge_cooldown"]) <= 0.0:
+        if unit_type == "기병" and (long_operation or distance < 70.0) and float(unit["charge_cooldown"]) <= 0.0:
             shock = _charge_impact(unit, enemy)
             braced=long_operation and shock>0.0 and _braced_for_charge(enemy,direction)
             if braced: shock*=0.48
@@ -1585,6 +1611,11 @@ func _combat(dt: float) -> void:
         if bool(entry["rear"]): defender["rear_losses"]+=actual_damage
         var shock_damage: float=float(entry["shock"])*allocation/(ARMY_SCALE if six_armies else 1.0)
         var pressure_damage: float = actual_damage/(ARMY_SCALE if six_armies else 1.0)
+        if long_operation and shock_damage > 0.0 and not entry["braced"]:
+            var axis: Vector2 = (entry["from"] as Vector2).direction_to(entry["to"])
+            var recoil := axis * minf(36.0, shock_damage * 3.4)
+            defender["charge_recoil"] = defender.get("charge_recoil", Vector2.ZERO) + recoil
+            entry["recoil"] = recoil
         if shock_damage > 0.0 or bool(entry["ambush"]):
             defender["morale"] = maxf(0.0, float(defender["morale"]) - shock_damage * 1.1 - (6.0 if bool(entry["ambush"]) else 0.0))
             defender["cohesion"] = maxf(0.0, float(defender["cohesion"]) - shock_damage * 1.6)
@@ -2232,27 +2263,40 @@ func _can_prepare_ambush(unit: Dictionary, enemy: Dictionary) -> bool:
     var d: float = (unit["pos"] as Vector2).distance_to(enemy["pos"])
     return d > 105.0 and d < 230.0
 
-func _update_charge(unit: Dictionary, moved: Vector2, dt: float) -> void:
-    var speed: float = moved.length() / maxf(dt, 0.001)
-    var direction: Vector2 = moved.normalized()
-    var old_direction: Vector2 = unit["charge_dir"]
-    var eligible: bool = str(unit["action"]) in ["돌파", "교전", "반격", "측면 우회","협동 우회"] and terrain_at(unit["pos"]) not in ["숲","하천","교량"] and not bool(unit["routed"])
-    if eligible and speed > 48.0 and float(unit["charge_cooldown"]) <= 0.0:
-        if old_direction.length_squared() > 0.5 and direction.dot(old_direction) < 0.82:
-            unit["charge"] = float(unit["charge"]) * 0.3
-        unit["charge"] = minf(110.0, float(unit["charge"]) + moved.length())
-        unit["charge_dir"] = direction
-        unit["charge_speed"] = speed
-    else:
-        unit["charge"] = maxf(0.0, float(unit["charge"]) - dt * 32.0)
-        unit["charge_speed"] = maxf(0.0, float(unit["charge_speed"]) - dt * 100.0)
+func _can_run_in(unit: Dictionary, enemy: Dictionary, pos: Vector2, goal: Vector2) -> bool:
+    if enemy.is_empty() or unit["routed"] or unit["charge_cooldown"] > 0 or unit["contact_troops"] > 0: return false
+    # A map attack first uses "지정 위치 이동" until the destination is secured.
+    if unit["action"] in ["지정 위치 이동", "명령 수행", "진격"]:
+        if unit["mission"] != "공격" or not unit["has_destination"]: return false
+        if (unit["order_destination"] as Vector2).distance_to(enemy["pos"]) >= 240.0: return false
+    elif unit["action"] not in ["돌파", "교전", "반격", "공격 지속", "측면 우회", "협동 우회"]:
+        return false
+    if terrain_at(pos) not in ["평지", "도로", "고지"]: return false
+    return pos.direction_to(goal).dot(pos.direction_to(enemy["pos"])) >= 0.72
+
+func _update_charge(unit: Dictionary, moved: Vector2, dt: float, running_in: bool) -> void:
+    var speed := moved.length() / maxf(dt, 0.001)
+    if not running_in or speed <= 48.0 or terrain_at(unit["pos"]) not in ["평지", "도로", "고지"]:
+        unit["charge"] = 0.0
+        unit["charge_speed"] = 0.0
+        return
+    var direction := moved.normalized()
+    if direction.dot(unit["charge_dir"]) < 0.82:
+        unit["charge"] = 0.0
+    unit["charge"] = minf(110.0, float(unit["charge"]) + moved.length())
+    unit["charge_dir"] = direction
+    unit["charge_speed"] = speed
 
 func _charge_impact(unit: Dictionary, enemy: Dictionary) -> float:
     var distance_run: float = float(unit["charge"])
     var target_dir: Vector2 = ((enemy["pos"] as Vector2) - (unit["pos"] as Vector2)).normalized()
     if distance_run < 32.0 or float(unit["charge_speed"]) < 40.0 or target_dir.dot(unit["charge_dir"]) < 0.72:
         return 0.0
+    if long_operation and not structures.is_empty() and _detour_goal(unit, unit["pos"], enemy["pos"]) != enemy["pos"]:
+        return 0.0
     var impact: float = minf(9.0, distance_run * 0.075) * (float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"])))
+    if long_operation:
+        impact *= lerpf(1.0, 1.4, smoothstep(72.0, 150.0, unit["charge_speed"]))
     impact *= 0.3 if str(enemy["formation"]) == "방진" else 1.0
     if _in_forest(enemy["pos"]):
         impact *= 0.45

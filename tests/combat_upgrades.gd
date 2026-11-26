@@ -6,6 +6,7 @@ var failures: int=0
 func _initialize() -> void:
     _bows()
     _charge_and_rear()
+    _running_charge()
     _targeting()
     _simultaneous_losses()
     print("GUNRYAK_COMBAT_PASS" if failures==0 else "GUNRYAK_COMBAT_FAIL %d" % failures)
@@ -106,6 +107,85 @@ func _charge_loss(from_rear: bool) -> Array[float]:
     sim._combat(0.1)
     return [float(defender["casualties_taken"]),float(defender["cohesion"]),float(defender["rear_losses"]),
         float(defender["brace_stops"]),float(cavalry["fatigue"])]
+
+# Keep the initial orders fixed while the normal movement, frontage and combat
+# updates run. Neither the cavalry's speed nor its momentum is seeded.
+func _charge_run(y: float, defender_shape: String, gap: float, order: String = "") -> Dictionary:
+    var sim := WarSim.new()
+    sim.set_long_operation(true)
+    sim.set_scenario(WarSim.TRAINING_SCENARIO)
+    for unit in sim.units:
+        if unit["id"] not in [2, 3]: unit["troops"] = 0.0
+    var rider := sim.find_unit(2)
+    var foot := sim.find_unit(3)
+    rider["pos"] = Vector2(760 - gap, y)
+    foot["pos"] = Vector2(760, y)
+    rider["facing"] = Vector2.RIGHT
+    foot["facing"] = Vector2.LEFT
+    rider["formation"] = "봉시진"
+    foot["formation"] = defender_shape
+    rider["action"] = "공격 지속"
+    foot["action"] = "방어"
+    for unit in [rider, foot]:
+        unit["goal"] = foot["pos"]
+        unit["ai_cooldown"] = 12.0
+        unit["next_formation"] = ""
+        unit["fatigue"] = 0.0
+        unit["cohesion"] = 92.0
+        unit["morale"] = 92.0
+    if not order.is_empty():
+        rider["action"] = "대기"
+        rider["ai_cooldown"] = 0.0
+        _check(sim.issue_map_order(rider["id"], order, foot["pos"]), "accept cavalry map order " + order)
+    sim.start()
+    var first: Dictionary = {}
+    var peak := 0.0
+    var at_impact := Vector2.ZERO
+    var displacement := 0.0
+    for tick in range(65):
+        sim.step(0.1)
+        peak = maxf(peak, rider["motion_speed"])
+        var hit: Dictionary = sim.combat_contacts.get(2, {})
+        if first.is_empty() and not hit.is_empty():
+            first = hit
+            at_impact = foot["pos"]
+        elif not first.is_empty() and sim.battle_time - float(first["time"]) <= 0.51:
+            displacement = (foot["pos"] as Vector2).distance_to(at_impact)
+    return {"first": first, "peak": peak, "hits": rider["charges"], "displacement": displacement}
+
+func _running_charge() -> void:
+    var open := _charge_run(750, "횡대", 175)
+    var braced := _charge_run(750, "방진", 175)
+    var short_run := _charge_run(750, "횡대", 62)
+    var marsh := _charge_run(700, "횡대", 175)
+    var ordered := _charge_run(750, "횡대", 175, "공격")
+    var hold := _charge_run(750, "횡대", 175, "지역 사수")
+    _check(ordered["first"].get("kind") == "돌격" and hold["first"].get("kind") != "돌격",
+        "the command map attack builds momentum on approach and a hold order preserves its movement")
+    _check(open["peak"] > 145.0 and open["first"].get("kind") == "돌격" and open["hits"] == 1,
+        "a cavalry run accelerates into one real impact and cannot rearm inside the melee")
+    _check(braced["first"].get("braced", false) and braced["first"]["damage"] < open["first"]["damage"] * 0.4,
+        "stationary square catches the first files even when centers are more than 70 apart")
+    _check(open["displacement"] > 22.0 and open["displacement"] > braced["displacement"] + 10.0,
+        "unbraced ranks physically give way during the first half second")
+    _check(short_run["hits"] == 0 and marsh["hits"] == 0, "close melee and entering marsh do not deliver a charge")
+    var sim := WarSim.new()
+    sim.set_long_operation(true)
+    sim.set_scenario(WarSim.TRAINING_SCENARIO)
+    var foot := sim.find_unit(3)
+    var bank := Vector2(sim.river_x(1100.0) + 29.0, 1100.0)
+    foot["pos"] = bank
+    foot["charge_recoil"] = Vector2.LEFT * 36
+    sim._advance_charge_recoil(foot, 0.5)
+    _check(not sim.in_open_water(foot["pos"]) and foot["charge_recoil"] == Vector2.ZERO, "the impact stops at the riverbank")
+    var gate: Rect2 = sim.structures[0]["rect"]
+    var blue := sim.find_unit(0)
+    blue["pos"] = Vector2(gate.position.x - 10, gate.get_center().y)
+    blue["charge_recoil"] = Vector2.RIGHT * 36
+    sim._advance_charge_recoil(blue, 0.5)
+    _check(blue["pos"].x < gate.position.x and blue["charge_recoil"] == Vector2.ZERO, "the impact stops at an intact gate")
+    print("CHARGE_RUN grounded ", open["peak"], " impact ", open["first"].get("damage", 0),
+        " displacement ", open["displacement"], " braced ", braced["displacement"])
 
 func _targeting() -> void:
     var sim := _field()
