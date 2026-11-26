@@ -134,7 +134,7 @@ static func milestones(sim,limited: bool) -> Dictionary:
         if owner>=0:
             found["site:"+str(site["name"])+":"+str(owner)]={"label":str(site["name"])+" · "+("아군 확보" if owner==0 else "적군 확보"),"point":site["pos"]}
     for report in sim.open_situations():
-        found["report:"+str(report["id"])]={"report_id":report["id"],"time":report["arrive"]*sim.operation_scale(),"label":str(report["title"]),"point":report["pos"],"unit_id":int(report["unit_id"])}
+        found["report:"+str(report["id"])]={"report_id":report["id"],"time":float(report.get("arrive",sim.battle_time))*sim.operation_scale(),"label":str(report["title"]),"point":report["pos"],"unit_id":int(report["unit_id"])}
     return found
 
 # Mission locations are public. Live enemy control and gate condition require observation.

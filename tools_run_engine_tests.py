@@ -32,6 +32,7 @@ TESTS = [
     ("wide_field", ["--headless", "--path", "{project}", "--script", "res://tests/wide_field.gd"], "GUNRYAK_WIDE_PASS"),
     ("six_armies", ["--headless", "--path", "{project}", "--script", "res://tests/six_armies.gd"], "GUNRYAK_SIX_PASS"),
     ("objectives", ["--headless", "--path", "{project}", "--script", "res://tests/objectives.gd"], "GUNRYAK_OBJECTIVES_PASS"),
+    ("battle_audio", ["--headless", "--audio-driver", "Dummy", "--path", "{project}", "--script", "res://tests/battle_audio.gd"], "GUNRYAK_AUDIO_PASS"),
     ("scene", ["--headless", "--path", "{project}", "--script", "res://tests/scene_smoke.gd"], "GUNRYAK_SCENE_PASS"),
 ]
 

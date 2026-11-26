@@ -62,6 +62,7 @@ var situation_keys: Dictionary = {}
 var incoming_reports: Array[Dictionary] = []
 var relief_riders: Array[Dictionary]=[]
 var situation_serial: int = 0
+var urgent_deliveries:=0
 var tactical_delivered: int = 0
 var tactical_refused: int = 0
 var last_situation_scan: float = -5.0
@@ -142,6 +143,7 @@ func reset() -> void:
     relief_riders.clear()
     situation_keys.clear()
     situation_serial = 0
+    urgent_deliveries=0
     tactical_delivered = 0
     tactical_refused = 0
     last_situation_scan = -5.0
@@ -2787,7 +2789,9 @@ func _move_reporting_messengers(dt: float) -> void:
         report["status"]="미대응"
         report.erase("rider")
         incoming_reports.remove_at(i)
-        if side==0: _log("%s군 전령 도착 · %s" % [report["sender"],report["kind"]])
+        if side==0:
+            if report["urgent"]: urgent_deliveries+=1
+            _log("%s군 전령 도착 · %s" % [report["sender"],report["kind"]])
 
 func _field_rider(position: Vector2, side: int, id: int) -> Dictionary:
     return {"id":id,"side":side,"pos":position,"bridge_y":-1.0,"bridge_bank":0,"bridge_crossings":0,"blocked_water_steps":0}

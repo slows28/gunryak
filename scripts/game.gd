@@ -183,6 +183,7 @@ var situation_pause_before: bool = false
 var situation_notice: String = ""
 var last_audio_event: float = -1.0
 var last_warning: String = ""
+var heard_urgent_deliveries:=0
 var last_audio_clock: float = -100.0
 var finish_seen: bool = false
 var title_screen: Control
@@ -723,6 +724,10 @@ func _start() -> void:
     map_mode = "선택"
     runtime_notice = ""
     sim.start()
+    last_audio_clock=-100.0
+    last_audio_event=-1.0
+    last_warning=""
+    heard_urgent_deliveries=0
     _select_unit()
     _refresh_hud()
 
@@ -936,7 +941,7 @@ func _refresh_hud() -> void:
         if dispatch_headline.visible: dispatch_headline.text="본진 피습 · "+sim.headquarters_state(0)+"   ›"
         situation_btn.text="받은 전령 %d" % count if count>0 else "받은 전령"
         situation_btn.disabled=not active
-        situation_btn.theme_type_variation=&"UrgentReport" if messenger_id>=0 else &""
+        situation_btn.theme_type_variation=&"UrgentReport" if pending.any(_urgent_situation) else &""
         situation_btn.tooltip_text="대응할 보고 %d건" % count if count>0 else "대응할 보고가 없습니다."
     start_btn.disabled = sim.started or sim.finished
     pause_btn.disabled = not sim.started or sim.finished
@@ -3058,12 +3063,16 @@ func _play_combat_audio(fx: Dictionary) -> void:
     channel.play()
 
 func _update_audio_and_warning() -> void:
+    if not sim.started or sim.paused or sim.finished: return
     var warning: String = "본진 피습" if sim.headquarters[0]["occupation"]>0 else ""
     if warning != "" and warning != last_warning:
         _play_cue(230.0,0.25)
         last_audio_clock = sim.battle_time
+    elif sim.urgent_deliveries>heard_urgent_deliveries:
+        _play_cue(620.0,0.15)
+    heard_urgent_deliveries=sim.urgent_deliveries
     last_warning = warning
-    if sim.paused or sim.finished or sim.visual_effects.is_empty():
+    if sim.visual_effects.is_empty():
         return
     var sounding: Dictionary={}
     var latest: float=last_audio_event
@@ -3071,11 +3080,12 @@ func _update_audio_and_warning() -> void:
         var release_at: float=float(fx["time"])
         if fx["kind"]=="화살": release_at+=FrontView.VOLLEY_RELEASE
         if release_at>sim.battle_time or release_at<=latest: continue
+        if fog_enabled and not sim.player_can_see(fx["from"]): continue
         sounding=fx
         latest=release_at
     if sounding.is_empty(): return
     last_audio_event=latest
-    if sim.battle_time-last_audio_clock>0.23 and (not fog_enabled or sim.player_can_see(sounding["from"])):
+    if sim.battle_time-last_audio_clock>0.23:
         _play_combat_audio(sounding)
         last_audio_clock=sim.battle_time
 
@@ -3566,6 +3576,13 @@ func _push_direction(push: Vector2) -> String:
     var compass:=["동쪽","남동쪽","남쪽","남서쪽","서쪽","북서쪽","북쪽","북동쪽"]
     return compass[posmod(roundi(push.angle()/(PI/4.0)),8)]
 
+func _urgent_situation(report: Dictionary) -> bool:
+    if report.has("urgent"): return report["urgent"]
+    var title: String=report.get("kind",report.get("title",""))
+    for urgent_kind in ["전선 압박","포위 위험","전열 붕괴 위험"]:
+        if urgent_kind in title: return true
+    return false
+
 func _refresh_messenger_card(pending: Array[Dictionary]) -> void:
     messenger_id=-1
     messenger_card.hide()
@@ -3573,7 +3590,7 @@ func _refresh_messenger_card(pending: Array[Dictionary]) -> void:
     var newest: Dictionary={}
     for report in pending:
         if not report.has("sender") or read_messengers.has(report["id"]): continue
-        if report["kind"] not in ["전선 압박","포위 위험","전열 붕괴 위험"]: continue
+        if not _urgent_situation(report): continue
         if newest.is_empty() or report["arrive"]>newest["arrive"] or (report["arrive"]==newest["arrive"] and report["unit_id"]==selected_id):
             newest=report
     if not newest.is_empty():

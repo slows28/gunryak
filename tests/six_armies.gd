@@ -441,6 +441,10 @@ func _run() -> void:
     game.call("_refresh_hud")
     check(game.order_status_label.text.ends_with("목적지 도달"),"inspector shows verified arrival")
     check(game.situation_btn.theme_type_variation==&"" and not game.situation_btn.disabled,"idle reports button is neutral and accessible")
+    map_sim.situation_reports.append({"id":90,"unit_id":1,"title":"군량 부족","status":"미대응","pos":map_unit["pos"]})
+    game.call("_refresh_hud")
+    check(game.situation_btn.theme_type_variation==&"" and not game.messenger_card.visible and not game.dispatch_headline.visible,"routine reports enter the inbox quietly")
+    map_sim.respond_situation(90,"현장 판단")
     map_sim.situation_reports.append({"id":91,"unit_id":1,"title":"전선 압박","status":"미대응","pos":map_unit["pos"]})
     game.call("_refresh_hud")
     check(game.situation_btn.theme_type_variation==&"UrgentReport" and game.situation_btn.text.ends_with(" 1"),
