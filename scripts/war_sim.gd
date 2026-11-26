@@ -38,6 +38,7 @@ const OUTPOST_CAPTURE_SECONDS: float = 7.0
 const OUTPOST_HOLD_SECONDS: float = 8.0
 
 var units: Array[Dictionary] = []
+var supply_crews: Array[Dictionary] = []
 var bases: Array[Dictionary] = []
 var commanders: Array[Dictionary] = []
 var couriers: Array[Dictionary] = []
@@ -179,6 +180,11 @@ func reset() -> void:
     _configure_scenario()
     _configure_structures()
     _expand_layout()
+    supply_crews.clear()
+    for side in range(2):
+        var origin: Vector2=bases[side]["pos"]
+        supply_crews.append({"side":side,"pos":origin,"goal":origin,"state":"대기","strength":100.0,
+            "id":-2-side,"type":"보병","bridge_y":-1.0,"bridge_bank":0,"bridge_crossings":0,"blocked_water_steps":0})
     _log("출전 편성 준비: " + scenario_title)
 
 func _add_unit(side: int, title: String, unit_type: String, disposition: String, ability: float, start: Vector2, mission: String, people: float) -> void:
@@ -235,7 +241,11 @@ func start() -> void:
         return
     if wide_field and not six_armies:
         _deploy_detachments()
+    for crew in supply_crews:
+        crew["pos"]=bases[crew["side"]]["pos"]
+        crew["goal"]=crew["pos"]
     if bases[0]["state"]=="착공 예정":
+        supply_crews[0]["state"]="구축"
         bases[0]["state"]="설치"
         bases[0]["build_timer"]=BASE_BUILD_SECONDS
     for unit in units: unit["supply_mark"]=unit["pos"]
@@ -265,7 +275,7 @@ func find_unit(unit_id: int) -> Dictionary:
     return {}
 
 func request_order(unit_id: int, mission: String, policy: String, partner: int = -1, destination: Vector2 = Vector2(-1,-1)) -> bool:
-    if not started or finished or turn < 6:
+    if not started or finished or turn < 6 or commander_captured(0):
         return false
     var unit: Dictionary = find_unit(unit_id)
     if unit.is_empty() or int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0:
@@ -283,7 +293,7 @@ func request_order(unit_id: int, mission: String, policy: String, partner: int =
     return true
 
 func reposition_commander(forward: bool) -> void:
-    if finished:
+    if finished or commander_captured(0):
         return
     commanders[0]["goal"] = layout_point(Vector2(270,346)) if forward else commanders[0].get("home",layout_point(Vector2(54,515)))
     _log("책사 이동: %s" % ("전진 지휘" if forward else "본진 복귀"))
@@ -296,17 +306,18 @@ func step(dt: float) -> void:
         return
     battle_time += dt
     step_count += 1
-    var current_turn: int = int(floor(battle_time / (15.0 if long_operation else TURN_SECONDS))) + 1
+    var current_turn: int = int(floor(battle_time / turn_duration())) + 1
     if current_turn != turn:
         turn = current_turn
         _on_new_turn()
+    _update_command_recovery()
     _move_commanders(dt)
     _update_scouts(dt)
     _deliver_intel()
     _update_reserves()
     _update_couriers(dt)
     _supply_logic(dt)
-    if long_operation and enemy_strategy_enabled and battle_time>=next_enemy_strategy:
+    if long_operation and enemy_strategy_enabled and not commander_captured(1) and battle_time>=next_enemy_strategy:
         next_enemy_strategy=battle_time+8.0
         _enemy_strategy()
     # We use a shallow fixed unit pool and never mutate it during these loops.
@@ -341,13 +352,14 @@ func step(dt: float) -> void:
 
 func _on_new_turn() -> void:
     _log("작전 %d턴 진입" % turn)
-    if turn == 6:
+    if turn == 6 and not commander_captured(0):
         _log("전령 명령 활성화 — 전달 시간은 책사 위치에서 계산")
-    if tactical_enabled and turn >= 6:
+    if tactical_enabled and turn >= 6 and not commander_captured(0):
         command_points = mini(4,command_points+1)
 
 func _move_commanders(dt: float) -> void:
     for c in commanders:
+        if commander_captured(c["side"]): continue
         var p: Vector2 = c["pos"]
         var target: Vector2 = c["goal"]
         c["pos"] = p.move_toward(target, 43.0 * dt)
@@ -423,15 +435,20 @@ func _courier_intercepted(letter: Dictionary) -> bool:
     return true
 
 func _supply_logic(dt: float) -> void:
+    if started:
+        for crew in supply_crews: _update_supply_crew(crew,dt)
     for base in bases:
         if not base["alive"]: continue
         _update_base_raid(base,dt)
         if not base["alive"]: continue
         if base["state"]=="설치":
+            var crew: Dictionary=supply_crews[base["side"]]
+            if crew["state"]!="구축" or not (crew["pos"] as Vector2).is_equal_approx(base["pos"]): continue
             base["build_timer"]=maxf(0.0,float(base["build_timer"])-dt)
             if base["build_timer"]<0.00001:
                 base["build_timer"]=0.0
                 base["state"]="가동"
+                crew["state"]="대기"
                 _log(_camp_side(base["side"])+" 보급기지 완공 · 자동 보급 시작")
     if started and battle_time>=next_supply_survey:
         next_supply_survey=battle_time+1.0
@@ -480,6 +497,8 @@ func _update_base_raid(base: Dictionary, dt: float) -> void:
         base["alive"]=false
         base["state"]="파괴"
         base["raid_rate"]=0
+        if supply_crews[side]["state"]=="구축" and (supply_crews[side]["pos"] as Vector2).is_equal_approx(base["pos"]):
+            supply_crews[side]["state"]="대기"
         _log(_camp_side(side)+" 보급기지 파괴")
 
 func raid_seconds_left(base: Dictionary) -> int:
@@ -487,7 +506,7 @@ func raid_seconds_left(base: Dictionary) -> int:
     return ceili(maxf(0.0,RAID_SECONDS-base["raid_work"])*operation_scale()/float(base["raid_rate"])-0.00001)
 
 func supply_caption(base: Dictionary) -> String:
-    var kind: String="전진기지" if base.get("forward",false) else "보급기지"
+    var kind: String="보급기지"
     if base["raid_rate"]>0: return "%s 급습 · 파괴까지 %d초" % [kind,raid_seconds_left(base)]
     if base["state"]=="설치": return "%s 구축 · %d초" % [kind,ceili(float(base["build_timer"])*operation_scale())]
     if base["state"]=="착공 예정": return "기지 예정지"
@@ -520,8 +539,14 @@ func _buildable_ground(point: Vector2) -> bool:
     return true
 
 func _extend_supply(side: int) -> void:
+    var crew: Dictionary=supply_crews[side]
+    if crew["state"]!="대기": return
     for base in bases:
-        if base["side"]==side and base["alive"] and base["state"]=="설치": return
+        if base["side"]==side and base["alive"] and base["state"]=="설치":
+            if _safe_crew_site(side,base["pos"]):
+                crew["goal"]=base["pos"]
+                crew["state"]="이동"
+            return
     var radius:=supply_radius()
     var march_required:=radius*0.8
     var site:=Vector2.INF
@@ -530,22 +555,80 @@ func _extend_supply(side: int) -> void:
         if unit["action"] in ["패주","후퇴","전술 철수","보급 복귀","탄약 보충","재집결","전술 재집결","거리 유지"] or unit["mission"]=="철수": continue
         var point: Vector2=unit["pos"]
         var marched:=point.distance_to(unit.get("supply_mark",point))
-        if marched<march_required or _has_supply(side,point) or not _buildable_ground(point): continue
-        var enemy_post:=_nearest_base(1-side,point)
-        if not enemy_post.is_empty() and point.distance_to(enemy_post["pos"])<=GUARD_RADIUS: continue
-        if _nearby_corps(1-side,point,GUARD_RADIUS)>0: continue
+        if marched<march_required or _has_supply(side,point) or not _safe_crew_site(side,point): continue
         site=point
         march_required=marched
     if site==Vector2.INF: return
+    crew["goal"]=site
+    crew["state"]="이동"
+
+func _safe_crew_site(side: int, point: Vector2) -> bool:
+    if not _buildable_ground(point) or _nearby_corps(1-side,point,GUARD_RADIUS)>0: return false
+    var enemy_post:=_nearest_base(1-side,point)
+    return enemy_post.is_empty() or point.distance_to(enemy_post["pos"])>GUARD_RADIUS
+
+func _update_supply_crew(crew: Dictionary, dt: float) -> void:
+    if crew["strength"]<=0: return
+    var side: int=crew["side"]
+    var pos: Vector2=crew["pos"]
+    var attackers:=0
+    var closest: Dictionary={}
+    var closest_distance:=INF
+    for enemy in units:
+        if enemy["side"]==side or enemy["troops"]<=0 or enemy["routed"]: continue
+        var distance:=pos.distance_squared_to(enemy["pos"])
+        if distance>RAID_RADIUS*RAID_RADIUS or (long_operation and _river_separates(pos,enemy["pos"])): continue
+        attackers+=1
+        if distance<closest_distance:
+            closest=enemy
+            closest_distance=distance
+    if attackers>0:
+        # Only the small rear guard fights, at physical contact range.
+        var loss:=minf(closest["troops"],dt*(0.6 if six_armies else 0.025)*crew["strength"]/100.0)
+        closest["troops"]-=loss
+        closest["casualties_taken"]+=loss
+        var escorted:=_nearby_corps(side,pos,GUARD_RADIUS)>0
+        crew["strength"]=maxf(0.0,crew["strength"]-dt*attackers*(4.0 if escorted else 25.0))
+        if crew["strength"]<=0:
+            crew["state"]="괴멸"
+            _log(_camp_side(side)+" 보급부대 괴멸")
+            for b in bases:
+                if b["side"]==side and b["alive"] and b["state"]=="설치":
+                    b["alive"]=false
+                    b["state"]="구축 중단"
+            return
+        if not escorted:
+            var rear:=_nearest_base(side,pos,true)
+            var escape: Vector2=pos-closest["pos"]
+            if escape.length_squared()<1: escape=Vector2.LEFT if side==0 else Vector2.RIGHT
+            crew["goal"]=rear["pos"] if not rear.is_empty() and pos.distance_to(rear["pos"])>GUARD_RADIUS else _field_point(pos+escape.normalized()*GUARD_RADIUS)
+            crew["state"]="회피"
+    if crew["state"] not in ["이동","회피"]: return
+    var site: Vector2=crew["goal"]
+    var waypoint:=site
+    if long_operation: waypoint=_committed_bridge_route(crew,pos,site)
+    elif wide_field: waypoint=_crossing_route(pos,site)
+    waypoint=_detour_goal(crew,pos,waypoint)
+    var travel:=dt*27.0*_terrain_movement_multiplier(crew,pos)
+    var moved:=_structure_move(crew,pos,_field_point(pos.move_toward(waypoint,travel)))
+    crew["pos"]=_land_motion(crew,pos,moved) if long_operation else moved
+    if not (crew["pos"] as Vector2).is_equal_approx(site): return
+    if crew["state"]=="회피" or not _safe_crew_site(side,site):
+        crew["state"]="대기"
+        return
+    crew["state"]="구축"
+    for b in bases:
+        if b["side"]==side and b["alive"] and b["state"]=="설치" and site.is_equal_approx(b["pos"]): return
     var post:=_base(side,site)
     post["forward"]=true
     post["state"]="설치"
     post["build_timer"]=BASE_BUILD_SECONDS
     bases.append(post)
+    var radius:=supply_radius()
     # Marches on separate wings keep their own departure points.
     for unit in units:
         if unit["side"]==side and site.distance_to(unit["pos"])<=radius: unit["supply_mark"]=unit["pos"]
-    _log(_camp_side(side)+" 전진 보급기지 구축 시작")
+    _log(_camp_side(side)+" 보급부대가 보급기지 구축 시작")
 
 func _nearest_enemy(unit: Dictionary) -> Dictionary:
     var nearest: Dictionary = {}
@@ -588,6 +671,11 @@ func _can_see_base(unit: Dictionary, target_base: Dictionary) -> bool:
     return p.distance_to(b) < 210.0
 
 func _decide(unit: Dictionary) -> void:
+    if command_confused(unit["side"]) and not unit["routed"]:
+        unit["action"]="지휘 혼란"
+        unit["reason"]="책사 피포 · 대열을 추스르며 현 위치에서 방어"
+        unit["goal"]=unit["pos"]
+        return
     var nearest: Dictionary = _nearest_visible_enemy(unit)
     var side: int = int(unit["side"])
     var depot:=_nearest_base(side,unit["pos"],true)
@@ -914,6 +1002,9 @@ func _movement_rate(unit: Dictionary, enemy: Dictionary) -> float:
     return rate
 
 func _move_unit(unit: Dictionary, dt: float) -> void:
+    if command_confused(unit["side"]) and not unit["routed"]:
+        unit["motion_speed"]=0.0
+        return
     var pos: Vector2 = unit["pos"]
     var goal: Vector2 = unit["goal"]
     var enemy: Dictionary = _nearest_visible_enemy(unit)
@@ -1332,6 +1423,7 @@ func _combat(dt: float) -> void:
             exposure *= 1.12
         if bool(enemy["routed"]):
             exposure *= 1.28
+        if command_confused(unit["side"]): attack *= 0.5
         attack *= 0.90 + _effective_stat(unit, "martial") * 0.002
         if unit.get("specialty","") == "돌격" and unit_type == "기병":
             attack *= 1.08
@@ -1581,9 +1673,61 @@ func battle_report() -> Array[String]:
             [str(unit["name"]),str(unit["general_state"]),int(report["decisions"]),roundi(report["damage_dealt"]),roundi(report["casualties_taken"]),roundi(report["deserted"]),int(report["merit"])])
     return rows
 
+func turn_duration() -> float:
+    return 15.0 if long_operation else TURN_SECONDS
+
+func commander_captured(side: int) -> bool:
+    return commanders[side].get("captured",false)
+
+func command_confused(side: int) -> bool:
+    return battle_time+0.000001<float(commanders[side].get("recover_at",-1.0))
+
+func command_status(side: int) -> String:
+    if command_confused(side):
+        var seconds:=ceili((float(commanders[side]["recover_at"])-battle_time)*operation_scale()-0.000001)
+        return "책사 피포 · 지휘 혼란 %d초" % seconds
+    return "책사 피포 · 장수 자율 지휘" if commander_captured(side) else ""
+
+func _update_command_recovery() -> void:
+    for c in commanders:
+        if not c.has("recover_at") or command_confused(c["side"]): continue
+        c.erase("recover_at")
+        for u in units:
+            if u["side"]==c["side"]: u["ai_cooldown"]=0.0
+        _log(_camp_side(c["side"])+" 혼란 해소 · 장수 자율 지휘")
+
+func _check_command_capture() -> void:
+    for c in commanders:
+        var side: int=c["side"]
+        if commander_captured(side) or _nearby_corps(1-side,c["pos"],26.0)==0 or commander_guard_count(side)>0: continue
+        c["captured"]=true
+        c["goal"]=c["pos"]
+        c["recover_at"]=battle_time+turn_duration()
+        _log(_camp_side(side)+" 책사 피포 · 한 턴 동안 지휘 혼란")
+        for i in range(couriers.size()-1,-1,-1):
+            var letter: Dictionary=couriers[i]
+            if letter["side"]!=side: continue
+            _resolve_map_dispatch(letter,"책사 피포")
+            _response_delivery(letter,"책사 피포")
+            couriers.remove_at(i)
+        for u in units:
+            if u["side"]!=side: continue
+            _reset_cooperation(u,-1)
+            u["ai_role_until"]=0.0
+            u["tactical_until"]=0.0
+            u["has_destination"]=false
+            u["defense_set"]=false
+            u["waypoints"].clear()
+            u["mission"]="중앙 진격"
+            u["policy"]="현장 판단"
+            u["obedience"]="성향 기반"
+            u["ai_cooldown"]=0.0
+            if u["troops"]>0 and not u["routed"]: _decide(u)
+
 func _check_victory() -> void:
     if finished:
         return
+    _check_command_capture()
     if scenario_id == 3 and not convoy.is_empty():
         if float(convoy["hp"]) <= 0.0:
             _finish("군량 수레 파괴 — 패배")
@@ -1603,16 +1747,6 @@ func _check_victory() -> void:
         _finish(("양측 요충지 확보 — 아군 승리" if winner == 0 else "적 요충지 장악 — 패배") if scenario_id == 0 else ("중앙 고지 확보 — 아군 승리" if winner == 0 else "적 중앙 고지 장악 — 패배"))
         return
 
-    for unit in units:
-        if float(unit["troops"]) <= 0.0 or bool(unit["routed"]):
-            continue
-        var side: int = int(unit["side"])
-        var unit_pos: Vector2 = unit["pos"]
-        var enemy_commander: Dictionary = commanders[1 - side]
-        if unit_pos.distance_to(enemy_commander["pos"]) < 26.0:
-            if commander_guard_count(1-side) == 0:
-                _finish("책사 포획 성공 — 아군 승리" if side == 0 else "아군 책사 포획 — 패배")
-                return
     var side_alive: Array[int] = [0, 0]
     for unit in units:
         if float(unit["troops"]) > 0.0 and not bool(unit["routed"]):
@@ -1766,7 +1900,7 @@ func _update_battle_condition(dt: float) -> void:
             unit["cohesion"] = minf(100.0, float(unit["cohesion"]) + dt * 0.25)
         unit["cohesion"] = maxf(0.0, float(unit["cohesion"]) - dt * float(unit["front_pressure"]) * 0.65)
         var commander: Dictionary = commanders[int(unit["side"])]
-        if safe and p.distance_to(commander["pos"]) < 125.0 and float(unit["rations"]) > 20.0:
+        if safe and not commander_captured(unit["side"]) and p.distance_to(commander["pos"]) < 125.0 and float(unit["rations"]) > 20.0:
             unit["morale"] = minf(100.0, float(unit["morale"]) + dt * 0.75)
         if float(unit["rations"]) < 20.0:
             unit["morale"] = maxf(0.0, float(unit["morale"]) - dt * 0.35)
@@ -2245,6 +2379,8 @@ func place_post(post: String, point: Vector2) -> bool:
         commanders[0]["home"]=point
     else:
         var base: Dictionary=bases[0]
+        supply_crews[0]["pos"]=point
+        supply_crews[0]["goal"]=point
         base["pos"]=point
         base["state"]="착공 예정"
     return true
@@ -2336,7 +2472,7 @@ func _deliver_intel() -> void:
 
 func player_can_see(position: Vector2, concealed: bool = false) -> bool:
     var factor: float = 0.60 if concealed else 1.0
-    if (commanders[0]["pos"] as Vector2).distance_to(position) <= 170.0 * factor:
+    if not commander_captured(0) and (commanders[0]["pos"] as Vector2).distance_to(position) <= 170.0 * factor:
         return true
     for unit in units:
         if int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0 or bool(unit["routed"]):
@@ -2359,7 +2495,7 @@ func timeline_text() -> String:
 
 func request_deputy_takeover(unit_id: int) -> bool:
     var unit: Dictionary = find_unit(unit_id)
-    if not started or finished or turn < 6 or unit.is_empty() or int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0 or bool(unit["active_deputy"]):
+    if not started or finished or commander_captured(0) or turn < 6 or unit.is_empty() or int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0 or bool(unit["active_deputy"]):
         return false
     if str(unit["general_state"]) != "부상":
         return false
@@ -2431,6 +2567,7 @@ func merit(unit: Dictionary) -> int:
 # Default rear guard is chosen from eligible infantry near the actual commander.
 # A deliberate player map order is never silently reassigned to rear guard.
 func _escort_rearguard(side: int) -> int:
+    if commander_captured(side): return -1
     var best_id: int = -1
     var best_distance: float = INF
     var origin: Vector2 = commanders[side]["pos"]
@@ -2465,6 +2602,7 @@ func _update_convoy(dt: float) -> void:
 
 # Shared, actual-position rules for the capture check and the player display.
 func commander_guard_count(side: int) -> int:
+    if commander_captured(side): return 0
     var count: int = 0
     var origin: Vector2 = commanders[side]["pos"]
     for unit in units:
@@ -2528,7 +2666,7 @@ func _detour_goal(unit: Dictionary,p: Vector2,goal: Vector2) -> Vector2:
     return goal
 
 func order_retreat() -> bool:
-    if not started or finished:
+    if not started or finished or commander_captured(0):
         return false
     _finish("책사 철수 결정 — 패배")
     return true
@@ -2661,7 +2799,7 @@ func support_for_report(target: Dictionary) -> Dictionary:
     return best
 
 func respond_situation(report_id: int, response: String) -> bool:
-    if not tactical_enabled or not started or finished:
+    if not tactical_enabled or not started or finished or commander_captured(0):
         return false
     for report in situation_reports:
         if int(report["id"]) != report_id or report["status"] != "미대응":
@@ -2693,7 +2831,7 @@ func respond_situation(report_id: int, response: String) -> bool:
     return false
 
 func request_tactical(unit_id: int, order: String, support_id: int = -1) -> bool:
-    if not tactical_enabled or not started or finished or turn < 6 or command_points <= 0:
+    if not tactical_enabled or not started or finished or commander_captured(0) or turn < 6 or command_points <= 0:
         return false
     if order not in ["사수","재집결","철수","지원"]:
         return false
@@ -3263,6 +3401,7 @@ const MAP_MISSIONS = ["지정 위치 이동","공격","지역 사수","전열 �
 
 func map_order_issue(id: int, mission: String, destination: Vector2, partner: int = -1) -> String:
     if finished: return "전투가 종료되었습니다."
+    if commander_captured(0): return "책사 피포 · 장수들이 자율 지휘합니다."
     if mission not in MAP_MISSIONS: return "행동을 선택하십시오."
     if not Rect2(Vector2.ZERO,field_size).has_point(destination): return "전장 안의 목적지를 선택하십시오."
     if long_operation and in_open_water(destination): return "하천에는 지시할 수 없습니다. 교량이나 강둑을 선택하십시오."

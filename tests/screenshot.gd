@@ -743,7 +743,7 @@ func _capture() -> void:
         quit(1)
         return
     if not await _capture_deployment():
-        push_error("VISUAL_CAPTURE_FAIL: post deployment or supply ledger")
+        push_error("VISUAL_CAPTURE_FAIL: supply crews or independent command")
         quit(1)
         return
     print("GUNRYAK_VISUAL_CAPTURE_PASSED")
@@ -809,12 +809,22 @@ func _capture_deployment() -> bool:
     if not sim.issue_map_order(0,"지정 위치 이동",destination): return false
     game._start()
     var forward: Dictionary={}
+    var seen_moving:=false
+    var crew: Dictionary=sim.supply_crews[0]
     for tick in range(800):
         sim.step(0.1)
+        if not seen_moving and crew["state"]=="이동" and home.distance_to(crew["pos"])>105.0:
+            if sim.bases.size()!=2: return false
+            seen_moving=true
+            game.camera_center=(crew["pos"] as Vector2).lerp(marcher["pos"],0.33)
+            game.camera_zoom=1.06
+            game._clamp_camera()
+            game._refresh_hud()
+            if not await _deployment_frame("supply_crew_march.png"): return false
         if sim.bases.size()>2 and sim.bases[2]["state"]=="가동":
             forward=sim.bases[2]
             break
-    if forward.is_empty() or forward["side"]!=0 or forward["pos"].y<=home.y+sim.supply_radius() or sim.bases[0]["pos"]!=home: return false
+    if not seen_moving or forward.is_empty() or forward["side"]!=0 or forward["pos"].y<=home.y+sim.supply_radius() or sim.bases[0]["pos"]!=home: return false
     var center: Vector2=forward["pos"]
     game.camera_center=home.lerp(center,0.65)
     game.camera_zoom=0.83
@@ -838,6 +848,19 @@ func _capture_deployment() -> bool:
     if not await _deployment_frame("supply_raid.png"): return false
     for tick in range(50): sim.step(0.1)
     if forward["alive"] or sim._has_supply(0,center) or not sim._has_supply(0,home): return false
+    enemy["pos"]=sim.commanders[0]["pos"]
+    enemy["goal"]=enemy["pos"]
+    sim.step(0.1)
+    game.camera_center=marcher["pos"]
+    game._clamp_camera()
+    game._refresh_hud()
+    if sim.finished or not sim.command_confused(0) or not game.status_label.text.contains("혼란"): return false
+    if not await _deployment_frame("captured_command.png"): return false
+    for tick in range(150): sim.step(0.1)
+    game._refresh_hud()
+    if sim.command_confused(0) or not game.status_label.text.contains("자율 지휘") or marcher["action"]=="지휘 혼란": return false
+    if not await _deployment_frame("independent_command.png"): return false
+    print("SUPPLY_CREW_COMMAND_VISUAL_PASS")
     print("SUPPLY_RAID_VISUAL_PASS")
     print("POST_DEPLOYMENT_VISUAL_PASS")
     return true

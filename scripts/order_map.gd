@@ -197,7 +197,7 @@ func open(mid_battle:bool=false)->void:
     for post: String in post_buttons:
         post_buttons[post].set_pressed_no_signal(false)
     post_buttons["보급기지"].visible=not mid_battle
-    post_buttons["보급기지"].tooltip_text="첫 기지를 배치합니다. 군단이 전진하면 보급기지가 추가됩니다."
+    post_buttons["보급기지"].tooltip_text="첫 기지를 배치합니다. 진군하면 보급부대가 이동해 다음 기지를 짓습니다."
     post_buttons["책사"].visible=not mid_battle
     roster.clear()
     for id in sim.command_ids(0):
@@ -208,6 +208,10 @@ func open(mid_battle:bool=false)->void:
         roster.set_item_metadata(roster.item_count-1,id)
     feedback.text="군단 지시는 지도에 목적지를 찍어 작성하세요. 기지와 책사의 출발 위치는 오른쪽에서 지정합니다."
     if mid_battle: feedback.text="전투 중 명령은 6턴부터 전령으로 전달됩니다. 확정 전까지 기존 작전 유지."
+    if sim.commander_captured(0):
+        title.text="작전 지도   /   "+sim.scenario_title
+        feedback.text=sim.command_status(0)
+        progress_label.text="장수 자율 지휘 · 전황 관측"
     if not mid_battle: drafts.clear()
     survey_sites=sim.training_sites()
     survey.clear()
@@ -356,7 +360,7 @@ func _set_post_mode(mode: String) -> void:
     for post: String in post_buttons: post_buttons[post].set_pressed_no_signal(post==mode)
     if mode!="":
         placement.set_pressed_no_signal(false)
-        feedback.text="첫 기지의 위치를 정하세요. 군단이 진군하면 전방에 새 기지를 세웁니다." if mode=="보급기지" else "책사를 배치할 위치를 클릭하세요. 전령은 책사가 있는 곳에서 출발합니다."
+        feedback.text="첫 기지의 위치를 정하세요. 진군하면 보급부대가 따라가 새 기지를 짓습니다." if mode=="보급기지" else "책사를 배치할 위치를 클릭하세요. 전령은 책사가 있는 곳에서 출발합니다."
     _refresh_map_hint()
     queue_redraw()
 
@@ -713,9 +717,18 @@ func _draw()->void:
         draw_rect(Rect2(point-Vector2(6,6),Vector2(12,12)),Color("#2a534d") if base["side"]==0 else RED)
         draw_rect(Rect2(point-Vector2(6,6),Vector2(12,12)),Color("#eedca8"),false,1.4)
         _post_label(sim.supply_caption(base),point,1)
-    draw_circle(advisor,5,Color("#513c52"))
-    draw_circle(advisor,5,Color("#ead6a4"),false,1.4,true)
-    _post_label("책사",advisor,-1)
+    for crew in sim.supply_crews:
+        if crew["strength"]<=0 or (crew["side"]==1 and game.fog_enabled and not sim.player_can_see(crew["pos"])): continue
+        var at:=_point(crew["pos"])
+        var ink:=BLUE if crew["side"]==0 else RED
+        if crew["state"]=="이동" and crew["side"]==0:
+            draw_dashed_line(at,_point(crew["goal"]),Color(ink,0.7),1.6,5.0)
+        draw_colored_polygon(PackedVector2Array([at+Vector2(0,-5),at+Vector2(6,0),at+Vector2(0,5),at+Vector2(-6,0)]),ink)
+        _post_label("보급부대 · "+str(crew["state"]),at+Vector2(0,16),-1)
+    if not sim.commander_captured(0):
+        draw_circle(advisor,5,Color("#513c52"))
+        draw_circle(advisor,5,Color("#ead6a4"),false,1.4,true)
+        _post_label("책사",advisor,-1)
     if post_mode!="" and post_cursor!=Vector2.INF:
         var mark:=_point(post_cursor)
         var ink:=BLUE if sim.post_placement_issue(post_mode,post_cursor).is_empty() else RED

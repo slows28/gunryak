@@ -241,7 +241,7 @@ func _initialize() -> void:
     var assault: Dictionary = capture.find_unit(0)
     assault["pos"] = capture.commanders[1]["pos"]
     capture._check_victory()
-    check(capture.finished and capture.result.find("승리") >= 0, "enemy strategist captured after penetration")
+    check(capture.commander_captured(1) and capture.command_confused(1) and not capture.finished, "enemy strategist captured after penetration and surviving army stays in battle")
 
 
     # M2 batch: (1) physical body collision; (2) morale and formation pressure.

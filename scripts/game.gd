@@ -899,10 +899,16 @@ func _refresh_hud() -> void:
     friendly_strength.text=_number_text(sim.total_troops(0))
     enemy_strength.text=enemy_text
     status_label.text="전령    이동 %d    도착 %d    차단 %d" % [sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
+    var captured: bool=sim.commander_captured(0)
+    if captured:
+        status_label.text=sim.command_status(0)
+        if sim.started and not sim.finished: phase_label.text=sim.command_status(0)
     var own_guards: int = sim.commander_guard_count(0)
     status_label.tooltip_text = "책사 보호 반경 내 전투부대 %d개" % own_guards
-    if own_guards == 0 and sim.started and not sim.finished:
+    if captured: status_label.tooltip_text=sim.command_status(0)
+    elif own_guards == 0 and sim.started and not sim.finished:
         status_label.tooltip_text += " · 호위 없음: 적 접근 시 포획 위험"
+    status_label.tooltip_text+="\n보급부대 · %s · 잔존 전력 %d%%" % [sim.supply_crews[0]["state"],roundi(sim.supply_crews[0]["strength"])]
     if not sim.convoy.is_empty():
         var transport: Dictionary = sim.convoy_status()
         status_label.tooltip_text += "\n수레 %s · 진행 %d%% · 내구도 %d%% · 호위 %d개" % [str(transport["state"]),roundi(float(transport["progress"])*100.0),roundi(sim.convoy["hp"]),int(transport["guards"])]
@@ -927,12 +933,13 @@ func _refresh_hud() -> void:
         highlight_button.disabled=not sim.started or sim.finished
         highlight_button.text="탐색 중 · 중지" if highlight_active else "다음 주요 상황 ▶"
     _collect_journal()
-    apply_btn.disabled = sim.started and (sim.turn < 6 or sim.finished)
+    apply_btn.disabled = sim.started and (sim.turn < 6 or sim.finished or captured)
     apply_btn.text = "초기 작전 설정" if not sim.started else "전령 보내기 (6턴~)"
     start_btn.visible=not sim.started
     pause_btn.visible=sim.started
     live_order_button.disabled=sim.finished
     live_order_button.text="작전 지도 열기" if not sim.started else "작전 지도 · 전령 지시"
+    if captured: live_order_button.text="작전 지도 · 전황 보기"
     _refresh_commander_desk()
     if battle_feed.visible: _refresh_battle_feed()
     _refresh_general_cards(pending)
@@ -956,6 +963,8 @@ func _refresh_hud() -> void:
         for base in sim.bases:
             if base["side"]==0 and base["raid_rate"]>0 and (urgent.is_empty() or sim.raid_seconds_left(base)<sim.raid_seconds_left(urgent)): urgent=base
         if not urgent.is_empty(): notice_label.text="아군 "+sim.supply_caption(urgent)
+        if captured: notice_label.text=sim.command_status(0)
+        elif sim.command_confused(1): notice_label.text="적 "+sim.command_status(1)
     notice_label.tooltip_text=notice_label.text
 
 func _refresh_commander_desk() -> void:
@@ -1586,6 +1595,7 @@ func _draw_map(_canvas: Control) -> void:
         map_layer.draw_circle(p+Vector2(15,-10),4.0,accent)
         if base["raid_rate"]==0: _map_plate(sim.supply_caption(base),p+Vector2(0,32),accent,11)
     for commander in sim.commanders:
+        if sim.commander_captured(commander["side"]): continue
         if fog_enabled and not sim.finished and int(commander["side"]) != 0 and not sim.player_can_see(commander["pos"]):
             continue
         var p: Vector2 = _screen(commander["pos"])
@@ -1710,6 +1720,18 @@ func _draw_map(_canvas: Control) -> void:
     _draw_combat_effects()
     _draw_loss_markers()
     _draw_raid_timers()
+    for crew in sim.supply_crews:
+        var p: Vector2=crew["pos"]
+        if crew["strength"]<=0 or not field_view.has_point(p): continue
+        if crew["side"]==1 and fog_enabled and not sim.finished and not sim.player_can_see(p): continue
+        var ink: Color=COL_BLUE if crew["side"]==0 else COL_RED
+        var k:=maxf(0.85,0.85/camera_zoom)
+        var wagon:=p+Vector2(11,8)*k
+        _paint_tile(44,Rect2(wagon-Vector2(14,13)*k,Vector2(28,26)*k))
+        map_layer.draw_rect(Rect2(wagon+Vector2(-12,13)*k,Vector2(24,3)*k),Color("#352c20"))
+        map_layer.draw_rect(Rect2(wagon+Vector2(-12,13)*k,Vector2(0.24*crew["strength"],3)*k),ink)
+        for offset in [Vector2(0,-26),Vector2(44,25),Vector2(0,52)]:
+            if _map_plate("보급부대 · "+str(crew["state"]),wagon+offset/camera_zoom,ink,12).has_area(): break
     var label_areas: Array[Rect2] = map_label_areas
     var focus_id: int=observed_enemy_id if observing_enemy else selected_id
     visible_units.sort_custom(func(a: Dictionary,b: Dictionary) -> bool:
@@ -2317,7 +2339,7 @@ func _open_planning() -> void:
     plan_donor.select((ids.find(selected_id)+1)%ids.size())
     plan_deputy.select(int(unit["deputy_index"]))
     plan_deputy.disabled = sim.started
-    plan_takeover.disabled = not sim.started or sim.finished or sim.turn < 6 or str(unit["general_state"]) != "부상" or bool(unit["active_deputy"])
+    plan_takeover.disabled = not sim.started or sim.finished or sim.commander_captured(0) or sim.turn < 6 or str(unit["general_state"]) != "부상" or bool(unit["active_deputy"])
     plan_fog.set_pressed_no_signal(fog_enabled)
     for btn in plan_actions:
         btn.disabled = sim.started
@@ -3559,7 +3581,7 @@ func _select_situation(index: int) -> void:
             btn.visible=pending
             if order=="지원": btn.text=str(helper["name"])+" 지원" if not helper.is_empty() else "지원군 없음"
             var unavailable: bool=helper.is_empty() if order=="지원" else sim.has_pending_courier(int(report["unit_id"]))
-            btn.disabled=unit.is_empty() or float(unit.get("troops",0.0))<=0.0 or (order!="현장 판단" and (sim.turn<6 or sim.command_points<=0 or unavailable))
+            btn.disabled=sim.commander_captured(0) or unit.is_empty() or float(unit.get("troops",0.0))<=0.0 or (order!="현장 판단" and (sim.turn<6 or sim.command_points<=0 or unavailable))
         break
 
 func _situation_outcome(report: Dictionary) -> String:

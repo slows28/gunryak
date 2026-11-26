@@ -52,6 +52,8 @@ func _initialize() -> void:
     sim._supply_logic(0.1)
     check(archer["rations"]>40 and archer["ammo"]>40 and first["rations"]==archer["rations"],"all armies inside one radius replenish simultaneously")
     _check_network()
+    _check_crew_losses()
+    _check_capture()
     sim.reset()
     check(sim.bases[0]["state"]=="가동" and not sim.commanders[0].has("home"),"new battle clears manually placed posts")
     if failures==0: print("GUNRYAK_POST_DEPLOYMENT_PASS")
@@ -80,6 +82,13 @@ func _check_network() -> void:
     check(s.bases.size()==2,"rout does not construct a forward camp")
     blue["routed"]=false
     s._extend_supply(0)
+    var crew: Dictionary=s.supply_crews[0]
+    check(s.bases.size()==2 and crew["state"]=="이동" and crew["pos"]==origin,"only the separate supply crew can start construction")
+    s._supply_logic(0.1)
+    check(crew["pos"]!=origin and crew["pos"]!=next and not s._has_supply(0,next),"crew travels on the map before construction")
+    for tick in range(250):
+        s._supply_logic(0.1)
+        if s.bases.size()==3: break
     var post: Dictionary=s.bases.back()
     check(s.bases.size()==3 and post["pos"]==next and home["pos"]==origin,"southbound march creates another base without moving the original")
     s._extend_supply(0)
@@ -123,4 +132,70 @@ func _check_network() -> void:
     red["supply_mark"]=red_origin
     red["pos"]=red_origin+Vector2.LEFT*(s.supply_radius()+45)
     s._extend_supply(1)
+    check(s.supply_crews[1]["goal"]==red["pos"] and s.bases.back()["side"]==0,"opposing crew receives its own destination")
+    for tick in range(350):
+        s._supply_logic(0.1)
+        if s.bases.back()["side"]==1: break
     check(s.bases.back()["side"]==1 and s.bases.back()["pos"]==red["pos"],"opposing march builds westward by the same rule")
+
+func _check_crew_losses() -> void:
+    var s:=WarSim.new()
+    s.set_long_operation(true)
+    s.start()
+    var crew: Dictionary=s.supply_crews[0]
+    var home: Vector2=crew["pos"]
+    var raider:=s.find_unit(3)
+    for u in s.units:
+        if u["id"]!=3: u["pos"]=home+Vector2(320,130)
+    raider["pos"]=home
+    var strength: float=raider["troops"]
+    s._supply_logic(0.1)
+    check(crew["strength"]<100 and crew["state"]=="회피" and raider["troops"]<strength,"weak guard skirmishes and the supply crew flees")
+    for tick in range(40):
+        raider["pos"]=crew["pos"]
+        s._supply_logic(0.1)
+    check(crew["state"]=="괴멸" and strength-raider["troops"]<3.0,"an unsupported crew is overrun with little damage to its attacker")
+    var marcher:=s.find_unit(0)
+    marcher["pos"]=home+Vector2(0,430)
+    s._extend_supply(0)
+    check(s.bases.size()==2 and s._has_supply(0,home),"destroyed builders cannot found camps and existing depots operate independently")
+
+func _check_capture() -> void:
+    var s:=WarSim.new()
+    s.set_long_operation(true)
+    s.set_scenario(2)
+    s.tactical_enabled=true
+    s.start()
+    s.battle_time=89.0
+    s.turn=6
+    var c: Dictionary=s.commanders[0]
+    var general:=s.find_unit(0)
+    var raider:=s.find_unit(3)
+    var start: Vector2=c["pos"]
+    general["pos"]=start
+    raider["pos"]=start
+    s._check_victory()
+    check(not s.commander_captured(0),"a real escort prevents capture")
+    general["pos"]=start+Vector2(340,-60)
+    check(s.issue_map_order(0,"지정 위치 이동",start+Vector2(400,0)),"send a real courier before capture")
+    s._check_victory()
+    var expires: float=c["recover_at"]
+    check(s.command_confused(0) and not s.finished and s.couriers.is_empty() and general["action"]=="지휘 혼란","capture disrupts command without ending the battle")
+    check(not s.request_order(0,"공격","현장 판단") and not s.request_tactical(0,"사수") and not s.order_retreat(),"captured strategist cannot issue commands or concede")
+    s.paused=true
+    s.step(0.1)
+    check(c["recover_at"]==expires and s.battle_time==89.0,"pause freezes confusion")
+    s.paused=false
+    var origin: Vector2=general["pos"]
+    for tick in range(149): s.step(0.1)
+    check(s.turn>6 and s.command_confused(0) and c["recover_at"]==expires and general["pos"].distance_to(origin)<90.0,"full turn of confusion survives the turn boundary without recapture")
+    s.step(0.1)
+    var decisions: int=general["decisions"]
+    check(not s.command_confused(0) and s.commander_captured(0) and general["action"]!="지휘 혼란" and not s.command_confused(1),"living generals resume autonomous decisions exactly one turn later")
+    for tick in range(40): s.step(0.1)
+    check(general["decisions"]>decisions and not s.request_order(0,"공격","현장 판단"),"independent decisions continue after recovery")
+    s.battle_time=s.scenario_limit-0.05
+    s.step(0.1)
+    check(s.finished and s.winning_side==0 and "방어 성공" in s.result,"army whose strategist was captured wins by its scenario objective")
+    s.reset()
+    check(not s.commander_captured(0) and not s.command_confused(0),"new battle clears capture and confusion")
