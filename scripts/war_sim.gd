@@ -531,6 +531,8 @@ func _extend_supply(side: int) -> void:
         var point: Vector2=unit["pos"]
         var marched:=point.distance_to(unit.get("supply_mark",point))
         if marched<march_required or _has_supply(side,point) or not _buildable_ground(point): continue
+        var enemy_post:=_nearest_base(1-side,point)
+        if not enemy_post.is_empty() and point.distance_to(enemy_post["pos"])<=GUARD_RADIUS: continue
         if _nearby_corps(1-side,point,GUARD_RADIUS)>0: continue
         site=point
         march_required=marched

@@ -92,6 +92,8 @@ func _check_network() -> void:
     check(is_equal_approx(blue["rations"],32.5),"overlapping radii grant one refill")
     check(s._has_supply(0,origin+Vector2.LEFT*s.supply_radius()) and not s._has_supply(0,origin+Vector2.LEFT*(s.supply_radius()+0.01)),"coverage boundary is inclusive and finite")
     red["pos"]=next
+    s._extend_supply(1)
+    check(s.bases.size()==3,"raider cannot found a camp on the enemy depot it is attacking")
     s._supply_logic(1.0)
     check(post["alive"] and s.raid_seconds_left(post)==20,"one physical raider has twenty operation seconds left after four")
     reserve["pos"]=next

@@ -833,6 +833,8 @@ func _capture_deployment() -> bool:
     game._clamp_camera()
     game._refresh_hud()
     if sim.raid_seconds_left(forward)<=0 or not sim._has_supply(0,center): return false
+    for b in sim.bases:
+        if b["side"]==1 and b["alive"] and center.distance_to(b["pos"])<=sim.GUARD_RADIUS: return false
     if not await _deployment_frame("supply_raid.png"): return false
     for tick in range(50): sim.step(0.1)
     if forward["alive"] or sim._has_supply(0,center) or not sim._has_supply(0,home): return false
