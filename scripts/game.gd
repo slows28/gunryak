@@ -84,8 +84,6 @@ var start_btn: Button
 var pause_btn: Button
 var speed_btn: Button
 var apply_btn: Button
-var supply_ledger:=preload("res://scripts/supply_ledger.gd").new()
-var supply_plate_area:=Rect2()
 var planning_dialog: AcceptDialog
 var timeline_dialog: AcceptDialog
 var timeline_view: TextEdit
@@ -93,7 +91,6 @@ var plan_status: Label
 var plan_scenario: OptionButton
 var plan_donor: OptionButton
 var plan_deputy: OptionButton
-var plan_priority: OptionButton
 var plan_fog: CheckButton
 var plan_takeover: Button
 var map_mode: String = "선택"
@@ -220,7 +217,6 @@ func _ready() -> void:
     dust_texture = TerrainArt.dust_cloud()
     _reset_camera()
     _build_interface()
-    add_child(supply_ledger)
     _build_presentation()
     _setup_sound()
     _build_title_screen()
@@ -882,11 +878,7 @@ func _process(delta: float) -> void:
         _play_cue(520.0, 0.28)
         _show_outcome()
 
-func open_supply_ledger() -> void:
-    if sim.started: supply_ledger.open_for(sim)
-
 func _refresh_hud() -> void:
-    if supply_ledger.visible: supply_ledger.refresh()
     var phase: String = "준비 중"
     clock_label.text=_operation_clock(sim.operation_elapsed())
     battle_title_label.text = sim.scenario_title
@@ -959,6 +951,11 @@ func _refresh_hud() -> void:
         notice_label.text = runtime_notice
     elif not battle_warning.is_empty():
         notice_label.text = battle_warning
+    if sim.started and not sim.finished:
+        var urgent: Dictionary={}
+        for base in sim.bases:
+            if base["side"]==0 and base["raid_rate"]>0 and (urgent.is_empty() or sim.raid_seconds_left(base)<sim.raid_seconds_left(urgent)): urgent=base
+        if not urgent.is_empty(): notice_label.text="아군 "+sim.supply_caption(urgent)
     notice_label.tooltip_text=notice_label.text
 
 func _refresh_commander_desk() -> void:
@@ -1007,6 +1004,7 @@ func _refresh_commander_desk() -> void:
         readiness_label.text+=" · 군량 %d" % int(unit["rations"])
     elif str(unit["type"])=="궁병" and int(unit["ammo"])<35:
         readiness_label.text+=" · 화살 %d" % int(unit["ammo"])
+    if sim.started: readiness_label.text+=" · "+("보급 중" if unit["supplied"] else "권역 밖")
     details_label.tooltip_text="%s · %s\n사기 %d · 응집 %d · 피로 %d\n군량 %d · 화살 %d" % [
         str(unit["name"]),str(unit["type"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"])]
     if sim.six_armies:
@@ -1437,10 +1435,6 @@ func _map_select(mouse_pos: Vector2) -> void:
     var nearest_id: int = -1
     var best: float = 47.0/maxf(0.5,camera_zoom)
     var world: Vector2 = _world_mouse(mouse_pos)
-    if sim.started and sim.bases[0]["alive"] and supply_plate_area.has_point(world):
-        open_supply_ledger()
-        accept_event()
-        return
     for unit in sim.units:
         if float(unit["troops"]) <= 0.0 or not _visible_unit(unit) or unit.has("parent_id"): continue
         var i: int=int(unit["id"])
@@ -1567,7 +1561,6 @@ func _draw_map(_canvas: Control) -> void:
             var progress: float = clampf(float(site["progress"]) / sim.capture_duration(), 0.0, 1.0)
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60, 4)), Color("#243138"))
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60.0 * progress, 4)), COL_BLUE if int(site["challenger"]) == 0 else COL_RED)
-    supply_plate_area=Rect2()
     for base in sim.bases:
         if not bool(base["alive"]):
             continue
@@ -1576,18 +1569,15 @@ func _draw_map(_canvas: Control) -> void:
         var p: Vector2 = _screen(base["pos"])
         var side: int = int(base["side"])
         var accent: Color = COL_BLUE if side == 0 else COL_RED
-        if not sim.started:
-            map_layer.draw_arc(p,sim.supply_radius(),0.0,TAU,56,Color(accent,0.18),1.0)
+        if base["state"]=="가동":
+            var rim: Color=Color("#9ce4c8") if side==0 else COL_RED
+            map_layer.draw_arc(p,sim.supply_radius(),0,TAU,88,Color(Color("#283c33"),0.40),2.6/camera_zoom,true)
+            map_layer.draw_arc(p,sim.supply_radius(),0,TAU,88,Color(rim,0.58),1.15/camera_zoom,true)
         _draw_field_site(2,p,0.96)
-        _paint_tile(44,Rect2(p+Vector2(27,-3),Vector2(32,28)))
         map_layer.draw_circle(p+Vector2(15,-10),4.0,accent)
-        var caption: String="군량 %d" % int(base["stock"])
-        if base["state"]=="설치": caption="기지 구축 · %d초" % ceili(base["build_timer"]*sim.operation_scale())
-        elif base["state"]=="착공 예정": caption="기지 예정지"
-        elif base["state"]=="이동": caption="보급대 이동"
-        elif side==0 and sim.started: caption="배급 명부 · 재고 %d" % int(base["stock"])
-        var plate:=_map_plate(caption,p+Vector2(0,32),accent,11)
-        if side==0: supply_plate_area=plate
+        if base["raid_rate"]>0:
+            map_layer.draw_arc(p,36,-PI/2,-PI/2+TAU*base["raid_work"]/sim.RAID_SECONDS,40,COL_RED,3.0/camera_zoom,true)
+        _map_plate(sim.supply_caption(base),p+Vector2(0,32),COL_RED if base["raid_rate"]>0 else accent,11)
     for commander in sim.commanders:
         if fog_enabled and not sim.finished and int(commander["side"]) != 0 and not sim.player_can_see(commander["pos"]):
             continue
@@ -2260,8 +2250,6 @@ func _build_planning_dialog() -> void:
     plan_takeover.text = "부상 장수 지휘 교체 전령 (6턴~)"
     root.add_child(plan_takeover)
     plan_takeover.pressed.connect(_request_takeover)
-    plan_priority = _plan_option(root,"보급 우선순위",["낮음","보통","높음"])
-    plan_priority.item_selected.connect(_change_priority)
     var map_row := HBoxContainer.new()
     root.add_child(map_row)
     _plan_button(map_row,"계획 삭제",_clear_route)
@@ -2322,8 +2310,6 @@ func _open_planning() -> void:
     plan_deputy.select(int(unit["deputy_index"]))
     plan_deputy.disabled = sim.started
     plan_takeover.disabled = not sim.started or sim.finished or sim.turn < 6 or str(unit["general_state"]) != "부상" or bool(unit["active_deputy"])
-    plan_priority.select(int(unit["supply_priority"]))
-    plan_priority.disabled = sim.finished
     plan_fog.set_pressed_no_signal(fog_enabled)
     for btn in plan_actions:
         btn.disabled = sim.started
@@ -2390,10 +2376,6 @@ func _swap_general() -> void:
 
 func _change_deputy(index: int) -> void:
     sim.set_deputy(selected_id,index)
-    _refresh_plan_status()
-
-func _change_priority(index: int) -> void:
-    sim.set_supply_priority(selected_id,index)
     _refresh_plan_status()
 
 func _set_map_mode(mode: String) -> void:

@@ -789,15 +789,54 @@ func _capture_deployment() -> bool:
     for tick in range(32): game.sim.step(0.1)
     game._refresh_hud()
     if not await _deployment_frame("depot_active.png"): return false
-    if not game.supply_plate_area.has_area(): return false
-    var click: Vector2=game.MAP_TOP_LEFT+game.MAP_SIZE*0.5+(game.supply_plate_area.get_center()-game.camera_center)*game.camera_zoom
-    game._map_select(click)
-    if not game.supply_ledger.visible or game.supply_ledger.rows.size()!=6: return false
-    var priority: OptionButton=game.supply_ledger.rows[1]["priority"]
-    priority.select(2)
-    priority.item_selected.emit(2)
-    if game.sim.find_unit(1)["supply_priority"]!=2: return false
-    if not await _deployment_frame("depot_ledger.png"): return false
+    if not game.sim._has_supply(0,depot): return false
+    # The same marching order creates forward sites through real movement ticks.
+    game.queue_free()
+    await process_frame
+    game=MAIN_SCENE.instantiate()
+    root.add_child(game)
+    game.set_process(false)
+    game._leave_title(5)
+    var sim=game.sim
+    sim.enemy_strategy_enabled=false
+    var home:=Vector2(375,410)
+    var marcher: Dictionary=sim.find_unit(0)
+    var enemy: Dictionary=sim.find_unit(3)
+    for u in sim.units:
+        if u["id"] not in [0,3]: u["troops"]=0.0
+    if not sim.place_unit(0,home) or not sim.place_post("보급기지",home): return false
+    var destination:=Vector2(375,1330)
+    if not sim.issue_map_order(0,"지정 위치 이동",destination): return false
+    game._start()
+    var forward: Dictionary={}
+    for tick in range(800):
+        sim.step(0.1)
+        if sim.bases.size()>2 and sim.bases[2]["state"]=="가동":
+            forward=sim.bases[2]
+            break
+    if forward.is_empty() or forward["side"]!=0 or forward["pos"].y<=home.y+sim.supply_radius() or sim.bases[0]["pos"]!=home: return false
+    var center: Vector2=forward["pos"]
+    game.camera_center=home.lerp(center,0.65)
+    game.camera_zoom=0.83
+    game._clamp_camera()
+    game._refresh_hud()
+    if not await _deployment_frame("forward_supply.png"): return false
+    # Place the opposing test corps at the new site and run its actual raid clock.
+    marcher["pos"]=center+Vector2(116,35)
+    enemy["pos"]=center
+    for u in [marcher,enemy]:
+        u["goal"]=u["pos"]
+        u["ai_cooldown"]=1000.0
+    for tick in range(15): sim.step(0.1)
+    game.camera_center=center
+    game.camera_zoom=1.35
+    game._clamp_camera()
+    game._refresh_hud()
+    if sim.raid_seconds_left(forward)<=0 or not sim._has_supply(0,center): return false
+    if not await _deployment_frame("supply_raid.png"): return false
+    for tick in range(50): sim.step(0.1)
+    if forward["alive"] or sim._has_supply(0,center) or not sim._has_supply(0,home): return false
+    print("SUPPLY_RAID_VISUAL_PASS")
     print("POST_DEPLOYMENT_VISUAL_PASS")
     return true
 

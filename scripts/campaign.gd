@@ -179,7 +179,6 @@ func prepare(target: int, sim) -> bool:
             unit["troops"] = clampf(roundf(float(unit["troops"])*scale),3000.0,5000.0) if six_armies else roundf(float(unit["troops"])*scale)
             unit["initial_troops"] = unit["troops"]
     sim.reserve_limit[0] = mini(1 if six_armies else 2,floori(float(state["pool"])/(3000.0 if six_armies else 72.0)))
-    sim.bases[0]["stock"] = minf(100.0,float(state["food"]))
     return true
 
 func conclude(sim) -> bool:

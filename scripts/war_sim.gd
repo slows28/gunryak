@@ -24,6 +24,10 @@ const TURN_SECONDS: float = 18.0
 const LAST_TURN: int = 10
 const MAX_SECONDS: float = TURN_SECONDS * float(LAST_TURN)
 const BASE_BUILD_SECONDS: float = 3.0
+const RAID_SECONDS: float = 6.0
+const RAID_RADIUS: float = 46.0
+const GUARD_RADIUS: float = 76.0
+var next_supply_survey: float=0.0
 const SUPPLY_RADIUS: float = 182.0
 const AI_VISION_RANGE: float = 285.0
 const MAX_TROOPS: float = 5000.0
@@ -108,6 +112,7 @@ func reset() -> void:
     pending_reports.clear()
     units.clear()
     bases.clear()
+    next_supply_survey=0.0
     commanders.clear()
     couriers.clear()
     map_dispatches.clear()
@@ -191,7 +196,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "front_pressure": 0.0, "pushed_distance": 0.0,
         "decisions": 0, "reforms_completed": 0, "damage_dealt": 0.0,
         "casualties_taken": 0.0, "supply_guard_time": 0.0,
-        "raid_active": false, "raid_target": Vector2.ZERO, "raid_until": 0.0,
+        "supply_mark":start, "raid_active": false, "raid_base": -1, "raid_target": Vector2.ZERO, "raid_until": 0.0,
         "fatigue": 0.0, "cohesion": 100.0, "rations": 100.0, "ammo": 100.0,
         "rallying": false, "last_morale_event": -100.0, "objective_time": 0.0,
         "flank_hits": 0.0, "shots_used": 0.0, "last_supply_warning": -100.0,
@@ -203,7 +208,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
         "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
         "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
-        "supply_priority":1, "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "order_destination":Vector2.ZERO, "has_destination":false, "destination_reached":false, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0, "screened_damage":0.0, "screen_events":0, "ai_role":"", "ai_partner":-1, "ai_role_until":0.0, "ai_replans":0, "bridge_y":-1.0, "bridge_bank":0, "bridge_crossings":0, "blocked_water_steps":0, "guard_intercept_damage":0.0, "guard_intercept_ticks":0, "flank_commits":0, "flank_aborts":0, "flank_recovery":0.0, "flank_contact_at":-100.0
+        "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "order_destination":Vector2.ZERO, "has_destination":false, "destination_reached":false, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0, "screened_damage":0.0, "screen_events":0, "ai_role":"", "ai_partner":-1, "ai_role_until":0.0, "ai_replans":0, "bridge_y":-1.0, "bridge_bank":0, "bridge_crossings":0, "blocked_water_steps":0, "guard_intercept_damage":0.0, "guard_intercept_ticks":0, "flank_commits":0, "flank_aborts":0, "flank_recovery":0.0, "flank_contact_at":-100.0
     }
     _set_general_profile(unit)
     unit["mind"]=GeneralMind.initial(unit)
@@ -214,8 +219,8 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
 
 func _base(side: int, at: Vector2) -> Dictionary:
     return {
-        "side":side, "pos":at, "target":at, "state":"가동",
-        "build_timer":0.0, "last_relocate":-40.0, "alive":true, "stock":100.0
+        "side":side, "pos":at, "state":"가동",
+        "build_timer":0.0, "alive":true, "raid_work":0.0, "raid_rate":0
     }
 
 func _log(message: String) -> void:
@@ -233,6 +238,7 @@ func start() -> void:
     if bases[0]["state"]=="착공 예정":
         bases[0]["state"]="설치"
         bases[0]["build_timer"]=BASE_BUILD_SECONDS
+    for unit in units: unit["supply_mark"]=unit["pos"]
     started = true
     _log("전투 개시. " + scenario_goal)
 
@@ -418,130 +424,125 @@ func _courier_intercepted(letter: Dictionary) -> bool:
 
 func _supply_logic(dt: float) -> void:
     for base in bases:
-        if not bool(base["alive"]):
-            continue
-        var side: int = int(base["side"])
-        var bp: Vector2 = base["pos"]
-        # An observed enemy unit close to an undefended base can disable it.
-        for unit in units:
-            if int(unit["side"]) != side and float(unit["troops"]) > 0.0 and not bool(unit["routed"]):
-                var ep: Vector2 = unit["pos"]
-                if ep.distance_to(bp) < 22.0 and not _supply_is_guarded(base):
-                    base["alive"] = false
-                    base["state"] = "파괴"
-                    _log("%s 보급기지 습격 성공" % ("아군" if side == 0 else "적군"))
-                    break
-        if not bool(base["alive"]):
-            continue
-        if str(base["state"]) == "이동":
-            base["pos"] = bp.move_toward(base["target"], 54.0 * dt)
-            if (base["pos"] as Vector2).distance_to(base["target"]) <= 3.0:
-                base["state"] = "설치"
-                base["build_timer"] = BASE_BUILD_SECONDS
-        elif str(base["state"]) == "설치":
-            base["build_timer"] = float(base["build_timer"]) - dt
-            if float(base["build_timer"]) <= 0.0:
-                base["state"] = "가동"
-                base["build_timer"] = 0.0
-                _log("%s 보급기지 구축 완료 · 배급 개시" % ("아군" if side == 0 else "적군"))
-        elif not bool(base.get("fixed", false)) and battle_time - float(base["last_relocate"]) > 26.0:
-            var desired: Vector2 = _best_supply_position(side)
-            if bp.distance_to(desired) > 135.0:
-                base["target"] = desired
-                base["state"] = "이동"
-                base["last_relocate"] = battle_time
-                _log("%s 보급부대 전선 따라 이동" % ("아군" if side == 0 else "적군"))
-    for base in bases:
-        if bool(base["alive"]) and str(base["state"]) == "가동":
-            base["stock"] = minf(100.0,float(base["stock"])+dt*(1.15 if six_armies else 0.60))
-    var supply_queue: Array[Dictionary] = units.duplicate()
-    supply_queue.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-        if int(a["supply_priority"]) != int(b["supply_priority"]):
-            return int(a["supply_priority"]) > int(b["supply_priority"])
-        if float(a["rations"]) != float(b["rations"]):
-            return float(a["rations"]) < float(b["rations"])
-        return int(a["id"]) < int(b["id"]))
-    for unit in supply_queue:
-        if float(unit["troops"]) <= 0.0:
-            continue
-        var own_base: Dictionary = bases[int(unit["side"])]
-        if bool(own_base["alive"]) and (unit["pos"] as Vector2).distance_to(own_base["pos"]) < 75.0:
-            unit["supply_guard_time"] = float(unit["supply_guard_time"]) + dt
-        var provided: bool = _has_supply(int(unit["side"]), unit["pos"])
-        unit["supplied"] = provided
-        if provided and float(own_base["stock"]) > 0.1:
-            unit["out_supply"] = 0.0
-            var share: float = float(unit.get("strength_share",1.0))
-            var ration_fill: float = minf(minf(100.0 - float(unit["rations"]), dt * 2.5), float(own_base["stock"])/share)
-            unit["rations"] = float(unit["rations"]) + ration_fill
-            own_base["stock"] = maxf(0.0, float(own_base["stock"]) - ration_fill*share)
-            if str(unit["type"]) == "궁병":
-                var ammo_fill: float = minf(minf(100.0 - float(unit["ammo"]), dt * 2.0), float(own_base["stock"])/share)
-                unit["ammo"] = float(unit["ammo"]) + ammo_fill
-                own_base["stock"] = maxf(0.0, float(own_base["stock"]) - ammo_fill*share)
+        if not base["alive"]: continue
+        _update_base_raid(base,dt)
+        if not base["alive"]: continue
+        if base["state"]=="설치":
+            base["build_timer"]=maxf(0.0,float(base["build_timer"])-dt)
+            if base["build_timer"]<0.00001:
+                base["build_timer"]=0.0
+                base["state"]="가동"
+                _log(("%s 보급기지 완공 · 자동 보급 시작") % _camp_side(base["side"]))
+    if started and battle_time>=next_supply_survey:
+        next_supply_survey=battle_time+1.0
+        for side in range(2): _extend_supply(side)
+    for unit in units:
+        if unit["troops"]<=0: continue
+        var linked: bool=_has_supply(unit["side"],unit["pos"])
+        unit["supplied"]=linked
+        if linked:
+            unit["rations"]=minf(100.0,unit["rations"]+dt*2.5)
+            if unit["type"]=="궁병": unit["ammo"]=minf(100.0,unit["ammo"]+dt*2.0)
+            unit["out_supply"]=0.0
         else:
-            unit["supplied"] = false
-            unit["rations"] = maxf(0.0, float(unit["rations"]) - dt * (0.32 if long_operation else (0.44 if wide_field else 0.65)))
-            unit["out_supply"] = float(unit["out_supply"]) + dt
-            if float(unit["out_supply"]) >= TURN_SECONDS * 3.0:
-                unit["morale"] = maxf(0.0, float(unit["morale"]) - dt * 0.15)
+            unit["rations"]=maxf(0.0,unit["rations"]-dt*(0.32 if long_operation else (0.44 if wide_field else 0.65)))
+            unit["out_supply"]+=dt
+            if unit["out_supply"]>=TURN_SECONDS*3.0: unit["morale"]=maxf(0.0,unit["morale"]-dt*0.15)
+        var home: Dictionary=bases[unit["side"]]
+        if home["alive"] and (unit["pos"] as Vector2).distance_to(home["pos"])<75:
+            unit["supply_guard_time"]+=dt
 
-func _supply_is_guarded(base: Dictionary) -> bool:
-    for guard in units:
-        if int(guard["side"]) == int(base["side"]) and float(guard["troops"]) > 18.0 and not bool(guard["routed"]):
-            if (guard["pos"] as Vector2).distance_to(base["pos"]) <= 76.0:
-                return true
-    return false
+func _camp_side(side: int) -> String:
+    return "아군" if side==0 else "적군"
 
-func _supply_under_threat(side: int) -> bool:
-    var base: Dictionary = bases[side]
-    if not bool(base["alive"]):
-        return false
-    for enemy in units:
-        if int(enemy["side"]) != side and float(enemy["troops"]) > 0.0:
-            if (enemy["pos"] as Vector2).distance_to(base["pos"]) <= 165.0:
-                return true
-    return false
+func _nearby_corps(side: int, center: Vector2, radius: float) -> int:
+    var count:=0
+    for unit in units:
+        if unit["side"]!=side or unit["troops"]<=0 or unit["routed"]: continue
+        var point: Vector2=unit["pos"]
+        if point.distance_squared_to(center)>radius*radius: continue
+        if long_operation and _river_separates(point,center): continue
+        count+=1
+    return count
+
+func _update_base_raid(base: Dictionary, dt: float) -> void:
+    var side: int=base["side"]
+    var rate:=mini(2,_nearby_corps(1-side,base["pos"],RAID_RADIUS))
+    if rate>0 and _nearby_corps(side,base["pos"],GUARD_RADIUS)>0: rate=0
+    if base["raid_rate"]==0 and rate>0: _log(_camp_side(side)+" 보급기지 급습")
+    base["raid_rate"]=rate
+    if rate==0:
+        base["raid_work"]=0.0
+        return
+    base["raid_work"]+=dt*rate
+    if base["raid_work"]>=RAID_SECONDS-0.00001:
+        base["alive"]=false
+        base["state"]="파괴"
+        base["raid_rate"]=0
+        _log(_camp_side(side)+" 보급기지 파괴")
+
+func raid_seconds_left(base: Dictionary) -> int:
+    if base["raid_rate"]<=0: return 0
+    return ceili(maxf(0.0,RAID_SECONDS-base["raid_work"])*operation_scale()/float(base["raid_rate"])-0.00001)
+
+func supply_caption(base: Dictionary) -> String:
+    var kind: String="전진기지" if base.get("forward",false) else "보급기지"
+    if base["raid_rate"]>0: return "%s 급습 · 파괴까지 %d초" % [kind,raid_seconds_left(base)]
+    if base["state"]=="설치": return "%s 구축 · %d초" % [kind,ceili(float(base["build_timer"])*operation_scale())]
+    if base["state"]=="착공 예정": return "기지 예정지"
+    return kind
 
 func supply_radius() -> float:
     return SUPPLY_RADIUS*1.6 if six_armies else SUPPLY_RADIUS
 
 func _has_supply(side: int, position: Vector2) -> bool:
+    var radius:=supply_radius()+0.0001 # Vector2 coordinates have single precision.
     for base in bases:
-        if int(base["side"]) == side and bool(base["alive"]) and str(base["state"]) == "가동":
-            var bp: Vector2 = base["pos"]
-            if bp.distance_to(position) <= supply_radius():
-                return true
+        if base["side"]==side and base["alive"] and base["state"]=="가동" and position.distance_squared_to(base["pos"])<=radius*radius: return true
     return false
 
-func _best_supply_position(side: int) -> Vector2:
-    var focus: Vector2 = layout_point(Vector2(170,275) if side == 0 else Vector2(730,275))
-    var strength: float = 0.0
+func _nearest_base(side: int, point: Vector2, operational: bool=false) -> Dictionary:
+    var best: Dictionary={}
+    var distance:=INF
+    for base in bases:
+        if base["side"]!=side or not base["alive"] or (operational and base["state"]!="가동"): continue
+        var d:=point.distance_squared_to(base["pos"])
+        if d<distance:
+            best=base
+            distance=d
+    return best
+
+func _buildable_ground(point: Vector2) -> bool:
+    if terrain_at(point) in ["하천","교량","습지"]: return false
+    for structure in structures:
+        if structure["hp"]>0 and (structure["rect"] as Rect2).has_point(point): return false
+    return true
+
+func _extend_supply(side: int) -> void:
+    for base in bases:
+        if base["side"]==side and base["alive"] and base["state"]=="설치": return
+    var radius:=supply_radius()
+    var march_required:=radius*0.8
+    var site:=Vector2.INF
     for unit in units:
-        if int(unit["side"]) == side and float(unit["troops"]) > 0.0:
-            focus += (unit["pos"] as Vector2) * (float(unit["troops"]) / 100.0)
-            strength += float(unit["troops"]) / 100.0
-    focus /= 1.0 + strength
-    var direction: float = -1.0 if side == 0 else 1.0
-    var suggested: Vector2 = Vector2(clampf(focus.x + 105.0 * direction, 75.0, field_size.x - 75.0), clampf(focus.y, 95.0, field_size.y - 75.0))
-    var candidates: Array[Vector2] = [suggested, suggested + Vector2(0, -68), suggested + Vector2(0, 68)]
-    var winning: Vector2 = suggested
-    var best_score: float = -100000.0
-    for candidate in candidates:
-        candidate = _field_point(candidate)
-        var score: float = -120.0 if six_armies and terrain_at(candidate) == "하천" else 0.0
-        for unit in units:
-            if float(unit["troops"]) <= 0.0:
-                continue
-            var d: float = (unit["pos"] as Vector2).distance_to(candidate)
-            if int(unit["side"]) == side:
-                score += float(unit["troops"]) * (1.0 if d <= (SUPPLY_RADIUS*1.6 if six_armies else SUPPLY_RADIUS) else 0.0)
-            elif d < 190.0:
-                score -= (190.0 - d) * 1.2
-        if score > best_score:
-            best_score = score
-            winning = candidate
-    return winning
+        if unit["side"]!=side or unit["troops"]<=0 or unit["routed"] or unit["reserve"]: continue
+        if unit["action"] in ["패주","후퇴","전술 철수","보급 복귀","탄약 보충","재집결","전술 재집결","거리 유지"] or unit["mission"]=="철수": continue
+        var point: Vector2=unit["pos"]
+        var marched:=point.distance_to(unit.get("supply_mark",point))
+        if marched<march_required or _has_supply(side,point) or not _buildable_ground(point): continue
+        if _nearby_corps(1-side,point,GUARD_RADIUS)>0: continue
+        site=point
+        march_required=marched
+    if site==Vector2.INF: return
+    var post:=_base(side,site)
+    post["forward"]=true
+    post["state"]="설치"
+    post["build_timer"]=BASE_BUILD_SECONDS
+    bases.append(post)
+    # Marches on separate wings keep their own departure points.
+    for unit in units:
+        if unit["side"]==side and site.distance_to(unit["pos"])<=radius: unit["supply_mark"]=unit["pos"]
+    _log(_camp_side(side)+" 전진 보급기지 구축 시작")
 
 func _nearest_enemy(unit: Dictionary) -> Dictionary:
     var nearest: Dictionary = {}
@@ -577,7 +578,7 @@ func _nearest_visible_enemy(unit: Dictionary) -> Dictionary:
     return nearest
 
 func _can_see_base(unit: Dictionary, target_base: Dictionary) -> bool:
-    if not bool(target_base["alive"]):
+    if target_base.is_empty() or not bool(target_base["alive"]):
         return false
     var p: Vector2 = unit["pos"]
     var b: Vector2 = target_base["pos"]
@@ -586,6 +587,7 @@ func _can_see_base(unit: Dictionary, target_base: Dictionary) -> bool:
 func _decide(unit: Dictionary) -> void:
     var nearest: Dictionary = _nearest_visible_enemy(unit)
     var side: int = int(unit["side"])
+    var depot:=_nearest_base(side,unit["pos"],true)
     var pos: Vector2 = unit["pos"]
     unit["decisions"] = int(unit["decisions"]) + 1
     var personality: String = str(unit["personality"])
@@ -639,14 +641,14 @@ func _decide(unit: Dictionary) -> void:
         goal = pos + escape.normalized() * minf(110.0, 155.0 - enemy_distance)
         if str(unit["action"]) != "거리 유지":
             _log("%s 궁병이 근접 적을 피해 후방 기동" % str(unit["name"]))
-    elif str(unit["type"]) == "궁병" and float(unit["ammo"]) < 12.0 and enemy_distance > 115.0 and bool(bases[side]["alive"]):
+    elif str(unit["type"]) == "궁병" and float(unit["ammo"]) < 12.0 and enemy_distance > 115.0 and not depot.is_empty():
         action = "탄약 보충"
         reason = "잔여 화살 부족: 보급기지로 이동"
-        goal = bases[side]["pos"]
-    elif float(unit["rations"]) < 20.0 and enemy_distance > 125.0 and bool(bases[side]["alive"]):
+        goal = depot["pos"]
+    elif float(unit["rations"]) < 20.0 and enemy_distance > 125.0 and not depot.is_empty():
         action = "보급 복귀"
         reason = "식량 부족: 전투 지속력을 회복"
-        goal = bases[side]["pos"]
+        goal = depot["pos"]
     elif not nearest.is_empty() and ability >= 70.0 and enemy_distance < 85.0 and _flank_threat(unit, nearest):
         action = "측면 방어"
         reason = "측후면 위협을 확인하고 전열을 재정렬"
@@ -663,10 +665,10 @@ func _decide(unit: Dictionary) -> void:
         action = "반격"
         reason = "적의 병력이 약해진 틈을 확인하고 제한 반격"
         goal = nearest["pos"]
-    elif str(unit["type"]) == "보병" and personality == "신중" and _supply_under_threat(side) and pos.distance_to(bases[side]["pos"]) < 260.0 and enemy_distance >= 110.0:
+    elif str(unit["type"]) == "보병" and personality == "신중" and not depot.is_empty() and pos.distance_to(depot["pos"]) < 260.0 and enemy_distance >= 110.0 and _nearby_corps(1-side,depot["pos"],165.0)>0:
         action = "보급 호위"
         reason = "보급기지에 접근하는 적을 발견해 수비"
-        goal = bases[side]["pos"]
+        goal = depot["pos"]
     elif str(unit["type"]) == "기병" and personality == "공격" and ability >= 72.0 and morale > 52.0 and relative_strength >= 0.75 and enemy_distance >= 92.0 and enemy_distance < 245.0:
         # Waypoint is built from an enemy we can actually SEE, not the full map.
         # Reaching the waypoint commits the unit to a strike on that enemy.
@@ -714,9 +716,12 @@ func _decide(unit: Dictionary) -> void:
     # Raids persist for a bounded mission window. Prior logic issued a raid,
     # then abandoned it at the very next ~2 s AI tick due to its cooldown.
     # The destination is the last OBSERVED base position, not omniscient tracking.
-    var enemy_base: Dictionary = bases[1 - side]
+    var enemy_base:=_nearest_base(1-side,pos)
+    var raid_index: int=unit.get("raid_base",-1)
+    if unit["raid_active"] and raid_index>=0 and raid_index<bases.size() and battle_time<unit["raid_until"]:
+        enemy_base=bases[raid_index]
     var raid_allowed: bool = personality == "공격" and ability > 60.0 and action not in ["후퇴", "패주", "재집결", "휴식", "보급 복귀", "탄약 보충", "거점 방어", "매복"]
-    if raid_allowed and bool(unit["raid_active"]) and battle_time < float(unit["raid_until"]) and bool(enemy_base["alive"]):
+    if raid_allowed and bool(unit["raid_active"]) and battle_time < float(unit["raid_until"]) and not enemy_base.is_empty() and enemy_base["alive"]:
         if _can_see_base(unit, enemy_base):
             unit["raid_target"] = enemy_base["pos"]
         action = "기지 습격"
@@ -724,6 +729,7 @@ func _decide(unit: Dictionary) -> void:
         goal = unit["raid_target"]
     elif raid_allowed and _can_see_base(unit, enemy_base) and battle_time - float(unit["last_raid"]) > 12.0:
         unit["raid_active"] = true
+        unit["raid_base"]=bases.find(enemy_base)
         unit["last_raid"] = battle_time
         unit["raid_until"] = battle_time + 10.0
         unit["raid_target"] = enemy_base["pos"]
@@ -1717,8 +1723,8 @@ func _rally_point(unit: Dictionary) -> Vector2:
     var p: Vector2 = unit["pos"]
     var side: int = int(unit["side"])
     var rear: Vector2 = Vector2.LEFT if side == 0 else Vector2.RIGHT
-    var base: Dictionary = bases[side]
-    if bool(base["alive"]):
+    var base:=_nearest_base(side,p,true)
+    if not base.is_empty():
         return _field_point(p.move_toward(base["pos"], 100.0))
     return _field_point(p + rear * 100.0)
 
@@ -2146,7 +2152,6 @@ func _configure_scenario() -> void:
             else:
                 unit["troops"] = minf(MAX_TROOPS,float(unit["troops"]) * 1.20) if six_armies else float(unit["troops"])*1.20
                 unit["initial_troops"] = unit["troops"]
-        bases[0]["fixed"] = true
     elif scenario_id == 3:
         scenario_title = "군량 수레 호위"
         scenario_goal = "군량 수레를 동쪽 도착점까지 호위"
@@ -2238,8 +2243,6 @@ func place_post(post: String, point: Vector2) -> bool:
     else:
         var base: Dictionary=bases[0]
         base["pos"]=point
-        base["target"]=point
-        base["fixed"]=true
         base["state"]="착공 예정"
     return true
 
@@ -2297,13 +2300,6 @@ func _apply_planned_route(unit: Dictionary, action: String, reason: String, goal
             return {"action":"방어선 사수","reason":"지정 방어 구역 복귀","goal":anchor}
         return {"action":"방어선 사수","reason":"지정 방어 구역 사수","goal":p}
     return unchanged
-
-func set_supply_priority(unit_id: int, priority: int) -> bool:
-    var unit: Dictionary = find_unit(unit_id)
-    if unit.is_empty() or int(unit["side"]) != 0 or finished:
-        return false
-    unit["supply_priority"] = clampi(priority,0,2)
-    return true
 
 func _deputy_profile(index: int) -> Dictionary:
     match index:
@@ -2782,7 +2778,7 @@ func _expand_layout() -> void:
         for key in ["pos","goal","defense_anchor","tactical_anchor"]:
             unit[key] = layout_point(unit[key])
     for base in bases:
-        for key in ["pos","target"]: base[key] = layout_point(base[key])
+        base["pos"]=layout_point(base["pos"])
     for commander in commanders:
         for key in ["pos","goal"]: commander[key] = layout_point(commander[key])
     for scout in scouts:
@@ -2870,7 +2866,6 @@ func _deploy_detachments() -> void:
         sub["strength_share"] = share
         sub["rations"] = leader["rations"]
         sub["ammo"] = leader["ammo"]
-        sub["supply_priority"] = leader["supply_priority"]
         sub["formation"] = leader["formation"]
         sub["policy"] = leader["policy"]
         sub["obedience"] = leader["obedience"]

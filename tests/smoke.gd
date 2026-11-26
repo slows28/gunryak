@@ -427,7 +427,9 @@ func _initialize() -> void:
     check(bool(camp["alive"]), "defended supply base withstands raider at gate")
     camp_guard["pos"] = Vector2(340, 310)
     depot._supply_logic(0.1)
-    check(not bool(camp["alive"]), "undefended supply base can be destroyed by physical raid")
+    check(camp["alive"] and camp["raid_work"]>0, "undefended base begins a timed raid")
+    for tick in range(59): depot._supply_logic(0.1)
+    check(not bool(camp["alive"]), "undefended supply base falls after sustained physical raid")
 
     # M3-4: Uncontested occupation requires elapsed time; defenders deny capture.
     var flags = WarSim.new()
