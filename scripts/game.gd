@@ -26,7 +26,6 @@ const GENERAL_PORTRAITS=preload("res://assets/art/general_portraits.svg")
 const FIELD_SITES=preload("res://assets/art/field_sites.svg")
 const PORTRAIT_NAMES=["왕평","마속","위연","강유","관흥","장익","장합","위군 궁대","위군 기병","곽회","비요","왕쌍"]
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
-const PAINTED_FX = preload("res://assets/art/painted_fx.webp")
 const TITLE_ART = preload("res://assets/art/title_art.webp")
 const SOLDIER_SCALE: float = 0.72
 const MAP_TOP_LEFT: Vector2 = Vector2(16, 142)
@@ -142,6 +141,7 @@ var map_clip: Control
 var camera_zoom: float = 1.0
 var camera_center: Vector2 = MAP_SIZE * 0.5
 var visibility_texture: ImageTexture
+var contact_dust: ImageTexture
 var dust_texture: ImageTexture
 var visibility_stamp: float = -100.0
 var render_clock: float = 0.0
@@ -233,6 +233,7 @@ func _ready() -> void:
     _build_map_layer()
     _rebuild_terrain()
     dust_texture = TerrainArt.dust_cloud()
+    contact_dust = TerrainArt.contact_dust()
     _reset_camera()
     _build_interface()
     _build_presentation()
@@ -1806,6 +1807,7 @@ func _draw_map(_canvas: Control) -> void:
     var field_view := Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom).grow(125.0)
     _draw_fallen(field_view)
     _draw_march_dust(field_view)
+    _draw_contact_scuffs(field_view)
     _draw_contact_fronts(visible_units,field_view)
     if camera_zoom>=0.65:
         var soldiers: Array[Dictionary]=_visible_soldier_batch(visible_units,field_view)
@@ -2940,44 +2942,60 @@ func _combat_effect_visible(fx: Dictionary) -> bool:
     var to: Vector2=fx.get("visual_to",fx["to"])
     return sim.player_can_see(from) and sim.player_can_see(to)
 
+# Ground marks are laid down before the soldier and tree depth pass.
+func _draw_contact_scuffs(view: Rect2) -> void:
+    if camera_zoom < 0.65: return
+    var offset := MAP_SIZE * 0.5 - camera_center * camera_zoom
+    for fx in sim.visual_effects:
+        var age := maxf(0.0, render_clock - float(fx["time"]))
+        if fx["kind"] == "화살" or age >= 0.72: continue
+        var origin: Vector2 = fx.get("visual_from", fx["from"])
+        var target: Vector2 = fx.get("visual_to", fx["to"])
+        var contact := origin.lerp(target, 0.5)
+        if not view.has_point(contact) or not _combat_effect_visible(fx): continue
+        var axis := (fx["from"] as Vector2).direction_to(fx["to"])
+        if axis == Vector2.ZERO: continue
+        var charge: bool = fx["kind"] == "돌격"
+        var seed_value := hash([fx["time"], fx["attacker_id"], fx.get("defender_id", -1)])
+        var track_count := 4 if charge else 2
+        var recoil: Vector2 = fx.get("recoil", Vector2.ZERO)
+        var displacement := recoil * clampf(age / 0.28, 0.0, 1.0)
+        for i in range(track_count):
+            # Stagger the hoof or boot marks along the two meeting ranks.
+            var jitter := float((seed_value >> (i * 5)) & 31) / 31.0
+            var lateral := (float(i) + jitter * 0.7 - float(track_count) * 0.5) * (4.2 if charge else 2.8)
+            var foot := contact + axis.orthogonal() * lateral - axis * (1.0 + jitter * 3.5)
+            foot += displacement * (0.18 + jitter * 0.24)
+            var terrain: String = sim.terrain_at(foot)
+            if terrain in ["교량", "하천"]: continue
+            var wet := terrain in ["습지", "갈대밭"]
+            var length := (2.0 + jitter * 1.4) * (2.0 if charge else 1.0)
+            var furrow := Color("#524432") if wet else Color("#786047")
+            furrow.a = (0.52 - jitter * 0.12) * (1.0 - smoothstep(0.18, 0.72, age))
+            map_layer.draw_line(foot - axis * length, foot, furrow, 0.7 + jitter * 0.35, true)
+            if charge and i % 2 == 0 and not wet and age < 0.43:
+                var drift := age / 0.43
+                var screen := offset + (foot - axis * drift * 3.8) * camera_zoom
+                map_layer.draw_set_transform(screen, axis.angle(), Vector2.ONE * camera_zoom)
+                var extent := Vector2(12.0 + drift * 7.0, 3.8 + drift * 2.7)
+                var tint := Color.WHITE
+                tint.a = (0.52 - drift * 0.52) * (0.7 if terrain == "숲" else 1.0)
+                map_layer.draw_texture_rect(contact_dust, Rect2(-extent * Vector2(0.83, 0.5), extent), false, tint)
+                map_layer.draw_set_transform(offset, 0.0, Vector2.ONE * camera_zoom)
+
 func _draw_combat_effects() -> void:
     for fx in sim.visual_effects:
-        var age: float = maxf(0.0,render_clock-float(fx["time"]))
-        if age>(1.10 if fx["kind"]=="화살" else 0.9) or not _combat_effect_visible(fx):
-            continue
-        var p: Vector2 = fx["from"]
-        var target: Vector2 = fx["to"]
-        p=fx.get("visual_from",p)
-        target=fx.get("visual_to",target)
-        var alpha: float = clampf(1.0-age,0.0,1.0)
-        match str(fx["kind"]):
-            "화살":
-                _draw_volley(fx,p,target,age)
-            "돌격":
-                if bool(fx.get("braced",false)):
-                    _draw_charge_stop(p,target,age,alpha)
-                else:
-                    var contact: Vector2=p.lerp(target,0.70)
-                    var axis: Vector2 = (fx["from"] as Vector2).direction_to(fx["to"])
-                    var impulse: Vector2 = fx.get("recoil", Vector2.ZERO)
-                    var progress := 1.0 - pow(1.0 - minf(age / 0.42, 1.0), 2)
-                    for k in range(-2, 3):
-                        var spread := float(k)
-                        var plume := contact + axis.orthogonal() * spread * (2.5 + 4.0 * progress)
-                        plume += impulse * progress * (0.8 - absf(spread) * 0.18)
-                        _paint_fx(3, plume, 13.0 + 15.0 * progress, alpha * (0.55 - absf(spread) * 0.08))
-            _:
-                var impact: Vector2=(p+target)*0.5
-                _paint_fx(4,impact,26.0,alpha*0.65)
-                # Foot-level dust over actual contact; no new hit events.
-                _paint_fx(3,impact+Vector2(0,3),18.0+age*24.0,alpha*0.28)
-                for k in range(9):
-                    var ray: Vector2=Vector2.from_angle(float(k)*TAU/9.0+float(fx["time"]))*(4.0+age*15.0)
-                    map_layer.draw_line(impact+ray*0.45,impact+ray,Color(1.0,0.86,0.56,alpha*0.76),1.0,true)
-        if detailed_map and camera_zoom>=1.15 and age<0.75:
-            var note: String=_engagement_note(fx)
+        var age := maxf(0.0, render_clock - float(fx["time"]))
+        var arrow: bool = fx["kind"] == "화살"
+        var show_note := detailed_map and camera_zoom >= 1.15 and age < 0.75
+        if not (arrow and age <= 1.10 or show_note) or not _combat_effect_visible(fx): continue
+        var p: Vector2 = fx.get("visual_from", fx["from"])
+        var target: Vector2 = fx.get("visual_to", fx["to"])
+        if arrow: _draw_volley(fx, p, target, age)
+        if show_note:
+            var note: String = _engagement_note(fx)
             if not note.is_empty():
-                _map_plate(note,p.lerp(target,0.5)+Vector2(0,-30.0),COL_GOLD,11)
+                _map_plate(note, p.lerp(target, 0.5) + Vector2(0, -30.0), COL_GOLD, 11)
 
 func _draw_volley(fx: Dictionary, origin: Vector2, target: Vector2, age: float) -> void:
     var lanes: Array[Vector2]=[origin,target]
@@ -3026,14 +3044,6 @@ func _draw_arrow_impact(point: Vector2, incoming: Vector2, life: float) -> void:
         var side: float=float(i)-1.0
         var mote: Vector2=point+across*side*(1.0+life*3.2)-incoming*life*(1.2+absf(side))
         map_layer.draw_circle(mote,0.44,Color(0.73,0.68,0.54,fade),true,-1.0,true)
-
-func _draw_charge_stop(origin: Vector2, target: Vector2, age: float, alpha: float) -> void:
-    var axis: Vector2=(target-origin).normalized()
-    var across: Vector2=axis.orthogonal()
-    _paint_fx(3,target-axis*8.0,24.0+age*16.0,alpha*0.40)
-    for i in range(3):
-        var guard: Vector2=target+across*(float(i)-1.0)*8.0
-        map_layer.draw_polyline(PackedVector2Array([guard-across*3.0,guard-axis*4.0,guard+across*3.0]),Color(COL_BLUE,alpha),1.8,true)
 
 func _draw_combat_movement(unit: Dictionary) -> void:
     if not sim.started or sim.finished or camera_zoom<0.8: return
@@ -3164,14 +3174,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 func _art_region(tile: int) -> Rect2:
     return Rect2(float(tile%8)*128.0,float(floori(float(tile)/8.0))*128.0,128,128)
 
-func _fx_region(tile: int) -> Rect2:
-    return Rect2(float(tile%4)*128.0,float(floori(float(tile)/4.0))*128.0,128,128)
-
 func _paint_tile(tile: int, rect: Rect2, tint: Color = Color.WHITE) -> void:
     map_layer.draw_texture_rect_region(PAINTED_ART,rect,_art_region(tile),tint)
-
-func _paint_fx(tile: int, center: Vector2, extent: float, alpha: float) -> void:
-    map_layer.draw_texture_rect_region(PAINTED_FX,Rect2(center-Vector2.ONE*extent*0.5,Vector2.ONE*extent),_fx_region(tile),Color(1,1,1,alpha))
 
 func _paint_terrain(area: Rect2, tile: int, step: float) -> void:
     var y: float = area.position.y

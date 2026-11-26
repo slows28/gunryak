@@ -432,6 +432,24 @@ static func dust_cloud() -> ImageTexture:
             img.set_pixel(x,y,c)
     return ImageTexture.create_from_image(img)
 
+# A low strip of disturbed soil with a frayed tail and a denser leading edge.
+static func contact_dust() -> ImageTexture:
+    var image := Image.create_empty(64, 24, false, Image.FORMAT_RGBA8)
+    var noise := FastNoiseLite.new()
+    noise.seed = 5813
+    noise.frequency = 0.14
+    for x in range(64):
+        var along := float(x) / 63.0
+        var spine := 11.5 + 3.0 * sin(along * 8.0) + noise.get_noise_2d(x, 0) * 3.0
+        var density := smoothstep(0.0, 0.68, along) * (1.0 - smoothstep(0.79, 1.0, along))
+        for y in range(24):
+            var grain := noise.get_noise_2d(x, y) * 0.5 + 0.5
+            var rim := absf(float(y) - spine) / (2.8 + 7.0 * (1.0 - along))
+            var soil := Color("#987c5b").lerp(Color("#c6ad85"), grain)
+            soil.a = density * (1.0 - smoothstep(0.0, 0.55 + grain, rim)) * smoothstep(0.15, 0.75, grain)
+            image.set_pixel(x, y, soil)
+    return ImageTexture.create_from_image(image)
+
 static func _mirror_sample(value:int,size:int)->int:
     var i:int=posmod(value,size*2)
     return i if i<size else size*2-1-i
