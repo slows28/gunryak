@@ -113,9 +113,8 @@ def main() -> int:
 
     for name, template, expected_marker in TESTS:
         cmd = [binary] + [arg.replace("{project}", str(project)) for arg in template]
-        # Full five-scenario simulation has exceeded 150s on shared Windows runners.
-        # Keep the same assertions and require the same success marker.
-        budget = max(args.timeout, 300) if name == "six_armies" and os.name == "nt" else args.timeout
+        # Five full battles with twenty field corps take over three minutes on a shared runner.
+        budget = max(args.timeout, 420) if name == "six_armies" else args.timeout
         result = run(cmd, project, budget)
         output = result.pop("output")
         (out_dir / f"{name}.log").write_text(output, encoding="utf-8")

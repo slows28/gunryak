@@ -18,7 +18,7 @@ func _capture() -> void:
     root.add_child(game)
     await process_frame
     if game.general_cards.size() != 10:
-        push_error("VISUAL_CAPTURE_FAIL: six independent commanders not present")
+        push_error("VISUAL_CAPTURE_FAIL: ten independent commanders not present")
         quit(1)
         return
     # Check real glyph availability: a successful PNG with tofu is not a pass.
@@ -275,7 +275,7 @@ func _capture() -> void:
         quit(1)
         return
     if game.general_cards.size()!=10:
-        push_error("VISUAL_CAPTURE_FAIL: persistent six commander cards missing")
+        push_error("VISUAL_CAPTURE_FAIL: ten persistent commander cards missing")
         quit(1)
         return
     for i in range(10):
@@ -723,7 +723,7 @@ func _capture() -> void:
     await process_frame
     await RenderingServer.frame_post_draw
     if game.outcome_cards.get_child_count() != 10:
-        push_error("VISUAL_CAPTURE_FAIL: six commander results missing")
+        push_error("VISUAL_CAPTURE_FAIL: ten commander results missing")
         quit(1)
         return
     if not _save_frame("battle_result.png"):

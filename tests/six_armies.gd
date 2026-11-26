@@ -269,7 +269,7 @@ func _run() -> void:
         sim.set_long_operation(true)
         sim.set_scenario(scenario)
         sim.tactical_enabled = true
-        check(sim.command_ids(0).size()==10 and sim.command_ids(1).size()==10 and sim.units.size()==20,"six distinct leaders scenario "+str(scenario))
+        check(sim.command_ids(0).size()==10 and sim.command_ids(1).size()==10 and sim.units.size()==20,"ten distinct commanders per faction, scenario "+str(scenario))
         check(sim.total_troops(0)==38000 and sim.reserve_limit[0]==1,"actual initial manpower and reserve cap")
         var within_range: bool = true
         for unit in sim.units:
@@ -329,7 +329,7 @@ func _run() -> void:
     var model := Campaign.new()
     model.set_six_armies(true)
     model.save_path = "user://gunryak_six_test.json"
-    check(model.state["active"].size()==10 and model.state["roster"].size()==13,"six armies and spare officers")
+    check(model.state["active"].size()==10 and model.state["roster"].size()==13,"ten field corps and three spare officers")
     check(model.replenish(2) and int(model.state["troops"][2])==3700,"500 soldiers replenished")
     check(model.set_formation(5,"학익진"),"strategic formation selection")
     check(model.recruit(6) and model.assign(5,6),"replacement commander recruitment")
@@ -355,18 +355,18 @@ func _run() -> void:
         if sim.finished: break
         sim.step(0.1)
     check(model.conclude(sim) and model.state["troops"][5]==floori(sim.corps_report(8)["troops"]),"sixth slot survivors persist")
-    check(model.save(),"save six-army campaign")
+    check(model.save(),"save ten-corps campaign")
     var loaded := Campaign.new()
     loaded.set_six_armies(true)
     loaded.save_path = model.save_path
-    check(loaded.load_save() and loaded.state["active"]==model.state["active"] and loaded.state["formations"]==model.state["formations"],"six-army save roundtrip")
+    check(loaded.load_save() and loaded.state["active"]==model.state["active"] and loaded.state["formations"]==model.state["formations"],"ten-corps save roundtrip")
     DirAccess.remove_absolute(ProjectSettings.globalize_path(model.save_path))
     var game: Control = Main.instantiate()
     root.add_child(game)
     await process_frame
-    check(game.general_cards.size()==10 and game.sim.command_ids(0).size()==10,"six commander cards map to six independent units")
+    check(game.general_cards.size()==10 and game.sim.command_ids(0).size()==10,"ten commander cards map to ten independent units")
     game.call("_on_unit_selected",5)
-    check(game.selected_id==8,"last commander selection maps to correct unit ID")
+    check(game.selected_id==8,"sixth commander selection maps to its original unit ID")
     game.call("_on_unit_selected",-1)
     game.call("_on_unit_selected",99)
     check(game.selected_id==8,"invalid selection does not corrupt commander ID")
@@ -478,6 +478,6 @@ func _run() -> void:
     game.call("_refresh_hud")
     check(game.command_outcome.text.contains("관측 행동 긴급 지원"),"an actual response state is distinguishable from delivery")
     game.call("_begin_campaign")
-    check(game.strategy_view.slot_choice.item_count==10,"six strategic UI slots")
+    check(game.strategy_view.slot_choice.item_count==10,"ten strategic UI slots")
     print("GUNRYAK_SIX_PASS" if failures==0 else "GUNRYAK_SIX_FAIL "+str(failures))
     game._quit_game(0 if failures==0 else 1)
