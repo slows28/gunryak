@@ -2853,21 +2853,34 @@ func _advance_rider(rider: Dictionary, destination: Vector2, dt: float) -> bool:
     rider["pos"]=_land_motion(rider,p,next) if long_operation else next
     return (rider["pos"] as Vector2).is_equal_approx(destination)
 
+# Estimate the same bridge trip a messenger or responding unit would take.
+func _relief_travel_distance(traveler: Dictionary, destination: Vector2) -> float:
+    var p: Vector2 = traveler["pos"]
+    var direct := p.distance_to(destination)
+    if not long_operation or not _river_separates(p, destination): return direct
+    var bridge := _choose_crossing(traveler, p, destination)
+    var exit_bank := 1 if destination.x >= river_x(destination.y) else -1
+    var entry := _bridge_waypoint(p, bridge, exit_bank)
+    var exit_point := Vector2(river_x(bridge) + exit_bank * 64.0, bridge)
+    return p.distance_to(entry) + entry.distance_to(exit_point) + exit_point.distance_to(destination)
+
 func _send_relief_request(sender: Dictionary, report: Dictionary) -> void:
     var nearest: Dictionary={}
-    var distance: float=480.0 if long_operation else 180.0
+    var radius: float=480.0 if long_operation else 180.0
+    var shortest := INF
+    var rider:=_field_rider(sender["pos"],sender["side"],-11-report["id"]*3)
     for ally in units:
         if ally["side"]!=sender["side"] or ally["id"]==sender["id"] or ally.has("parent_id") or ally["troops"]<=0 or ally["reserve"] or ally["routed"]: continue
-        var d: float=(sender["pos"] as Vector2).distance_to(ally["pos"])
-        if d<distance:
-            distance=d
-            nearest=ally
+        if (sender["pos"] as Vector2).distance_to(ally["pos"]) >= radius: continue
+        var distance := _relief_travel_distance(rider, ally["pos"])
+        if distance < shortest:
+            shortest = distance
+            nearest = ally
     sender["last_relief_request"]=battle_time
     if nearest.is_empty():
         report["relief_destination"]="인근에 연락 가능한 군단 없음"
         return
     report["relief_destination"]=str(nearest["name"])+"에게 별도 구원 전령 파견"
-    var rider:=_field_rider(sender["pos"],sender["side"],-11-report["id"]*3)
     relief_riders.append({"rider":rider,"recipient":nearest["id"],"report":report,"returning":false})
 
 func _relief_decision(ally: Dictionary, sender: Dictionary) -> String:
@@ -3066,7 +3079,7 @@ func support_for_report(target: Dictionary) -> Dictionary:
     for ally in units:
         if int(ally["side"])!=0 or ally["id"]==target["id"] or bool(ally["routed"]) or float(ally["troops"])<24.0: continue
         if has_pending_courier(int(ally["id"])) or (ally.get("local_relief",false) and ally["tactical_until"]>battle_time): continue
-        var score: float=float(ally["morale"])-(ally["pos"] as Vector2).distance_to(target["pos"])*0.1
+        var score: float=float(ally["morale"])-_relief_travel_distance(ally, target["pos"])*0.1
         if score>best_score:
             best=ally
             best_score=score

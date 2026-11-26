@@ -102,6 +102,7 @@ func _initialize() -> void:
     check(sim.finished and sim.winning_side==1 and sim.result.contains("훈련 종료"),"unfinished exercise ends at its time limit")
     sim.set_scenario(0)
     check(sim.training_sites().is_empty() and sim.terrain_at(sites["습지"])!="습지","other scenarios have no training basins")
+    _check_relief_selection()
     _check_relief_report()
     _check_bridge_approaches()
     _check_fields(sim)
@@ -302,3 +303,25 @@ func _check_relief_report() -> void:
     sim._update_response_outcomes()
     check(report.get("joined_at", -1.0) == 12.0 and report["status"] == "실행 종료",
         "first physical arrival survives separation and order expiry")
+
+func _check_relief_selection() -> void:
+    var sim := WarSim.new()
+    sim.set_long_operation(true)
+    sim.set_scenario(2)
+    var sender := sim.find_unit(7)
+    var across := sim.find_unit(2)
+    var inland := sim.find_unit(0)
+    for unit in sim.units:
+        if unit["id"] not in [7, 2, 0]: unit["troops"] = 0.0
+    var y := 1070.0
+    sender["pos"] = Vector2(sim.river_x(y) + 29.0, y)
+    across["pos"] = Vector2(sim.river_x(y) - 29.0, y)
+    inland["pos"] = sender["pos"] + Vector2(120, 0)
+    inland["morale"] = across["morale"]
+    var report := {"id": 400, "side": 0, "unit_id": sender["id"]}
+    sim._send_relief_request(sender, report)
+    check(sim.relief_riders.back()["recipient"] == inland["id"] and sim.support_for_report(sender) == inland,
+        "local messenger and command desk favor the shorter passable route")
+    inland["pos"] = sender["pos"] + Vector2(600, 0)
+    sim._send_relief_request(sender, report)
+    check(sim.relief_riders.back()["recipient"] == across["id"], "an across-river neighbor can still receive the request")
