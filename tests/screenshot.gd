@@ -312,6 +312,12 @@ func _capture() -> void:
         push_error("VISUAL_CAPTURE_FAIL: separate forest layer missing")
         quit(1)
         return
+    for texture in game.forest_textures:
+        var canopy: Image=texture.get_image()
+        if canopy.get_size()!=Vector2i(192,192) or canopy.get_pixel(0,0).a>0.1 or canopy.get_pixel(86,137).a<0.8:
+            push_error("VISUAL_CAPTURE_FAIL: canopy atlas must preserve transparency and trunk alignment")
+            quit(1)
+            return
     var previous_y: float=-INF
     for tree in game.forest_instances:
         var point:Vector2=tree["pos"]
@@ -492,9 +498,23 @@ func _capture() -> void:
         push_error("VISUAL_CAPTURE_FAIL: unexpected amount of representative soldiers at supported zoom levels")
         quit(1)
         return
-    var bridge_hq: Texture2D=load("res://assets/art/bridge_hq.svg")
-    if bridge_hq==null or bridge_hq.get_size()!=Vector2(512,384):
-        push_error("VISUAL_CAPTURE_FAIL: high detail bridge unavailable")
+    var deck: Image=game.TerrainArt.TIMBER_CROSSING.get_image()
+    if deck.get_size()!=Vector2i(520,211) or deck.get_pixel(0,0).a>0.1 or deck.get_pixel(260,105).a<0.9:
+        push_error("VISUAL_CAPTURE_FAIL: crossing deck or transparent banks missing")
+        quit(1)
+        return
+    var terrain_pixels: Image=game.terrain_cache.get_image()
+    for crossing_y in [390.0,850.0,1300.0]:
+        var deck_center: Color=terrain_pixels.get_pixel(roundi(game.sim.river_x(crossing_y)),roundi(crossing_y))
+        if deck_center.r<=deck_center.b:
+            push_error("VISUAL_CAPTURE_FAIL: bridge deck missing from minimap terrain")
+            quit(1)
+            return
+    var cloth: Image=game.CORPS_STANDARDS.get_image()
+    var crane: Color=cloth.get_pixel(18,33)
+    var tiger: Color=cloth.get_pixel(146,33)
+    if cloth.get_size()!=Vector2i(256,160) or crane.b<=crane.r or tiger.r<=tiger.b or minf(crane.a,tiger.a)<0.9:
+        push_error("VISUAL_CAPTURE_FAIL: faction standards must have distinct dyed cloth")
         quit(1)
         return
     if not game.commander_scroll.visible or game.enemy_list.visible or game.commander_scroll.get_global_rect().intersects(game.live_order_button.get_global_rect()):

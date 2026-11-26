@@ -17,7 +17,7 @@ const VOLLEY_ARROW_SPREAD: Array[Vector2] = [
     Vector2(-0.98,-0.15),Vector2(0.94,0.78),Vector2(0.19,0.43),Vector2(-0.50,-0.81),Vector2(0.65,0.12),
 ]
 const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
-const BRIDGE_HQ = preload("res://assets/art/bridge_hq.svg")
+const CORPS_STANDARDS = preload("res://assets/art/corps_standards.webp")
 const GENERAL_PORTRAITS=preload("res://assets/art/general_portraits.svg")
 const FIELD_SITES=preload("res://assets/art/field_sites.svg")
 const PORTRAIT_NAMES=["왕평","마속","위연","강유","관흥","장익","장합","위군 궁대","위군 기병","곽회","비요","왕쌍"]
@@ -1494,7 +1494,7 @@ func _draw_map(_canvas: Control) -> void:
         map_layer.draw_rect(map_rect,Color("#58684e"))
     if sim.wide_field and camera_zoom >= 0.65:
         _draw_river_detail()
-    if sim.wide_field and camera_zoom >= 0.60:
+    if sim.wide_field and camera_zoom>1.0:
         for crossing in [390.0,850.0,1300.0]:
             _draw_bridge(Vector2(sim.river_x(crossing),crossing))
     if camera_zoom<0.65:
@@ -1701,7 +1701,7 @@ func _draw_tree(tree: Dictionary,detail: bool,visible_units: Array) -> void:
     if index<0 or index>=forest_textures.size(): return
     var texture:ImageTexture=forest_textures[index]
     var p:Vector2=tree["pos"]
-    var size:Vector2=texture.get_size()
+    var size:Vector2=Vector2.ONE*float(tree["size"])
     var shade:=Color.WHITE
     if detail:
         # Fade only near known friendly or observed enemy formations; do not
@@ -1718,7 +1718,7 @@ func _draw_tree(tree: Dictionary,detail: bool,visible_units: Array) -> void:
                 shade.a=minf(shade.a,lerpf(0.35,0.78,smoothstep(20.0,70.0,distance)))
         if fog_enabled and sim.started and not sim.finished and not sim.player_can_see(p):
             shade=Color(0.62,0.68,0.66,1.0)
-    map_layer.draw_texture_rect(texture,Rect2(p-Vector2(size.x*0.5,size.y*0.70),size),false,shade)
+    map_layer.draw_texture_rect(texture,Rect2(p-size*TerrainArt.TREE_FOOT,size),false,shade)
 
 func _draw_depth_scene(soldiers:Array[Dictionary],trees:Array[Dictionary],visible_units:Array[Dictionary])->void:
     # Both arrays have already been depth-sorted. Linear merge, no per-frame
@@ -1969,6 +1969,28 @@ func _draw_formation_footprint(slots: Array[Vector2], fill: Color, outline: Colo
         map_layer.draw_colored_polygon(polygon, fill)
     map_layer.draw_polyline(hull, outline, width, true)
 
+# Each strip shares its free edge with the next so the woven emblem follows the cloth.
+func _draw_corps_standard(unit: Dictionary, p: Vector2, opacity: float) -> void:
+    var scale_factor: float=0.71 if unit.has("parent_id") else 1.0
+    var foot: Vector2=p+Vector2(-6,-2)*scale_factor
+    var top: Vector2=foot+Vector2(0,-34)*scale_factor
+    map_layer.draw_line(foot,top,Color(Color("#554537"),opacity),2.0*scale_factor,true)
+    map_layer.draw_line(foot+Vector2(-0.6,0),top+Vector2(-0.6,0),Color(Color("#ceb485"),opacity),0.8*scale_factor,true)
+    map_layer.draw_circle(top,1.35*scale_factor,Color(Color("#e4c078"),opacity))
+    var phase: float=2.1*render_clock+float(unit["id"])
+    var last: Vector2=top+Vector2(0,2)*scale_factor
+    var drop := Vector2(0,22)*scale_factor
+    var first_u: float=0.5*float(unit["side"])
+    for i in range(1,5):
+        var t: float=float(i)*0.25
+        var wave: float=sin(phase-t*4.4)*t
+        var edge: Vector2=top+Vector2(18.0*t,2.0+1.8*wave)*scale_factor
+        var color:=Color(1,1,1,opacity)
+        var u0: float=first_u+(t-0.25)*0.5
+        var u1: float=first_u+t*0.5
+        map_layer.draw_polygon(PackedVector2Array([last,edge,edge+drop,last+drop]),PackedColorArray([color]),PackedVector2Array([Vector2(u0,0),Vector2(u1,0),Vector2(u1,1),Vector2(u0,1)]),CORPS_STANDARDS)
+        last=edge
+
 func _draw_unit(unit: Dictionary) -> void:
     var side: int = int(unit["side"])
     var accent: Color = COL_BLUE if side == 0 else COL_RED
@@ -2007,13 +2029,7 @@ func _draw_unit(unit: Dictionary) -> void:
         else: drawn_slots=_contact_slots(unit,_visual_slots(unit))
     if show_footprint:
         _draw_formation_footprint(drawn_slots,Color(accent,0.045),Color(COL_GOLD,0.35),1.2)
-    var flag_extent: Vector2 = Vector2(15,22) if unit.has("parent_id") else Vector2(23,32)
-    _paint_tile(38+side,Rect2(p-Vector2(flag_extent.x*0.5,flag_extent.y+7),flag_extent),Color(1,1,1,accent.a))
-    if camera_zoom>=1.0 and not unit.has("parent_id"):
-        var sway: float=sin(render_clock*sim.operation_scale()*2.0+float(unit["id"]))*2.0
-        var top: Vector2=p+Vector2(-2,-36)
-        map_layer.draw_line(p+Vector2(-2,-6),top,Color("#a58b58"),1.3,true)
-        map_layer.draw_colored_polygon(PackedVector2Array([top,top+Vector2(15,sway+2),top+Vector2(12,sway+10),top+Vector2(0,9)]),Color(accent,0.87))
+    _draw_corps_standard(unit,p,accent.a)
     var forward: Vector2 = unit["facing"]
     if detailed_map:
         map_layer.draw_line(p + forward*22.0, p + forward*35.0, Color(accent,0.8), 1.8)
@@ -3597,26 +3613,22 @@ func _scenery_tile(tile: int,rect: Rect2,tint: Color=Color.WHITE) -> void:
 func _draw_river_detail() -> void:
     var top: float = maxf(0.0,camera_center.y-MAP_SIZE.y*0.5/camera_zoom)
     var bottom: float = minf(sim.field_size.y,camera_center.y+MAP_SIZE.y*0.5/camera_zoom)
-    # Fine animated surface streaks stay within the existing river collision boundary.
-    for y in range(int(top/12.0)*12,int(bottom)+12,12):
+    for y in range(floori(top/23.0)*23,int(bottom)+1,23):
         if sim.near_crossing(float(y)): continue
-        var rx: float=sim.river_x(float(y))
-        for lane in range(4):
-            var offset: float=-19.0+float(lane)*12.0
-            var shift: float=sin(float(y)*0.21+float(lane)*3.7+render_clock*1.4)*4.5
-            var q:=Vector2(rx+offset,float(y)+shift)
-            var alpha: float=0.08+0.11*(0.5+0.5*sin(float(y)*0.13+lane+render_clock*2.1))
-            var points:=PackedVector2Array([q,q+Vector2(2,3),q+Vector2(1,7)])
-            map_layer.draw_polyline(points,Color(0.78,0.90,0.84,alpha),0.8,true)
-        for bank in [-1.0,1.0]:
-            var q:=Vector2(rx+bank*24.0,float(y))
-            var next:=Vector2(sim.river_x(float(y)+8.0)+bank*24.0,float(y)+8.0)
-            map_layer.draw_line(q,next,Color(0.87,0.90,0.76,0.14+0.12*sin(float(y)*0.19+render_clock)),1.3,true)
+        var phase: float=float(y)*0.151
+        var wy: float=float(y)+sin(phase+render_clock*0.85)*3.0
+        var offset: float=sin(phase*4.61)*16.0
+        var run: float=3.5+2.5*sin(phase*1.3)
+        var q:=Vector2(sim.river_x(wy)+offset,wy)
+        var end:=Vector2(sim.river_x(wy+run)+offset+0.7,wy+run)
+        var alpha: float=0.13+0.09*sin(phase*0.72+render_clock*1.4)
+        map_layer.draw_line(q,end,Color(0.88,0.94,0.82,alpha),0.85,true)
 
 func _draw_bridge(p: Vector2) -> void:
-    # Texture aligns the walkable deck to the existing 76-unit north/south opening.
-    # Rails, supports and shadows are visual only, not new collision objects.
-    map_layer.draw_texture_rect(BRIDGE_HQ,Rect2(p-Vector2(58,58),Vector2(116,116)),false)
+    # The rails skirt the 76-unit opening. Stone abutments reach across the bending banks.
+    var extent:=Vector2(TerrainArt.CROSSING_SIZE)
+    # Match the pixel origin of the cached crossing for sharp wood grain at high zoom.
+    map_layer.draw_texture_rect(TerrainArt.TIMBER_CROSSING,Rect2((p-extent*0.5).floor(),extent),false)
 
 func _draw_cooperation_links() -> void:
     var unit: Dictionary=sim.find_unit(selected_id)

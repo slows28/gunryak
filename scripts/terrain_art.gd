@@ -1,8 +1,14 @@
 extends RefCounted
 const FieldGeometry=preload("res://scripts/field_geometry.gd")
-const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const PAINTED_GROUND = preload("res://assets/art/painted_atlas.webp")
-const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
+const VALLEY_DETAILS = preload("res://assets/art/valley_details.webp")
+const TIMBER_CROSSING = preload("res://assets/art/timber_crossing.webp")
+const CROSSING_SIZE := Vector2i(118,89)
+const HARVEST_FIELDS = preload("res://assets/art/harvest_fields.webp")
+const VALLEY_TREES = preload("res://assets/art/valley_trees.webp")
+const TREE_CELL := 192
+const TREE_FOOT := Vector2(86,146)/192.0
+const TREE_SIZES := [66.0,60.0,73.0,70.0,64.0]
 ## Deterministic, continuous terrain art. Gameplay coordinates remain unchanged.
 static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, scenario: int, scale: float = 1.0, layers: Dictionary = {}) -> ImageTexture:
     # Bake higher-resolution wide terrain; retain true world coordinates.
@@ -19,39 +25,22 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
     grain.seed = 48+scenario
     grain.frequency = 0.17
     grain.fractal_octaves = 2
-    var dark := Color("#263e2b")
-    var middle := Color("#5a7241")
-    var light := Color("#b0ad73")
-    var path := Color("#b99a66")
-    var shade := Color("#324437")
-    var crest := Color("#aaa583")
-    # Distinct terrain moods for actual scenario geometry, not five identical green fields.
-    match scenario:
-        1:
-            dark=Color("#394536")
-            middle=Color("#737957")
-            light=Color("#b8ad83")
-            crest=Color("#c0b299")
-        2:
-            dark=Color("#493e2a")
-            middle=Color("#8b8050")
-            light=Color("#c2b37d")
-            path=Color("#b9a17c")
-        3:
-            dark=Color("#29423c")
-            middle=Color("#647d62")
-            light=Color("#b4b88a")
-        4:
-            dark=Color("#524939")
-            middle=Color("#8c825e")
-            light=Color("#c1b48e")
-            crest=Color("#b3a18b")
-    # Use the existing hand-painted resource as material detail, rather than
-    # tiling a screenshot or inventing roads that do not exist in the sim.
+    # Grade one continuous field painting to the light and soil of each scenario.
+    var grades := [Color(0.89,0.98,1.04),Color(0.88,0.95,1.04),Color(1.02,0.96,0.94),Color(0.84,0.98,1.10),Color(1.0,0.92,0.92)]
+    var washes := [Color("#697956"),Color("#838373"),Color("#a08d65"),Color("#647e70"),Color("#99816d")]
+    var grade: Color=grades[clampi(scenario,0,4)]
+    var wash: Color=washes[clampi(scenario,0,4)]
+    var path := Color("#b59970")
+    var shade := Color("#364636")
+    var crest := Color("#b6ad8d")
+    var fields: Image=HARVEST_FIELDS.get_image()
+    if fields.is_compressed(): fields.decompress()
+    if scenario in [1,3]: fields.flip_x()
+    if scenario in [2,4]: fields.flip_y()
+    fields.resize(w,h,Image.INTERPOLATE_BILINEAR)
     var source: Image=PAINTED_GROUND.get_image()
     if source.is_compressed(): source.decompress()
     if source.get_format()!=Image.FORMAT_RGBA8: source.convert(Image.FORMAT_RGBA8)
-    var grass_art: Image=source.get_region(Rect2i(8,520,112,112))
     var dirt_art: Image=source.get_region(Rect2i(136,520,112,112))
     var forest_art: Image=source.get_region(Rect2i(264,520,112,112))
     var hill_art: Image=source.get_region(Rect2i(392,520,112,112))
@@ -87,7 +76,14 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             var wx:float=float(xx)/bake
             row[xx]=FieldGeometry.road_y(wx,lane,scale,scenario)
         roads.append(row)
+    var crossings := PackedFloat32Array([390.0,850.0,1300.0])
     for y in range(h):
+        var crossing_x: float=INF
+        if scale>1.0:
+            for crossing_y in crossings:
+                if absf(float(y)/bake-crossing_y)<55.0:
+                    crossing_x=FieldGeometry.river_x(crossing_y)
+                    break
         var grid_y: float=float(y)/float(relief_stride)
         var iy: int=floori(grid_y)
         var ty: float=grid_y-float(iy)
@@ -99,27 +95,22 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             var p := Vector2(x,y)/bake
             var v: float = noise.get_noise_2d(p.x,p.y)*0.5+0.5
             var g: float = grain.get_noise_2d(p.x,p.y)
-            var ground: Color = dark.lerp(middle,smoothstep(0.1,0.48,v)).lerp(light,smoothstep(0.50,0.90,v))
+            var ground: Color=(fields.get_pixel(x,y)*grade).lerp(wash,0.15)
             var uv:=Vector2i(_mirror_sample(roundi(p.x*0.68+v*20.0),112),_mirror_sample(roundi(p.y*0.68+v*14.0),112))
-            var painted:Color=grass_art.get_pixelv(uv)
-            ground=ground.lerp(painted,0.28)
-            # Broad, irregular dry meadows break up the repeated ground texture.
-            var dry_patch: float=smoothstep(0.56,0.82,v+g*0.09)
-            ground=ground.lerp(path.darkened(0.16),dry_patch*0.38)
-            ground=ground.darkened(maxf(0.0,0.47-v)*0.38).lightened(maxf(0.0,v-0.53)*0.17)
             var micro: float = grain.get_noise_2d(p.x*2.1+49.0,p.y*2.1-33.0)
-            ground = ground.lightened(maxf(0.0,g)*0.13+maxf(0.0,micro)*0.12).darkened(maxf(0.0,-g)*0.12+maxf(0.0,-micro)*0.09)
             var grid_x: float=float(x)/float(relief_stride)
             var ix: int=floori(grid_x)
             var relief_light: float=lerpf(shade_row[ix],shade_row[ix+1],grid_x-float(ix))
-            ground=ground.lightened(maxf(0.0,relief_light)*0.30).darkened(maxf(0.0,-relief_light)*0.55)
+            ground=ground.lightened(maxf(0.0,relief_light)*0.12).darkened(maxf(0.0,-relief_light)*0.19)
             # Road centers match the simulation; edges are worn, not tiled.
             var d: float = INF
             for lane in range(3):
                 d = minf(d,absf(p.y-roads[lane][x]))
-            var wear: float = 1.0-smoothstep(6.0,22.0 if scale > 1.0 else 15.0,d+g*5.0)
+            var apron: float=1.0-smoothstep(50.0,142.0,absf(p.x-crossing_x)) if d<50 and is_finite(crossing_x) else 0.0
+            var road_edge: float=22.0 if scale>1.0 else 15.0
+            var wear: float=1.0-smoothstep(6.0+25.0*apron,road_edge+18.0*apron,d+g*5.0)
             if wear>0.0:
-                var dirt:Color=path.lerp(dirt_art.get_pixelv(uv),0.80)
+                var dirt:Color=path.lerp(dirt_art.get_pixelv(uv),0.40)
                 ground = ground.lerp(dirt.lightened(g*0.09),wear*0.98)
             if d > 25.0 and micro > 0.32:
                 ground = ground.lerp(Color("#9aa96a"),(micro-0.32)*0.34)
@@ -127,7 +118,7 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                 ground=ground.lerp(Color("#62543a"),(-g-0.25)*0.19)
             if d < 12.0:
                 var rut: float = 1.0-smoothstep(0.8,3.0,absf(d-7.0+g*1.5))
-                ground = ground.darkened(rut*0.32)
+                ground = ground.darkened(rut*0.20)
                 ground = ground.lightened((1.0-smoothstep(0.6,2.0,absf(d-10.0)))*0.13)
             elif d < 16.0:
                 ground = ground.lightened(maxf(0.0,micro)*0.08)
@@ -154,24 +145,19 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             if scale > 1.0:
                 var rx: float = rivers[y]
                 var bank: float = absf(p.x-rx)
-                var bridge: bool = absf(p.y-390.0)<=38.0 or absf(p.y-850.0)<=38.0 or absf(p.y-1300.0)<=38.0
                 if bank < 49.0:
-                    var silt: Color = Color("#5f614c").lerp(Color("#b7ad84"),clampf(0.48+g*0.6+micro*0.3,0.0,1.0))
-                    ground = ground.lerp(silt,(1.0-smoothstep(28.0,49.0,bank))*0.90)
-                    if bank>28.0 and bank<38.0:
-                        ground=ground.darkened((1.0-smoothstep(0.0,5.0,absf(bank-32.0)))*0.22)
+                    var silt: Color=Color("#726c4e").lerp(Color("#b8af87"),clampf(0.40+g*0.8+micro*0.34,0.0,1.0))
+                    ground=ground.lerp(silt,(1.0-smoothstep(26.0,47.0,bank+g*4.0))*0.84*(1.0-wear))
                 if bank < 27.0:
-                    var depth: float = 1.0-smoothstep(5.0,26.0,bank)
-                    var water: Color = Color("#4a7778").lerp(Color("#244e5d"),depth).lerp(Color("#9bb2a2"),smoothstep(0.40,0.85,v)*0.30)
-                    var ripple: float = sin(p.y*0.22+p.x*0.09+g*1.9)
-                    water = water.lightened(maxf(0.0,ripple)*0.10+maxf(0.0,micro)*0.04)
-                    water = water.darkened(maxf(0.0,-ripple)*0.09)
-                    water = water.lerp(Color("#d3d6ae"),(1.0-smoothstep(0.0,3.0,absf(bank-25.0)))*maxf(0.0,g+0.25)*0.34)
-                    ground = ground.lerp(water,1.0-smoothstep(24.0,27.0,bank))
-                    if bridge:
-                        var board: Color = Color("#95795a").lightened(g*0.1)
-                        if fmod(p.x,7.0)<1.4: board = board.darkened(0.24)
-                        ground = board
+                    # The deeper channel shifts to the outside of the bend.
+                    var outside_bend: float=signf(p.x-rx)*sin(p.y/120.0+0.6)
+                    var shelf: float=clampf(12.0-outside_bend*7.0+(v-0.5)*17.0,4.0,23.0)
+                    var depth: float=smoothstep(-1.0,shelf+7.0,27.0-bank+g*2.4)
+                    var shoal: Color=Color("#87957a").lerp(dirt_art.get_pixelv(uv),0.23)
+                    var water: Color=shoal.lerp(Color("#65978c"),smoothstep(0.0,0.50,depth)).lerp(Color("#396669"),smoothstep(0.23,1.0,depth))
+                    var ripple: float=sin(p.y*0.24+p.x*0.09+v*5.0)
+                    water=water.lightened(maxf(0.0,ripple)*0.035+maxf(0.0,micro)*(0.025+0.23*(1.0-depth))+(v-0.4)*0.09)
+                    ground=ground.lerp(water,1.0-smoothstep(24.0,27.0,bank))
             var edge_v: float = minf(minf(float(x)/bake,extent.x-float(x)/bake),minf(float(y)/bake,extent.y-float(y)/bake))
             ground = ground.darkened((1.0-smoothstep(0.0,55.0,edge_v))*0.23)
             image.set_pixel(x,y,ground)
@@ -198,19 +184,24 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                 image.set_pixel(xx,yy,leaf.darkened(float(j)*0.045))
             image.set_pixel(pixel.x,pixel.y,base.darkened(0.25))
     var tree_images: Array[Image] = []
-    var atlas: Image=FIELDCRAFT.get_image()
-    if atlas.is_compressed(): atlas.decompress()
-    if atlas.get_format()!=Image.FORMAT_RGBA8: atlas.convert(Image.FORMAT_RGBA8)
-    for i in range(5):
-        var tree: Image=_painted_tree(forest_art,i)
-        var size: int=roundi((45.0+float(i)*5.0)*bake)
-        tree.resize(size,size,Image.INTERPOLATE_LANCZOS)
-        if i%2==1: tree.flip_x()
-        tree_images.append(tree)
+    var canopy: Image=VALLEY_TREES.get_image()
+    if canopy.is_compressed(): canopy.decompress()
+    if canopy.get_format()!=Image.FORMAT_RGBA8: canopy.convert(Image.FORMAT_RGBA8)
+    for i in range(TREE_SIZES.size()):
+        tree_images.append(canopy.get_region(Rect2i(i*TREE_CELL,0,TREE_CELL,TREE_CELL)))
     # Rock ridges belong inside the simulated hill only; leave actual roads open.
     if scale>1.0:
-        var rock: Image=atlas.get_region(Rect2i(512,256,256,256))
-        rock.resize(roundi(100*bake),roundi(100*bake),Image.INTERPOLATE_LANCZOS)
+        var scenery: Image=VALLEY_DETAILS.get_image()
+        if scenery.is_compressed(): scenery.decompress()
+        if scenery.get_format()!=Image.FORMAT_RGBA8: scenery.convert(Image.FORMAT_RGBA8)
+        var ridge: Image=scenery.get_region(Rect2i(0,0,256,256))
+        var outcrops: Array[Image]=[]
+        for width in [73,89,107,122]:
+            var patch: Image=ridge.duplicate()
+            var size: int=roundi(width*bake)
+            patch.resize(size,size,Image.INTERPOLATE_LANCZOS)
+            if width%2==0: patch.flip_x()
+            outcrops.append(patch)
         for i in range(16):
             var center:Vector2=hill.position+Vector2(rng.randf_range(18,hill.size.x-18),rng.randf_range(18,hill.size.y-18))
             var road_distance:float=INF
@@ -218,18 +209,15 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
                 var cy:float=FieldGeometry.road_y(center.x,lane,scale,scenario)
                 road_distance=minf(road_distance,absf(center.y-cy))
             if road_distance<55.0 or absf(center.x-(1120.0+sin(center.y/225.0)*100.0+sin(center.y/89.0)*34.0))<90.0: continue
+            var rock: Image=outcrops[i%outcrops.size()]
             image.blend_rect(rock,Rect2i(0,0,rock.get_width(),rock.get_height()),Vector2i(center*bake)-Vector2i(rock.get_width()/2,rock.get_height()/2))
-    # Bake vegetation and rock detail once. Keep actual road and river collision areas free.
-    if scale>1.0:
-        var scenery: Image=SCENERY_ART.get_image()
-        if scenery.is_compressed(): scenery.decompress()
-        if scenery.get_format()!=Image.FORMAT_RGBA8: scenery.convert(Image.FORMAT_RGBA8)
+        # Bake scattered brush and talus into the same terrain cache.
         var details: Array[Image]=[]
         for kind in range(3):
-            var tile: Image=scenery.get_region(Rect2i(kind*256,256,256,256))
+            var tile: Image=scenery.get_region(Rect2i(kind*256,0,256,256))
             for variant in range(3):
                 var patch: Image=tile.duplicate()
-                var size: int=roundi((26.0+variant*13.0+(14.0 if kind==0 else 0.0))*bake)
+                var size: int=roundi((19.0+variant*10.0+(12.0 if kind==0 else 0.0))*bake)
                 patch.resize(size,size,Image.INTERPOLATE_LANCZOS)
                 if variant==1: patch.flip_x()
                 details.append(patch)
@@ -264,7 +252,10 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             for lane in range(3):
                 var cy:float=FieldGeometry.road_y(pos.x,lane,scale,scenario)
                 if absf(pos.y-cy)<34.0: on_road=true
-            if not on_road: trees.append({"pos":pos,"tile":rng.randi_range(0,4)})
+            if not on_road:
+                var tile: int=rng.randi_range(0,TREE_SIZES.size()-1)
+                var spread: float=0.86+0.016*posmod(floori(pos.x+pos.y*3.0),17)
+                trees.append({"pos":pos,"tile":tile,"size":roundi(TREE_SIZES[tile]*spread)})
     trees.sort_custom(func(a: Dictionary,b: Dictionary) -> bool: return (a["pos"] as Vector2).y < (b["pos"] as Vector2).y)
     # Keep a distinct tree layer when requested. The original fully baked path
     # remains available to existing callers (e.g. static terrain tests).
@@ -276,10 +267,16 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
         layers["trees"]=trees
         layers["textures"]=textures
     else:
+        var variants := {}
         for t in trees:
-            var tree: Image=tree_images[int(t["tile"])]
-            var center: Vector2=t["pos"]
-            image.blend_rect(tree,Rect2i(0,0,tree.get_width(),tree.get_height()),Vector2i(center*bake)-Vector2i(tree.get_width()/2,int(tree.get_height()*0.70)))
+            var key := Vector2i(int(t["tile"]),int(t["size"]))
+            if not variants.has(key):
+                var scaled: Image=tree_images[key.x].duplicate()
+                scaled.resize(key.y,key.y,Image.INTERPOLATE_LANCZOS)
+                variants[key]=scaled
+            var tree: Image=variants[key]
+            var origin: Vector2=Vector2(t["pos"])*bake-Vector2(tree.get_size())*TREE_FOOT
+            image.blend_rect(tree,Rect2i(Vector2i.ZERO,tree.get_size()),Vector2i(origin))
     # Riverbanks retain exact simulation boundary; gravel and reeds lie outside it.
     if scale>1.0:
         for i in range(4600):
@@ -296,6 +293,15 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             if i%4==0:
                 image.set_pixel(px,py-1,stone.lightened(0.15))
                 image.set_pixel(px+1,py-2,Color("#778a55"))
+        # The minimap and static terrain callers both sample this image.
+        var deck: Image=TIMBER_CROSSING.get_image()
+        if deck.is_compressed(): deck.decompress()
+        if deck.get_format()!=Image.FORMAT_RGBA8: deck.convert(Image.FORMAT_RGBA8)
+        deck.resize(CROSSING_SIZE.x,CROSSING_SIZE.y,Image.INTERPOLATE_LANCZOS)
+        for crossing_y in crossings:
+            var center:=Vector2(FieldGeometry.river_x(crossing_y),crossing_y)
+            var origin:=Vector2i((center-Vector2(CROSSING_SIZE)*0.5)*bake)
+            image.blend_rect(deck,Rect2i(Vector2i.ZERO,deck.get_size()),origin)
     image.generate_mipmaps()
     return ImageTexture.create_from_image(image)
 
@@ -391,53 +397,3 @@ static func dust_cloud() -> ImageTexture:
 static func _mirror_sample(value:int,size:int)->int:
     var i:int=posmod(value,size*2)
     return i if i<size else size*2-1-i
-
-# Irregular silhouettes and leaf material instead of smooth spheres.
-# Multi-lobed natural crown with visible trunk, overlapping foliage and cast shadow.
-static func _painted_tree(leaf:Image,index:int)->Image:
-    var image:=Image.create_empty(64,64,false,Image.FORMAT_RGBA8)
-    var noise:=FastNoiseLite.new()
-    noise.seed=832+index*29
-    noise.frequency=0.17
-    var rng:=RandomNumberGenerator.new()
-    rng.seed=3021+index*221
-    var crowns: Array[Vector2]=[]
-    var radii: Array[float]=[]
-    for j in range(13):
-        var angle: float=float(j)*TAU/13.0
-        var radius: float=rng.randf_range(6.0,16.0)
-        crowns.append(Vector2(28,25)+Vector2.from_angle(angle)*radius*Vector2(1.0,0.78))
-        radii.append(rng.randf_range(7.0,13.0))
-    crowns.append(Vector2(26,21))
-    radii.append(14.0)
-    var deep: Color=Color("#203a2c")
-    var top: Color=Color("#a0ad6b") if index%2==0 else Color("#9a9b58")
-    for y in range(64):
-        for x in range(64):
-            var p:=Vector2(x,y)
-            var shade:float=1.0-smoothstep(0.48,1.0,((p-Vector2(39,45))/Vector2(24,12)).length())
-            var c:=Color(0.055,0.075,0.035,shade*0.48)
-            var trunk: float=1.0-smoothstep(1.0,3.0,absf(float(x)-29.0-(float(y)-32.0)*0.06))
-            if y>=29 and y<=51 and trunk>0.0:
-                var bark: Color=Color("#5b4a34").lerp(Color("#a48c64"),clampf((29.0-float(x))*0.24+0.4,0.0,1.0))
-                bark.a=trunk
-                c=c.blend(bark)
-            var n:float=noise.get_noise_2d(x,y)
-            var coverage:float=0.0
-            var value:float=0.0
-            for j in range(crowns.size()):
-                var q:Vector2=(p-crowns[j])/Vector2(1.0,0.86)
-                var d:float=q.length()/radii[j]+n*0.14
-                var alpha:float=1.0-smoothstep(0.82,1.0,d)
-                if alpha>0.0:
-                    var light:float=clampf(0.54-q.x/radii[j]*0.25-q.y/radii[j]*0.32-d*0.14+n*0.15,0.0,1.0)
-                    value=lerpf(value,light,alpha)
-                    coverage=maxf(coverage,alpha)
-            if coverage>0.0:
-                var material:Color=leaf.get_pixel(_mirror_sample(x*2+index*13,112),_mirror_sample(y*2+index*17,112))
-                var foliage:Color=deep.lerp(top,clampf(value+n*0.20,0.0,1.0)).lerp(material,0.20)
-                foliage=foliage.lightened(maxf(0.0,n)*0.20)
-                foliage.a=coverage
-                c=c.blend(foliage)
-            image.set_pixel(x,y,c)
-    return image
