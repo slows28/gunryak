@@ -910,9 +910,28 @@ func _capture_field_report() -> bool:
     game.call("_refresh_hud")
     var report: Dictionary=game.call("_prioritized_situations")[0]
     var reporter_index: int=game.sim.command_ids(0).find(int(report["unit_id"]))
-    if reporter_index<0 or not game.general_cards[reporter_index].report_mark.visible or not game.dispatch_headline.visible or not game.dispatch_headline.text.contains(report["title"]):
+    if reporter_index<0 or not game.general_cards[reporter_index].report_link.visible or not game.dispatch_headline.visible or not game.dispatch_headline.text.contains(report["title"]):
         push_error("VISUAL_CAPTURE_FAIL: current field dispatch is missing from the battlefield")
         return false
+    # A second delivered report exercises per-commander selection even while another
+    # commander has the highest priority. Remove the fixture before resuming the operation.
+    var other: Dictionary=report.duplicate(true)
+    other["id"]=int(report["id"])+100000
+    other["unit_id"]=game.sim.command_ids(0)[(reporter_index+1)%game.general_cards.size()]
+    other["pos"]=game.sim.find_unit(other["unit_id"])["pos"]
+    other["kind"]="지휘 건의"
+    game.sim.situation_reports.append(other)
+    game.call("_refresh_hud")
+    var other_card=game.general_cards[(reporter_index+1)%game.general_cards.size()]
+    other_card.report_link.pressed.emit()
+    await process_frame
+    if game.situation_selected!=other["id"] or game.selected_id!=other["unit_id"] or not game.sim.paused:
+        push_error("VISUAL_CAPTURE_FAIL: portrait link opened another commander's report")
+        return false
+    game.situation_dialog.get_ok_button().pressed.emit()
+    await process_frame
+    game.sim.situation_reports.erase(other)
+    game.call("_refresh_hud")
     game.dispatch_headline.pressed.emit()
     await process_frame
     await RenderingServer.frame_post_draw

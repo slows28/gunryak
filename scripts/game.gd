@@ -397,6 +397,7 @@ func _build_interface() -> void:
         card.position=Vector2(16+i*209,700)
         card.size=Vector2(201,94)
         card.pressed.connect(_select_general_card.bind(i))
+        card.report_requested.connect(_open_situations)
         add_child(card)
         general_cards.append(card)
     _build_sector_board()
@@ -1205,7 +1206,8 @@ func _refresh_general_cards(reports: Array[Dictionary]) -> void:
     var reporting: Dictionary={}
     for report in reports:
         var sender: Dictionary=sim.find_unit(int(report["unit_id"]))
-        reporting[sender.get("parent_id",report["unit_id"])]=true
+        var leader: int=sender.get("parent_id",report["unit_id"])
+        if not reporting.has(leader): reporting[leader]=report["id"]
     var courier_orders: Dictionary={}
     if not sim.finished:
         for letter in sim.couriers:
@@ -1238,8 +1240,10 @@ func _refresh_general_cards(reports: Array[Dictionary]) -> void:
             card.portrait_name=officer
         var troops: String=_number_text(roundi(sim.corps_report(ids[i])["troops"]))+"명"
         card.present(officer,troops,_field_action(u),mood,_mood_color(mood),kind,detail,ids[i]==selected_id and not observing_enemy)
-        card.report_mark.visible=reporting.has(ids[i])
-        card.accessibility_description="도착한 야전 보고 있음" if card.report_mark.visible else ""
+        card.report_id=reporting.get(ids[i],-1)
+        card.report_link.visible=card.report_id>=0
+        card.report_link.accessibility_name=officer+" 야전 보고 열기"
+        card.accessibility_description="도착한 야전 보고 있음" if card.report_link.visible else ""
         card.tooltip_text="%s  ·  단축키 %d\n기분: %s\n판단: %s\n관측: %s\n우려: %s\n최근 명령: %s" % [officer,i+1,mood,reason,mind.get("observed",""),mind.get("concern",""),mind.get("last_order","")]
         if not suggestion.is_empty(): card.tooltip_text+="\n건의: "+suggestion
 
@@ -3436,7 +3440,7 @@ func _prioritized_situations() -> Array[Dictionary]:
         return left<right if left!=right else int(a["id"])<int(b["id"]))
     return pending
 
-func _open_situations() -> void:
+func _open_situations(preferred_report: int=-1) -> void:
     if not sim.started or sim.finished or situation_dialog.visible: return
     if highlight_active: _stop_highlight("야전 보고 확인",false)
     situation_pause_before=sim.paused
@@ -3445,7 +3449,7 @@ func _open_situations() -> void:
     situation_selected=-1
     situation_pin=Vector2.INF
     situation_dialog.size=Vector2i(338,488)
-    _refresh_situations()
+    _refresh_situations(preferred_report)
     var extent:=Vector2i(get_viewport_rect().size)
     situation_dialog.popup_on_parent(Rect2i(extent.x-350,150,338,488))
 
@@ -3455,7 +3459,7 @@ func _close_situations() -> void:
     _refresh_hud()
     map_layer.queue_redraw()
 
-func _refresh_situations() -> void:
+func _refresh_situations(preferred_report: int=-1) -> void:
     situation_list.clear()
     situation_ids.clear()
     var rows: Array[Dictionary]=_prioritized_situations()
@@ -3472,7 +3476,7 @@ func _refresh_situations() -> void:
         situation_record.text=""
         for btn in situation_options: btn.hide()
         return
-    var index: int=maxi(0,situation_ids.find(situation_selected))
+    var index: int=maxi(0,situation_ids.find(preferred_report if preferred_report>=0 else situation_selected))
     situation_list.select(index)
     situation_list.ensure_current_is_visible()
     _select_situation(index)

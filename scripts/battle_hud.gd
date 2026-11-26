@@ -27,7 +27,9 @@ class ReadoutButton extends Button:
 
 class CorpsCard extends ReadoutButton:
     var portrait: TextureRect
-    var report_mark: Label
+    signal report_requested(report_id: int)
+    var report_link: Button
+    var report_id: int = -1
     var commander: Label
     var strength: Label
     var action: Label
@@ -48,12 +50,25 @@ class CorpsCard extends ReadoutButton:
         portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
         portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
         add_child(portrait)
-        report_mark = line(Rect2(9,45,48,16),11,Color.WHITE,HORIZONTAL_ALIGNMENT_CENTER)
-        report_mark.text = "보고"
+        report_link = Button.new()
+        report_link.position = Vector2(8,8)
+        report_link.size = Vector2(50,53)
+        report_link.flat = true
+        report_link.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+        report_link.tooltip_text = "이 장수의 야전 보고 열기"
+        var clear := StyleBoxEmpty.new()
+        for state in [&"normal",&"hover",&"pressed"]:
+            report_link.add_theme_stylebox_override(state,clear)
+        add_child(report_link)
+        report_link.pressed.connect(func(): report_requested.emit(report_id))
+        var report_mark := line(Rect2(0,0,48,17),11,Color.WHITE,HORIZONTAL_ALIGNMENT_CENTER)
+        report_mark.reparent(report_link,false)
+        report_mark.position = Vector2(1,36)
+        report_mark.text = "보고 ›"
         var stamp := StyleBoxFlat.new()
         stamp.bg_color = Color("#8d3d2e")
         report_mark.add_theme_stylebox_override("normal",stamp)
-        report_mark.hide()
+        report_link.hide()
         commander = line(Rect2(66,4,57,26),19,Color.WHITE)
         strength = line(Rect2(123,6,70,22),14,Color.WHITE,HORIZONTAL_ALIGNMENT_RIGHT)
         action = line(Rect2(66,31,73,25),15,Color.WHITE)
