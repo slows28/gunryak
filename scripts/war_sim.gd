@@ -46,6 +46,9 @@ var units: Array[Dictionary] = []
 var supply_crews: Array[Dictionary] = []
 var bases: Array[Dictionary] = []
 var headquarters: Array[Dictionary] = []
+var temporary_sites: Array[Dictionary] = []
+const HQ_MOVE_INTERVAL := 5
+var next_hq_day := HQ_MOVE_INTERVAL
 var commanders: Array[Dictionary] = []
 var couriers: Array[Dictionary] = []
 var events: Array[String] = []
@@ -137,6 +140,8 @@ func reset() -> void:
     field_notices.clear()
     notice_sequence=0
     outposts.clear()
+    temporary_sites.clear()
+    next_hq_day = HQ_MOVE_INTERVAL
     scouts.clear()
     intelligence = [{}, {}]
     reserve_next = [18.0, 18.0]
@@ -195,8 +200,6 @@ func reset() -> void:
     outposts.append({"name":"남측 접근로", "pos":Vector2(470, 423), "owner":-1, "challenger":-1, "progress":0.0, "hold":0.0})
     bases.append(_base(0, Vector2(116, 310)))
     bases.append(_base(1, Vector2(781, 310)))
-    commanders.append({"side":0, "pos":Vector2(54, 515), "goal":Vector2(54, 515)})
-    commanders.append({"side":1, "pos":Vector2(846, 515), "goal":Vector2(846, 515)})
     scouts.append({"side":0, "pos":Vector2(145, 230), "goal":Vector2(375, 120), "leg":0, "alive":true, "report_timer":0.0, "reports":0})
     scouts.append({"side":1, "pos":Vector2(755, 340), "goal":Vector2(525, 440), "leg":0, "alive":true, "report_timer":0.0, "reports":0})
     _configure_scenario()
@@ -205,10 +208,15 @@ func reset() -> void:
     supply_crews.clear()
     headquarters.clear()
     for side in range(2):
-        headquarters.append({"side":side,"pos":_home_point(side),"occupation":0.0,"occupied":false})
+        var home := layout_point(Vector2(65,285) if side == 0 else Vector2(835,285))
+        headquarters.append({"side":side,"pos":home,"occupation":0.0,"occupied":false})
+        commanders.append({"side":side,"pos":home,"goal":home})
         var origin: Vector2=bases[side]["pos"]
         supply_crews.append({"side":side,"pos":origin,"goal":origin,"state":"대기","strength":100.0,
             "id":-2-side,"type":"보병","bridge_y":-1.0,"bridge_bank":0,"bridge_crossings":0,"blocked_water_steps":0})
+    for unit in units:
+        if unit["mission"] == "본진 방어" and unit["defense_set"]:
+            unit["hq_defense_offset"] = Vector2(unit["defense_anchor"]) - _home_point(unit["side"])
     _log("출전 편성 준비: " + scenario_title)
 
 func _add_unit(side: int, title: String, unit_type: String, disposition: String, ability: float, start: Vector2, mission: String, people: float) -> void:
@@ -327,12 +335,6 @@ func request_order(unit_id: int, mission: String, policy: String, partner: int =
     _log("전령 파견 → %s / %s" % [str(unit["name"]), mission])
     return true
 
-func reposition_commander(forward: bool) -> void:
-    if finished or commander_captured(0):
-        return
-    commanders[0]["goal"] = layout_point(Vector2(270,346)) if forward else commanders[0].get("home",layout_point(Vector2(54,515)))
-    _log("책사 이동: %s" % ("전진 지휘" if forward else "책사 배치점 복귀"))
-
 func step(dt: float) -> void:
     if not started or finished or paused:
         return
@@ -346,7 +348,6 @@ func step(dt: float) -> void:
         turn = current_turn
         _on_new_turn()
     _update_command_recovery()
-    _move_commanders(dt)
     _update_scouts(dt)
     _deliver_intel()
     _update_reserves()
@@ -407,13 +408,6 @@ func _on_new_turn() -> void:
         _log("전령 명령 활성화 — 전달 시간은 책사 위치에서 계산")
     if tactical_enabled and turn >= COURIER_TURN and not commander_captured(0):
         command_points = mini(4,command_points+1)
-
-func _move_commanders(dt: float) -> void:
-    for c in commanders:
-        if commander_captured(c["side"]): continue
-        var p: Vector2 = c["pos"]
-        var target: Vector2 = c["goal"]
-        c["pos"] = p.move_toward(target, 43.0 * dt)
 
 func _update_couriers(dt: float) -> void:
     for i in range(couriers.size() - 1, -1, -1):
@@ -1171,7 +1165,7 @@ func _mission_point(side: int, mission: String) -> Vector2:
     match mission:
         "북측 확보": return layout_point(Vector2(x,145.0))
         "남측 우회": return layout_point(Vector2(x,432.0))
-        "본진 방어": return layout_point(Vector2(125.0,285.0) if side == 0 else Vector2(775.0,285.0))
+        "본진 방어": return _field_point(_home_point(side) + layout_point(Vector2(60 if side == 0 else -60,0)))
         _: return layout_point(Vector2(x,287.0))
 
 func _formation_transition(unit: Dictionary, dt: float) -> void:
@@ -2051,7 +2045,7 @@ func _check_command_capture() -> void:
             u["ai_cooldown"]=0.0
             if u["troops"]>0 and not u["routed"]: _decide(u)
 
-# A headquarters is fixed for the whole operation, including after the strategist moves.
+# Occupation is measured at the current headquarters.
 func _update_headquarters(dt: float) -> void:
     for home in headquarters:
         if home["occupied"]: continue
@@ -2365,7 +2359,7 @@ func _apply_policy(unit: Dictionary, policy: String) -> void:
     unit["obedience"] = policy if policy in ["명령 엄수", "재량 위임"] else "성향 기반"
 
 func _home_point(side: int) -> Vector2:
-    return layout_point(Vector2(65,285) if side == 0 else Vector2(835,285))
+    return headquarters[side]["pos"]
 
 func _enforce_orders(unit: Dictionary, action: String, reason: String, goal: Vector2, enemy_distance: float) -> Dictionary:
     var result_order: Dictionary = {"action":action, "reason":reason, "goal":goal}
@@ -2554,7 +2548,8 @@ func _update_reserves() -> void:
         reinforcements_used[side] += 1
         reserve_next[side] = battle_time + 22.0
         var home: Vector2 = _home_point(side)
-        home.y += float(reinforcements_used[side] - 1) * 52.0
+        var entrance:=_field_point(home + Vector2(0,float(reinforcements_used[side] - 1) * 52.0))
+        if _buildable_ground(entrance): home=entrance
         var mission: String = str(assigned.get("mission", "중앙 진격"))
         _add_unit(side, ("왕실 예비대 %d" if side == 0 else "위군 예비대 %d") % reinforcements_used[side], "보병", "균형", 63.0, home, mission, 3000.0 if six_armies else 72.0)
         units.back()["reserve"] = true
@@ -2738,26 +2733,60 @@ func swap_generals(first_id: int, second_id: int) -> bool:
         second[key] = temporary
     return true
 
-# Posts use the friendly half of the field. Corps deployment has its own, narrower area.
+# Temporary flags are planning references. Only scenario outposts score objectives.
+func planning_sites() -> Array[Dictionary]:
+    return outposts + temporary_sites
+
+func headquarters_move_issue() -> String:
+    if finished: return "작전이 종료되었습니다."
+    if commander_captured(0): return "책사 생포 중에는 본진을 이전할 수 없습니다."
+    if not started: return ""
+    if turn < next_hq_day: return "%d일차부터 본진을 이전할 수 있습니다." % next_hq_day
+    if headquarters[0]["occupation"] > 0 or _nearby_corps(1,_home_point(0),RAID_RADIUS) > 0:
+        return "본진 피습 중에는 이전할 수 없습니다."
+    return ""
+
 func post_placement_issue(post: String, point: Vector2) -> String:
-    if started or finished: return "개전 전에만 배치할 수 있습니다."
-    if post not in ["보급기지","책사"]: return "배치할 대상을 선택하세요."
-    if not point.is_finite() or _field_point(point)!=point or point.x>field_size.x*0.5:
+    if finished: return "작전이 종료되었습니다."
+    if post not in ["보급기지","본진","책사","임시 거점"]: return "설치할 대상을 선택하세요."
+    var hq := post in ["본진","책사"]
+    if hq:
+        var unavailable := headquarters_move_issue()
+        if not unavailable.is_empty(): return unavailable
+    elif started and post == "보급기지": return "개전 전에만 첫 기지를 배치할 수 있습니다."
+    elif started and commander_captured(0): return "책사 생포 중에는 거점을 세울 수 없습니다."
+    if not point.is_finite() or _field_point(point) != point: return "전장 안의 땅을 선택하세요."
+    if not started and post != "임시 거점" and point.x > field_size.x*0.5:
         return "지도 서쪽의 아군 배치 구역을 선택하세요."
-    var terrain:=terrain_at(point)
-    if terrain=="하천": return "강물 위에는 배치할 수 없습니다."
-    if post=="보급기지" and terrain in ["교량","습지"]: return "기지는 다리와 습지를 벗어난 땅에 구축하세요."
-    for structure in structures:
-        if structure["hp"]>0 and (structure["rect"] as Rect2).has_point(point):
-            return "구조물을 벗어난 위치를 선택하세요."
+    if not _buildable_ground(point): return "하천·다리·습지·구조물을 벗어난 땅을 선택하세요."
+    if post == "임시 거점":
+        for site in planning_sites():
+            if point.distance_to(site["pos"]) < 26.0: return "이미 작전 거점이 있습니다."
+    if hq:
+        if point.distance_to(_home_point(0)) < 1.0: return "현재 본진 위치입니다."
+        if started:
+            if _nearby_corps(1,point,GUARD_RADIUS)>0 or point.distance_to(_home_point(1))<=GUARD_RADIUS:
+                return "적이 점거한 위치입니다."
+            if point.x > field_size.x*0.5 and _nearby_corps(0,point,GUARD_RADIUS)==0 and not _has_supply(0,point):
+                return "동쪽에서는 아군 군단이나 보급권 안에 본진을 세우세요."
     return ""
 
 func place_post(post: String, point: Vector2) -> bool:
     if not post_placement_issue(post,point).is_empty(): return false
-    if post=="책사":
-        commanders[0]["pos"]=point
-        commanders[0]["goal"]=point
-        commanders[0]["home"]=point
+    if post == "임시 거점":
+        temporary_sites.append({"name":"임시 거점 %d" % (temporary_sites.size()+1),"pos":point})
+    elif post in ["본진","책사"]:
+        headquarters[0]["pos"] = point
+        commanders[0]["pos"] = point
+        commanders[0]["goal"] = point
+        for unit in units:
+            if unit["side"] != 0 or unit["mission"] != "본진 방어": continue
+            if unit["defense_set"] and unit.has("hq_defense_offset"):
+                unit["defense_anchor"] = _field_point(point + Vector2(unit["hq_defense_offset"]))
+            unit["ai_cooldown"] = 0.0
+        if started:
+            next_hq_day = turn + HQ_MOVE_INTERVAL
+            _field_notice("본진·책사 이전 완료 · 다음 이전 %d일차" % next_hq_day,point)
     else:
         var base: Dictionary=bases[0]
         supply_crews[0]["pos"]=point
@@ -2798,6 +2827,7 @@ func set_defense_line(unit_id: int, position: Vector2) -> bool:
     var unit: Dictionary = find_unit(unit_id)
     if started or unit.is_empty() or int(unit["side"]) != 0:
         return false
+    unit.erase("hq_defense_offset")
     unit["defense_anchor"] = _field_point(position)
     unit["defense_set"] = true
     return true
@@ -3532,8 +3562,6 @@ func _expand_layout() -> void:
             unit[key] = layout_point(unit[key])
     for base in bases:
         base["pos"]=layout_point(base["pos"])
-    for commander in commanders:
-        for key in ["pos","goal"]: commander[key] = layout_point(commander[key])
     for scout in scouts:
         for key in ["pos","goal"]: scout[key] = layout_point(scout[key])
     for site in outposts:

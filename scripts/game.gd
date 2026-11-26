@@ -862,14 +862,6 @@ func _reset() -> void:
         if order_view.visible: order_view.hide()
         _open_order_map()
 
-func _commander_forward() -> void:
-    sim.reposition_commander(true)
-    _refresh_hud()
-
-func _commander_back() -> void:
-    sim.reposition_commander(false)
-    _refresh_hud()
-
 func _open_due_council() -> void:
     if not sim.started or sim.finished or councils_held >= 2: return
     var due := 5 if councils_held == 0 else 10
@@ -1033,7 +1025,7 @@ func _refresh_hud() -> void:
     _refresh_sector_board()
     if is_instance_valid(mind_dialog) and mind_dialog.visible: _refresh_mind_report()
     if not sim.started:
-        notice_label.text = "작전 지도에서 장수별 배치와 지시를 정할 수 있습니다."
+        notice_label.text = "지도에서 작전 거점을 고른 뒤 군단의 임무를 정하세요."
     elif sim.finished:
         notice_label.text = "작전실 → 전투 타임라인\n장수별 결산은 아래 전황 창\n[초기화]로 재실행"
     else:
@@ -1550,7 +1542,6 @@ func _map_select(mouse_pos: Vector2) -> void:
         var field_pos: Vector2 = _world_mouse(mouse_pos)
         var applied: bool = false
         match map_mode:
-            "배치": applied = sim.place_unit(selected_id, field_pos)
             "경유점": applied = sim.add_waypoint(selected_id, field_pos)
             "방어선": applied = sim.set_defense_line(selected_id, field_pos)
         runtime_notice = "작전 계획 반영: " + map_mode if applied else "설정 불가: 배치 범위·거리 또는 경유점 한도 확인"
@@ -1706,6 +1697,12 @@ func _draw_map(_canvas: Control) -> void:
             var progress: float = clampf(float(site["progress"]) / sim.capture_duration(), 0.0, 1.0)
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60, 4)), Color("#243138"))
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60.0 * progress, 4)), COL_BLUE if int(site["challenger"]) == 0 else COL_RED)
+    for site in sim.temporary_sites:
+        var p: Vector2 = site["pos"]
+        var scale_px := 1.0/camera_zoom
+        map_layer.draw_line(p,p - Vector2(0,15)*scale_px,COL_GOLD,2.0*scale_px)
+        map_layer.draw_colored_polygon(PackedVector2Array([p-Vector2(0,15)*scale_px,p+Vector2(10,-12)*scale_px,p-Vector2(0,8)*scale_px]),COL_GOLD)
+        if detailed_map: _map_plate(site["name"],p+Vector2(0,16)*scale_px,COL_GOLD,12)
     for base in sim.bases:
         if not bool(base["alive"]):
             continue
@@ -1733,6 +1730,7 @@ func _draw_map(_canvas: Control) -> void:
         if sim.commander_captured(commander["side"]): continue
         if fog_enabled and not sim.finished and int(commander["side"]) != 0 and not sim.player_can_see(commander["pos"]):
             continue
+        if commander["pos"]==sim.headquarters[commander["side"]]["pos"]: continue
         var p: Vector2 = _screen(commander["pos"])
         var accent: Color = COL_BLUE if int(commander["side"]) == 0 else COL_RED
         _paint_tile(41,Rect2(p-Vector2(15,20),Vector2(30,36)))
@@ -1884,6 +1882,8 @@ func _draw_map(_canvas: Control) -> void:
             map_layer.draw_arc(at,sim.RAID_RADIUS,0,TAU,48,Color(tint,0.60),2/camera_zoom,true)
             map_layer.draw_arc(at,sim.RAID_RADIUS,-PI/2,-PI/2+TAU*home["occupation"]/sim.HQ_CAPTURE_SECONDS,48,COL_GOLD,4/camera_zoom,true)
         var label: String="아군 본진" if own else "적 본진"
+        if own and not sim.commander_captured(0) and at==sim.commanders[0]["pos"]:
+            label += " · 책사 " + ("호위" if sim.commander_guard_count(0)>0 else "노출")
         for offset in [Vector2(0,-75),Vector2(60,-43),Vector2(-60,-43),Vector2(0,54)]:
             if _map_plate(label,at+offset/camera_zoom,tint,14).has_area(): break
     _draw_loss_markers()
@@ -3684,7 +3684,7 @@ func _build_demo_help() -> void:
     tutorial_dialog = AcceptDialog.new()
     tutorial_dialog.title = "군략 · 첫 출전 안내"
     tutorial_dialog.ok_button_text = "확인"
-    tutorial_dialog.dialog_text = "0. 기본 전체 시야: 아군/적군 탭에서 양 진영 활동과 병력을 확인합니다. C: 최근 교전 위치, V: 정찰 시야 전환.\n1. 전략 지도에서 인접 지역을 선택합니다. 군량 55가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 종이 작전 지도에서 부대 말·목적지·행동·연계 대상을 지정합니다.\n4. 기본 배속 전투는 약 25분. 장수는 자율적으로 판단하며 5일차와 10일차에 중간회의가 열립니다. 밤에는 시야가 줄고 본진과 기지에 불이 켜집니다. 좌측 전령 보고에서 건의에 허가·불허를 회신하세요.\n5. 숫자 1~6 장수 선택, Space 일시정지, 휠 확대, 방향키/가운데 마우스 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
+    tutorial_dialog.dialog_text = "0. 기본 전체 시야: 아군/적군 탭에서 양 진영 활동과 병력을 확인합니다. C: 최근 교전 위치, V: 정찰 시야 전환.\n1. 전략 지도에서 인접 지역을 선택합니다. 군량 55가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 작전 지도에서 거점과 담당 군단을 골라 행동을 지정합니다. 필요한 곳에 임시 거점을 세울 수 있습니다. 본진과 책사는 함께 이전합니다.\n4. 기본 배속 전투는 약 25분. 장수는 자율적으로 판단하며 5일차와 10일차에 중간회의가 열립니다. 밤에는 시야가 줄고 본진과 기지에 불이 켜집니다. 좌측 전령 보고에서 건의에 허가·불허를 회신하세요.\n5. 숫자 1~6 장수 선택, Space 일시정지, 휠 확대, 방향키/가운데 마우스 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
     add_child(tutorial_dialog)
     retreat_dialog = ConfirmationDialog.new()
     retreat_dialog.title = "전투 철수"

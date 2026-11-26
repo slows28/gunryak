@@ -239,6 +239,8 @@ func _initialize() -> void:
     # Commander capture requires physical proximity and no defending force.
     var capture = WarSim.new()
     var assault: Dictionary = capture.find_unit(0)
+    for guard in capture.units:
+        if guard["side"] == 1: guard["pos"] = Vector2(680,190)
     assault["pos"] = capture.commanders[1]["pos"]
     capture._check_victory()
     check(capture.commander_captured(1) and capture.command_confused(1) and not capture.finished, "enemy strategist captured after penetration and surviving army stays in battle")

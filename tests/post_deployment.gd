@@ -18,13 +18,13 @@ func _initialize() -> void:
     var home_pos: Vector2=sim.commanders[0]["pos"]
     check(sim.place_post("보급기지",depot) and sim.bases[0]["pos"]==depot,"select a fixed depot site")
     check(sim.commanders[0]["pos"]==home_pos and sim.bases[1]["pos"]==enemy_pos,"depot changes only the friendly base")
-    check(sim.place_post("책사",advisor) and sim.commanders[0]["pos"]==advisor and sim.commanders[0]["goal"]==advisor,"independent commander origin and goal")
+    check(sim.place_post("본진",advisor) and sim._home_point(0)==advisor and sim.commanders[0]["pos"]==advisor and sim.commanders[0]["goal"]==advisor,"headquarters and strategist share the chosen origin and goal")
     check(not sim.place_post("보급기지",Vector2(809,659)) and not sim.place_post("책사",sim.field_size-Vector2(50,50)) and not sim.place_post("책사",Vector2.INF),"wetland, enemy deployment and non-finite locations rejected")
     check(sim.bases[0]["pos"]==depot and sim.commanders[0]["pos"]==advisor,"invalid placements preserve prior positions")
     sim.start()
     var base: Dictionary=sim.bases[0]
     check(base["state"]=="설치" and not sim._has_supply(0,depot),"committed site builds at launch and withholds rations")
-    check(not sim.place_post("보급기지",Vector2(488,770)) and not sim.place_post("책사",depot),"no mid-battle placement")
+    check(not sim.place_post("보급기지",Vector2(488,770)) and not sim.place_post("본진",depot),"fixed depot and headquarters are locked on day one")
     sim.paused=true
     sim.step(0.1)
     check(base["build_timer"]==sim.BASE_BUILD_SECONDS,"construction follows the simulation clock")
@@ -34,13 +34,10 @@ func _initialize() -> void:
     sim.battle_time=95.0
     sim._supply_logic(0.1)
     check(base["pos"]==depot and base["state"]=="가동","manual depot stays where the player built it")
-    sim.reposition_commander(true)
-    sim._move_commanders(0.5)
-    sim.reposition_commander(false)
-    sim._move_commanders(1.0)
-    check(sim.commanders[0]["pos"]==advisor,"return to HQ uses selected origin")
+    check(sim._home_point(0)==advisor and sim.commanders[0]["pos"]==advisor,"strategist remains at relocated headquarters during the battle")
     sim.turn=6
-    check(sim.request_order(0,"공격","현장 판단") and sim.couriers.back()["pos"]==advisor,"real turn-six courier originates from the chosen advisor")
+    check(sim.request_order(0,"공격","현장 판단") and sim.couriers.back()["pos"]==advisor,"courier originates from relocated headquarters")
+    _check_sites_and_migration()
     for u in sim.units:
         if u["side"]==0: u["pos"]=depot+Vector2.RIGHT*(sim.supply_radius()+10.0)
     var first:=sim.find_unit(0)
@@ -64,6 +61,50 @@ func _initialize() -> void:
     check(sim.bases[0]["state"]=="가동" and not sim.commanders[0].has("home"),"new battle clears manually placed posts")
     if failures==0: print("GUNRYAK_POST_DEPLOYMENT_PASS")
     quit(1 if failures else 0)
+
+func _check_sites_and_migration() -> void:
+    var s:=WarSim.new()
+    s.set_long_operation(true)
+    s.set_scenario(WarSim.TRAINING_SCENARIO)
+    var first:=Vector2(508,742)
+    var second:=Vector2(690,1050)
+    var original: Vector2=s.headquarters[0]["pos"]
+    var unit:=s.find_unit(0)
+    var troop_pos: Vector2=unit["pos"]
+    var objectives:=s.outposts.size()
+    var supplied:=s._has_supply(0,second)
+    check(original==s.commanders[0]["pos"] and s._home_point(1)==s.commanders[1]["pos"],"both strategists begin in their respective headquarters")
+    check(s.place_post("임시 거점",second) and not s.place_post("임시 거점",second+Vector2.ONE),"temporary site can be placed once on a clear plot")
+    check(s.temporary_sites.size()==1 and s.planning_sites().size()==objectives+1 and s.outposts.size()==objectives and s.bases.size()==2 and s._has_supply(0,second)==supplied,"planning marker neither scores nor supplies")
+    check(s.place_post("본진",first) and s.place_post("본진",second) and s.next_hq_day==5 and unit["pos"]==troop_pos,"pregame moves are repeatable without moving troops or spending day five")
+    s.start()
+    for day in range(1,5):
+        s.turn=day
+        check(not s.place_post("본진",first) and s._home_point(0)==second,"headquarters stays locked on day %d" % day)
+    s.turn=5
+    check(not s.place_post("본진",Vector2.INF) and s.next_hq_day==5,"invalid move leaves entitlement intact")
+    check(s.place_post("본진",first) and s._home_point(0)==first and s.commanders[0]["pos"]==first and s.commanders[0]["goal"]==first and s.next_hq_day==10,"day-five relocation takes the entire command post to its new site")
+    check(not s.place_post("본진",second),"no second move on the same day")
+    s.turn=9
+    check(not s.place_post("본진",second),"four elapsed days cannot unlock migration")
+    s.turn=10
+    s.headquarters[0]["occupation"]=0.1
+    check(not s.place_post("본진",second) and s.next_hq_day==10,"a besieged headquarters cannot escape by relocation")
+    s.headquarters[0]["occupation"]=0.0
+    s.turn=12
+    check(s.place_post("본진",second) and s.next_hq_day==17,"unused move remains available and starts a fresh five-day interval")
+    var raider:=s.find_unit(3)
+    for corps in s.units:
+        if corps["side"]==0: corps["pos"]=Vector2(1000,250)
+    raider["pos"]=original
+    s._update_headquarters(s.HQ_CAPTURE_SECONDS)
+    check(not s.headquarters[0]["occupied"],"enemy at the previous capital cannot capture the new headquarters")
+    raider["pos"]=second
+    s._update_headquarters(s.HQ_CAPTURE_SECONDS)
+    s._check_victory()
+    check(s.finished and s.winning_side==1 and "본진 함락" in s.result,"occupation of the relocated command post decides the battle")
+    s.reset()
+    check(s.temporary_sites.is_empty() and s.next_hq_day==5 and s._home_point(0)==original,"new battle clears flags, position and migration clock")
 
 func _check_network() -> void:
     var s:=WarSim.new()
@@ -223,6 +264,7 @@ func _check_capture() -> void:
     s.set_long_operation(true)
     s.set_scenario(2)
     s.tactical_enabled=true
+    check(s.place_post("본진",Vector2(162,1545)),"establish the isolated command post for the capture exercise")
     s.start()
     s.battle_time=89.0
     s.turn=6
@@ -265,8 +307,12 @@ func _check_independent_victory() -> void:
     var attacker:=s.find_unit(3)
     for unit in s.units:
         if unit["id"] not in [0,3]: unit["troops"]=0.0
-    defender["pos"]=Vector2(164,495)
     attacker["pos"]=s.commanders[0]["pos"]
+    defender["pos"]=Vector2(attacker["pos"])+Vector2(79,0)
+    # The raider rides through the undefended post and continues toward the army.
+    attacker["goal"]=defender["pos"]
+    attacker["action"]="진군"
+    attacker["ai_cooldown"]=8.0
     attacker["troops"]=55.0
     s.start()
     for tick in range(1800):

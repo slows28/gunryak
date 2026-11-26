@@ -775,6 +775,10 @@ func _capture() -> void:
     if not await _capture_field_judgment():
         quit(1)
         return
+    if not await _capture_migration():
+        push_error("VISUAL_CAPTURE_FAIL: headquarters migration at the two councils")
+        quit(1)
+        return
     if not await _capture_deployment():
         push_error("VISUAL_CAPTURE_FAIL: supply crews or independent command")
         quit(1)
@@ -804,6 +808,34 @@ func _deployment_frame(filename: String) -> bool:
     await RenderingServer.frame_post_draw
     return _save_frame(filename)
 
+func _capture_migration() -> bool:
+    game.queue_free()
+    await process_frame
+    game=MAIN_SCENE.instantiate()
+    root.add_child(game)
+    game.set_process(false)
+    game._leave_title(0)
+    var sheet: Control=game.order_view
+    var sim=game.sim
+    var home: Vector2=sim.headquarters[0]["pos"]
+    var moves: Array[Vector2]=[home+Vector2(150,-65),home]
+    sheet.launch.pressed.emit()
+    for index in range(moves.size()):
+        var day:=5*(index+1)
+        while sim.turn<day and not sim.finished: sim.step(0.1)
+        game._open_due_council()
+        if not sheet.visible or not sim.paused or sheet.council_round!=index+1: return false
+        var move_button: Button=sheet.post_buttons["본진"]
+        if move_button.disabled: return false
+        move_button.pressed.emit()
+        _sheet_click(sheet,moves[index])
+        if not (sim.headquarters[0]["pos"] as Vector2).is_equal_approx(moves[index]) or sim.headquarters[0]["pos"]!=sim.commanders[0]["pos"]: return false
+        if not move_button.disabled or sim.next_hq_day!=day+5: return false
+        if not await _deployment_frame("hq_day_%d.png" % day): return false
+        sheet.launch.pressed.emit()
+        if sim.paused: return false
+    return true
+
 func _capture_deployment() -> bool:
     game.queue_free()
     await process_frame
@@ -814,11 +846,43 @@ func _capture_deployment() -> bool:
     var sheet: Control=game.order_view
     var depot:=Vector2(508,742)
     var advisor:=Vector2(690,1050)
+    var start_pos: Vector2=game.sim.find_unit(0)["pos"]
+    _sheet_click(sheet,start_pos)
+    var blank:=Vector2(620,1030)
+    var drag:=InputEventMouseButton.new()
+    drag.button_index=MOUSE_BUTTON_LEFT
+    drag.position=sheet._point(start_pos)
+    drag.pressed=true
+    sheet._gui_input(drag)
+    drag.position=sheet._point(blank)
+    drag.pressed=false
+    sheet._gui_input(drag)
+    if game.sim.find_unit(0)["pos"]!=start_pos or sheet.has_destination: return false
+    _sheet_click(sheet,blank)
+    if sheet.has_destination or not sheet.drafts.is_empty(): return false
+    var anchor: Dictionary=game.sim.planning_sites()[0]
+    _sheet_click(sheet,anchor["pos"])
+    if not sheet.has_destination or not sheet.destination.is_equal_approx(anchor["pos"]): return false
+    sheet.action_buttons[2].pressed.emit()
+    sheet.apply.pressed.emit()
+    if game.sim.find_unit(0)["mission"]!="지역 사수" or game.sim.find_unit(0)["pos"]!=start_pos: return false
+    sheet._select(1)
+    if not sheet.destination.is_equal_approx(anchor["pos"]): return false
+    sheet.action_buttons[1].pressed.emit()
+    sheet.apply.pressed.emit()
+    if not (game.sim.find_unit(1)["order_destination"] as Vector2).is_equal_approx(anchor["pos"]): return false
+    sheet.post_buttons["임시 거점"].pressed.emit()
+    _sheet_click(sheet,blank)
+    if game.sim.temporary_sites.size()!=1 or not sheet.destination.is_equal_approx(blank): return false
+    sheet.action_buttons[2].pressed.emit()
+    sheet.apply.pressed.emit()
+    if not (game.sim.find_unit(1)["order_destination"] as Vector2).is_equal_approx(blank): return false
+    if not await _deployment_frame("anchor_orders.png"): return false
     sheet.post_buttons["보급기지"].pressed.emit()
     _sheet_click(sheet,depot)
-    sheet.post_buttons["책사"].pressed.emit()
+    sheet.post_buttons["본진"].pressed.emit()
     _sheet_click(sheet,advisor)
-    if not (game.sim.bases[0]["pos"] as Vector2).is_equal_approx(depot) or not (game.sim.commanders[0]["pos"] as Vector2).is_equal_approx(advisor) or not sheet.drafts.is_empty(): return false
+    if not (game.sim.bases[0]["pos"] as Vector2).is_equal_approx(depot) or not (game.sim.commanders[0]["pos"] as Vector2).is_equal_approx(advisor) or game.sim.headquarters[0]["pos"]!=game.sim.commanders[0]["pos"] or not sheet.drafts.is_empty(): return false
     if not await _deployment_frame("posts_orders.png"): return false
     sheet.launch.pressed.emit()
     game.camera_center=depot
@@ -897,6 +961,10 @@ func _capture_deployment() -> bool:
     game._refresh_hud()
     if sim.finished or not sim.command_confused(0) or not game.phase_label.text.contains("혼란"): return false
     if not await _deployment_frame("captured_command.png"): return false
+    # The raider withdraws after seizing the strategist. Leaving it in the
+    # headquarters for an entire day would also complete the separate siege.
+    enemy["goal"]=center
+    enemy["ai_cooldown"]=1000.0
     for tick in range(150): sim.step(0.1)
     game._refresh_hud()
     if sim.command_confused(0) or not game.phase_label.text.contains("자율 지휘") or marcher["action"]=="지휘 혼란": return false
