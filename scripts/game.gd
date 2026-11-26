@@ -1318,7 +1318,9 @@ func _refresh_objectives() -> void:
         button.text="%s  ·  %s" % [row["name"],row["state"]]
         button.tooltip_text=button.text+"\n누르면 전장에서 이 목표를 봅니다."
         button.accessibility_name=button.text
-        button.add_theme_color_override("font_color",COL_RED if row["alert"] else COL_TEXT)
+        var ink: Color=COL_RED if row["alert"] else COL_TEXT
+        for state in [&"font_color",&"font_pressed_color",&"font_hover_pressed_color"]:
+            if button.get_theme_color(state)!=ink: button.add_theme_color_override(state,ink)
         button.set_pressed_no_signal(i==objective_focus)
     if objective_focus>=0 and objective_focus<count:
         camera_center=objective_rows[objective_focus]["pos"]
@@ -3188,13 +3190,13 @@ func _build_outcome_dialog() -> void:
     veil.color = Color(0.06,0.06,0.05,0.78)
     outcome_dialog.add_child(veil)
     var panel := Panel.new()
-    panel.position = Vector2(250,103)
-    panel.size = Vector2(780,594)
+    panel.position = Vector2(250,72)
+    panel.size = Vector2(780,656)
     panel.add_theme_stylebox_override("panel",_ui_box(COL_PANEL,COL_LINE))
     outcome_dialog.add_child(panel)
     var layout := VBoxContainer.new()
     layout.position = Vector2(28,20)
-    layout.size = Vector2(724,554)
+    layout.size = Vector2(724,616)
     layout.add_theme_constant_override("separation",10)
     panel.add_child(layout)
     outcome_heading = Label.new()
@@ -3248,12 +3250,13 @@ func _build_outcome_dialog() -> void:
     outcome_dialog.hide()
 
 func _show_outcome() -> void:
-    outcome_heading.text = ("승전  /  " if sim.winning_side == 0 else "패전  /  ") + sim.result
+    var reason: String=sim.result.trim_suffix(" — 아군 승리").trim_suffix(" — 승리").trim_suffix(" — 패배").trim_suffix(" (패배)")
+    outcome_heading.text = ("승전  /  " if sim.winning_side == 0 else "패전  /  ") + reason
     outcome_heading.add_theme_font_size_override("font_size",25)
     outcome_heading.add_theme_color_override("font_color",COL_GOLD if sim.winning_side == 0 else COL_RED)
     outcome_text.text = "%s  /  %s  /  전령 도착 %d · 차단 %d\n긴급 지시 수락 %d · 거부 %d" % [sim.scenario_title,_operation_clock(sim.operation_elapsed()),sim.delivered_orders,sim.intercepted_orders,sim.tactical_delivered,sim.tactical_refused]
     if not sim.result_detail.is_empty():
-        outcome_text.text+="\n판정 근거   "+sim.result_detail
+        outcome_text.text="판정 근거   "+sim.result_detail+"\n"+outcome_text.text
     if campaign_active:
         if not battle_recorded:
             battle_recorded = campaign.conclude(sim)

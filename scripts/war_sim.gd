@@ -228,7 +228,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
 func _base(side: int, at: Vector2) -> Dictionary:
     return {
         "side":side, "pos":at, "state":"가동",
-        "build_timer":0.0, "alive":true, "raid_work":0.0, "raid_rate":0
+        "build_timer":0.0, "alive":true, "raid_work":0.0, "raid_rate":0, "raid_elapsed":0.0
     }
 
 func _log(message: String) -> void:
@@ -487,17 +487,21 @@ func _nearby_corps(side: int, center: Vector2, radius: float) -> int:
 
 func _update_base_raid(base: Dictionary, dt: float) -> void:
     var side: int=base["side"]
-    var rate:=mini(2,_nearby_corps(1-side,base["pos"],RAID_RADIUS))
+    var raiders:=_nearby_corps(1-side,base["pos"],RAID_RADIUS)
+    var rate:=mini(2,raiders)
     if rate>0 and _nearby_corps(side,base["pos"],GUARD_RADIUS)>0: rate=0
     if base["raid_rate"]==0 and rate>0: _log(_camp_side(side)+" 보급기지 급습")
     base["raid_rate"]=rate
     if rate==0:
         base["raid_work"]=0.0
+        base["raid_elapsed"]=0.0
         return
+    base["raid_elapsed"]+=minf(dt,maxf(0.0,RAID_SECONDS-base["raid_work"])/rate)
     base["raid_work"]+=dt*rate
     if base["raid_work"]>=RAID_SECONDS-0.00001:
         base["alive"]=false
         base["state"]="파괴"
+        base["raiders_at_loss"]=raiders
         base["raid_rate"]=0
         if supply_crews[side]["state"]=="구축" and (supply_crews[side]["pos"] as Vector2).is_equal_approx(base["pos"]):
             supply_crews[side]["state"]="대기"
@@ -1785,7 +1789,11 @@ func _check_victory() -> void:
         if reinforcements_used[1] >= reserve_limit[1]:
             _finish("적 전투부대 전멸 또는 패주 — 승리","전투 가능 부대 · 아군 %d / 적군 %d" % side_alive)
     if not finished and scenario_id == 2 and not bool(bases[0]["alive"]):
-        _finish("아군 보급기지 상실 — 패배","방어 목표였던 첫 보급기지가 파괴됨")
+        var home:=bases[0]
+        var evidence: String="방어 목표였던 첫 보급기지가 파괴됨"
+        if home.has("raiders_at_loss"):
+            evidence="첫 보급기지 · 급습 %d초 · 파괴 시 적 %d개 군단 / 아군 수비 0개" % [roundi(home["raid_elapsed"]*operation_scale()),home["raiders_at_loss"]]
+        _finish("아군 보급기지 상실 — 패배",evidence)
     if not finished and scenario_id == 2 and battle_time >= scenario_limit:
         _finish("보급기지 방어 성공 — 아군 승리","첫 보급기지 생존 · 방어 시간 %d초" % roundi(operation_limit()))
     if not finished and battle_time >= scenario_limit and scenario_id in [3,4]:

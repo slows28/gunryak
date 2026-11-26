@@ -1303,7 +1303,11 @@ func _capture_objectives() -> bool:
     if not sim.finished or sim.winning_side!=1: return false
     game._refresh_hud()
     game._show_outcome()
-    if sim.result_detail not in game.outcome_text.text: return false
+    if sim.result_detail not in game.outcome_text.text or "급습 24초" not in game.outcome_text.text: return false
+    await process_frame
+    var panel: Control=game.outcome_heading.get_parent().get_parent()
+    var last_row: Control=game.campaign_next.get_parent()
+    if not panel.get_global_rect().encloses(last_row.get_global_rect()): return false
     if not await _deployment_frame("objective_debrief.png"): return false
     print("OBJECTIVE_FOCUS_VISUAL_PASS")
     return true

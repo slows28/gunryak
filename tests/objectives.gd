@@ -50,8 +50,21 @@ func _initialize() -> void:
     s.bases[0]["raid_work"]=1.0
     var home:=Front.objective_targets(s,true)[0]
     check(home["pos"]==s.bases[0]["pos"] and home["state"]=="파괴까지 20초" and home["alert"],"raid clock and focus refer to the chosen first depot")
-    s.bases[0]["alive"]=false
+    for u in s.units:
+        u["pos"]=s.bases[0]["pos"]+Vector2(350,0)
+    var raider:=s.find_unit(3)
+    raider["pos"]=s.bases[0]["pos"]
+    s.bases[0]["raid_work"]=0.0
+    s._update_base_raid(s.bases[0],2.0)
+    blue=s.find_unit(0)
+    blue["pos"]=raider["pos"]
+    s._update_base_raid(s.bases[0],0.1)
+    blue["pos"]+=Vector2(350,0)
+    s._update_base_raid(s.bases[0],2.0)
+    s.find_unit(4)["pos"]=raider["pos"]
+    s._update_base_raid(s.bases[0],2.0)
     s._check_victory()
+    check("급습 16초" in s.result_detail and "적 2개" in s.result_detail,"interrupted raids reset and the debrief reports actual time and final raiders")
     check(s.finished and s.winning_side==1 and "첫 보급기지" in s.result_detail and other["alive"],"depot defense debrief identifies the lost primary depot")
     s.reset()
     s.set_scenario(3)
