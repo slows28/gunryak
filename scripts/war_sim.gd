@@ -2780,11 +2780,11 @@ func committed_route_preview(unit: Dictionary) -> Array[Vector2]:
     var bridge: float = float(unit.get("bridge_y",-1.0))
     if long_operation and bridge>=0.0:
         var exit_bank: int = int(unit.get("bridge_bank",0))
-        var rx: float = river_x(bridge)
-        if exit_bank != 0:
-            if (p.x-river_x(p.y))*exit_bank<0.0 and absf(p.x-river_x(p.y))>=35.0:
-                points.append(Vector2(rx-exit_bank*64.0,bridge))
-            points.append(Vector2(rx+exit_bank*64.0,bridge))
+        if exit_bank != 0 and _keep_bridge(p, goal, bridge, exit_bank):
+            var next := _bridge_waypoint(p, bridge, exit_bank)
+            var exit_point := Vector2(river_x(bridge) + exit_bank * 64.0, bridge)
+            if next != exit_point: points.append(next)
+            points.append(exit_point)
     points.append(goal)
     return points
 
@@ -3029,6 +3029,9 @@ func _update_response_outcomes() -> void:
             report["executed"]=true
             report["action_seen"]=actual
             report["status"]="실행 중"
+            if expected == "긴급 지원" and not report.has("joined_at") and actor["tactical_target"] == report["unit_id"]:
+                var recipient := find_unit(report["unit_id"])
+                if _support_in_reach(actor, recipient): report["joined_at"] = battle_time
         report["loss_delta"]=roundi(maxf(0.0,float(actor["casualties_taken"])-float(report.get("loss_start",0.0))))
         report["damage_delta"]=roundi(maxf(0.0,float(actor["damage_dealt"])-float(report.get("damage_start",0.0))))
         if float(actor["troops"])<=0.0:
@@ -3036,6 +3039,14 @@ func _update_response_outcomes() -> void:
         elif finished or battle_time>=float(report.get("until",0.0)):
             report["status"]="실행 종료" if bool(report.get("executed",false)) else "실행 미확인"
             report["resolved_at"]=battle_time
+
+func _support_in_reach(actor: Dictionary, recipient: Dictionary) -> bool:
+    if recipient.is_empty() or recipient["troops"] <= 0 or actor["troops"] <= 0 or actor["routed"]: return false
+    var p: Vector2 = actor["pos"]
+    var q: Vector2 = recipient["pos"]
+    if p.distance_squared_to(q) > GUARD_RADIUS * GUARD_RADIUS: return false
+    if wide_field and (_river_separates(p, q) or in_open_water(p) or in_open_water(q)): return false
+    return _detour_goal(actor, p, q) == q
 
 func open_situations() -> Array[Dictionary]:
     var result_reports: Array[Dictionary] = []
@@ -3134,6 +3145,14 @@ func _deliver_tactical(unit: Dictionary, letter: Dictionary) -> void:
     unit["ai_cooldown"] = 0.0
     _log(str(unit["name"])+": 긴급 "+order+" 명령 도착")
 
+# Keep the support slot beside the recipient when its usual side is in the river.
+func _relief_position(ally: Dictionary) -> Vector2:
+    var center: Vector2 = ally["pos"]
+    var offset := Vector2(-32.0 if ally["side"] == 0 else 32.0, 0)
+    var goal := _field_point(center + offset)
+    if long_operation and in_open_water(goal): return _field_point(center - offset)
+    return goal
+
 func _tactical_decision(unit: Dictionary, enemy: Dictionary, action: String, reason: String, goal: Vector2, distance: float, strength: float) -> Dictionary:
     var result_order: Dictionary = {"action":action,"reason":reason,"goal":goal}
     if bool(unit["routed"]) or float(unit["morale"]) < 19.0 or float(unit["troops"]) < (600.0 if six_armies else 24.0):
@@ -3149,7 +3168,7 @@ func _tactical_decision(unit: Dictionary, enemy: Dictionary, action: String, rea
         if order == "지원":
             var ally: Dictionary = find_unit(int(unit["tactical_target"]))
             if not ally.is_empty() and float(ally["troops"]) > 0.0:
-                return {"action":"긴급 지원","reason":("현지 구원 수락 · " if unit.get("local_relief",false) else "전령 명령: ")+str(ally["name"])+" 지원","goal":(ally["pos"] as Vector2)+Vector2(-32 if unit["side"]==0 else 32,0)}
+                return {"action":"긴급 지원","reason":("현지 구원 수락 · " if unit.get("local_relief",false) else "전령 명령: ")+str(ally["name"])+" 지원","goal":_relief_position(ally)}
     # Autonomous initiative: an aggressive low-loyalty commander may exploit
     # an observed weak enemy, while strict or cautious commanders retain orders.
     if enemy.is_empty() or distance > 180.0 or strength < (GeneralMind.initiative_threshold(unit) if long_operation else 1.30) or float(unit["morale"]) < 65.0 or str(unit["obedience"]) == "명령 엄수" or action in ["후퇴","패주","재집결","휴식","거리 유지","측면 방어","보급 호위","탄약 보충","보급 복귀"]:
@@ -3927,37 +3946,46 @@ func _enemy_strategy()->void:
         unit["ai_partner"]=partner
         unit["ai_role_until"]=battle_time+20.0
 
+# A near-bank unit can change orders on dry land. Once on the deck it
+# finishes the crossing before turning back for a moving destination.
+func _on_bridge_deck(p: Vector2, bridge: float) -> bool:
+    return on_river_channel(p) and absf(p.y - bridge) <= 38.0
+
+func _keep_bridge(p: Vector2, goal: Vector2, bridge: float, exit_bank: int) -> bool:
+    var target_bank := 1 if goal.x >= river_x(goal.y) else -1
+    var exit_distance := (p.x - river_x(p.y)) * exit_bank
+    if exit_distance >= 0.0:
+        # Contact can push a unit along the far shore past the end of the deck.
+        return exit_distance < 55.0 and (absf(p.y - bridge) <= 38.0 or on_river_channel(p))
+    return target_bank == exit_bank or _on_bridge_deck(p, bridge)
+
+func _bridge_waypoint(p: Vector2, bridge: float, exit_bank: int) -> Vector2:
+    var approach_bank := (p.x - river_x(p.y)) * exit_bank < 0.0
+    var side := exit_bank
+    if approach_bank and absf(p.y - bridge) > 10.0 and not _on_bridge_deck(p, bridge):
+        side = -exit_bank
+    return Vector2(river_x(bridge) + side * 64.0, bridge)
+
 # One bridge is selected and retained until the army reaches the far bank.
 # Route choice accounts for allied congestion without reading hidden enemies.
 func _committed_bridge_route(unit:Dictionary,p:Vector2,goal:Vector2)->Vector2:
     var bank:int=1 if p.x>=river_x(p.y) else -1
     var target_bank:int=1 if goal.x>=river_x(goal.y) else -1
-    var distance:float=absf(p.x-river_x(p.y))
     var chosen:float=float(unit["bridge_y"])
     if chosen>=0.0:
         var exit_bank:int=int(unit["bridge_bank"])
-        if bank==exit_bank and distance>=55.0:
-            unit["bridge_y"]=-1.0
-            unit["bridge_bank"]=0
-            unit["bridge_crossings"]+=1
-            chosen=-1.0
-        elif distance<38.0 or target_bank==exit_bank:
-            var rx:float=river_x(chosen)
-            if bank!=exit_bank and absf(p.y-chosen)>10.0 and distance>=35.0:
-                return Vector2(rx-exit_bank*64.0,chosen)
-            return Vector2(rx+exit_bank*64.0,chosen)
-        else:
-            unit["bridge_y"]=-1.0
-            unit["bridge_bank"]=0
-            chosen=-1.0
+        if _keep_bridge(p, goal, chosen, exit_bank):
+            return _bridge_waypoint(p, chosen, exit_bank)
+        if bank == exit_bank: unit["bridge_crossings"] += 1
+        unit["bridge_y"] = -1.0
+        unit["bridge_bank"] = 0
     if bank==target_bank:
         if in_open_water(goal): return Vector2(river_x(goal.y)+bank*34.0,goal.y)
         return goal
     chosen=_choose_crossing(unit,p,goal)
     unit["bridge_y"]=chosen
     unit["bridge_bank"]=target_bank
-    var rx:float=river_x(chosen)
-    return Vector2(rx+bank*64.0,chosen) if absf(p.y-chosen)>10.0 else Vector2(rx+target_bank*64.0,chosen)
+    return _bridge_waypoint(p, chosen, target_bank)
 
 func _choose_crossing(unit: Dictionary, p: Vector2, goal: Vector2) -> float:
     var best:float=INF

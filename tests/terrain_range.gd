@@ -102,6 +102,8 @@ func _initialize() -> void:
     check(sim.finished and sim.winning_side==1 and sim.result.contains("훈련 종료"),"unfinished exercise ends at its time limit")
     sim.set_scenario(0)
     check(sim.training_sites().is_empty() and sim.terrain_at(sites["습지"])!="습지","other scenarios have no training basins")
+    _check_relief_report()
+    _check_bridge_approaches()
     _check_fields(sim)
     _check_reed_sight(sim)
     print("GUNRYAK_TERRAIN_RANGE_PASS" if failures==0 else "GUNRYAK_TERRAIN_RANGE_FAIL")
@@ -180,3 +182,123 @@ func _check_reed_sight(sim) -> void:
     scout["pos"]=bed-Vector2(70,0)
     sim._update_scouts(0.0)
     check(scout["reports"]==1,"scout approaching reedbed sends an actual report")
+
+# The existing crossing drill starts aligned with each deck. This replay starts
+# at the water's edge, where relief units can be pushed while their target moves.
+func _check_bridge_approaches() -> void:
+    var sim := WarSim.new()
+    sim.set_long_operation(true)
+    sim.set_scenario(2)
+    var unit := sim.find_unit(7)
+    for other in sim.units:
+        if other["id"] != unit["id"]: other["troops"] = 0.0
+    for bridge: float in [390.0, 850.0, 1300.0]:
+        for bank: int in [-1, 1]:
+            for offset: float in [-108.0, 108.0]:
+                var y := bridge + offset
+                var shore := Vector2(sim.river_x(y) + bank * 28.0, y)
+                var goal := Vector2(sim.river_x(bridge) - bank * 120.0, bridge)
+                unit["pos"] = shore
+                unit["goal"] = goal
+                unit["action"] = "긴급 지원"
+                unit["fatigue"] = 0.0
+                unit["bridge_y"] = -1.0
+                unit["bridge_crossings"] = 0
+                sim._committed_bridge_route(unit, shore, goal)
+                var preview := sim.committed_route_preview(unit)
+                var entry := Vector2(sim.river_x(bridge) + bank * 64.0, bridge)
+                var entered := false
+                var safe := true
+                for tick in range(200):
+                    sim._move_unit(unit, 0.1)
+                    var p: Vector2 = unit["pos"]
+                    entered = entered or (sim.on_river_channel(p) and absf(p.y - bridge) <= 38.0)
+                    safe = safe and not sim.in_open_water(p)
+                    if p.distance_to(goal) < 3.0: break
+                var reached := Vector2(unit["pos"]).distance_to(goal) < 3.0
+                check(preview[0] == entry and entered and safe and reached and unit["bridge_crossings"] == 1,
+                    "relief arrives via deck from bank %d at y %.0f, bridge %.0f" % [bank, y, bridge])
+
+            var y := bridge + 108.0
+            var shore := Vector2(sim.river_x(y) + bank * 28.0, y)
+            var ally := shore + Vector2(bank * 85.0, 0)
+            var rider := sim._field_rider(shore, 0, -10)
+            sim._committed_bridge_route(rider, shore, Vector2(sim.river_x(bridge) - bank * 120.0, bridge))
+            var arrived := false
+            for tick in range(10):
+                arrived = sim._advance_rider(rider, ally, 0.1)
+                if arrived: break
+            check(arrived and rider["bridge_y"] < 0 and rider["bridge_crossings"] == 0,
+                "rider drops obsolete bridge when recipient returns to bank %d, bridge %.0f" % [bank, bridge])
+
+            # A unit pushed beyond the deck on the exit shore has already landed.
+            rider = sim._field_rider(shore, 0, -10)
+            rider["bridge_y"] = bridge
+            rider["bridge_bank"] = bank
+            sim._advance_rider(rider, ally, 0.1)
+            check(rider["pos"] == shore.move_toward(ally, 15.0) and rider["bridge_crossings"] == 1
+                and rider["bridge_y"] < 0, "resume mission after displacement onto exit bank %d, bridge %.0f" % [bank, bridge])
+
+            # Turn the recipient around just after the rider has entered the deck.
+            var deck := Vector2(sim.river_x(bridge) + bank * 9.0, bridge)
+            rider = sim._field_rider(deck, 0, -10)
+            rider["bridge_y"] = bridge
+            rider["bridge_bank"] = -bank
+            var furthest := 0.0
+            arrived = false
+            for tick in range(60):
+                arrived = sim._advance_rider(rider, ally, 0.1)
+                var pos: Vector2 = rider["pos"]
+                furthest = maxf(furthest, (pos.x - sim.river_x(pos.y)) * -bank)
+                if arrived: break
+            check(arrived and furthest >= 55.0 and rider["bridge_crossings"] == 2,
+                "rider clears occupied deck before returning, bank %d bridge %.0f" % [bank, bridge])
+
+    for side: int in [0, 1]:
+        var helper := sim.find_unit(7 if side == 0 else 3)
+        var ally := sim.find_unit(2 if side == 0 else 4)
+        helper["troops"] = helper["initial_troops"]
+        ally["troops"] = ally["initial_troops"]
+        helper["tactical_order"] = "지원"
+        helper["tactical_until"] = sim.battle_time + 24.0
+        helper["tactical_target"] = ally["id"]
+        for bank: int in [-1, 1]:
+            var y := 1408.0
+            var shore := Vector2(sim.river_x(y) + bank * 28.0, y)
+            ally["pos"] = shore
+            var order := sim._tactical_decision(helper, {}, "대기", "", helper["pos"], INF, 1.0)
+            var slot: Vector2 = order["goal"]
+            check(order["action"] == "긴급 지원" and not sim.in_open_water(slot)
+                and (slot.x - sim.river_x(slot.y)) * bank > 0.0 and is_equal_approx(slot.distance_to(shore), 32.0),
+                "support slot stays beside the recipient on dry ground, side %d bank %d" % [side, bank])
+
+func _check_relief_report() -> void:
+    var sim := WarSim.new()
+    sim.set_long_operation(true)
+    sim.set_scenario(WarSim.TRAINING_SCENARIO)
+    var actor := sim.find_unit(7)
+    var ally := sim.find_unit(2)
+    var report := {"unit_id": ally["id"], "executor": actor["id"], "response": "지원",
+        "status": "명령 수령", "until": 24.0}
+    sim.situation_reports.append(report)
+    actor["tactical_target"] = ally["id"]
+    actor["tactical_until"] = report["until"]
+    actor["action"] = "긴급 지원"
+    var shore := Vector2(sim.river_x(1420.0), 1420.0)
+    actor["pos"] = shore + Vector2(29, 0)
+    ally["pos"] = shore - Vector2(29, 0)
+    sim._update_response_outcomes()
+    check(report["status"] == "실행 중" and not report.has("joined_at"), "departing across open water does not confirm support arrival")
+    var gate: Rect2 = sim.structures[0]["rect"]
+    actor["pos"] = Vector2(gate.end.x + 2.0, gate.get_center().y)
+    ally["pos"] = Vector2(gate.position.x - 2.0, gate.get_center().y)
+    sim._update_response_outcomes()
+    check(not report.has("joined_at"), "an intact enemy gate separates the two units")
+    sim.structures[0]["hp"] = 0
+    sim.battle_time = 12.0
+    sim._update_response_outcomes()
+    ally["pos"] = shore
+    sim.battle_time = 25.0
+    sim._update_response_outcomes()
+    check(report.get("joined_at", -1.0) == 12.0 and report["status"] == "실행 종료",
+        "first physical arrival survives separation and order expiry")

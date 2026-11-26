@@ -3839,9 +3839,14 @@ func _situation_outcome(report: Dictionary) -> String:
         lines.append("%s  전령 파견   ·   %s에게 %s" % [_operation_clock(float(report["sent_at"])*sim.operation_scale()),actor.get("name","아군"),report["response"]])
     if report.has("received_at"):
         lines.append("%s  명령 수령" % _operation_clock(float(report["received_at"])*sim.operation_scale()))
+    if report.has("joined_at"):
+        lines.append("%s  지원군 합류" % _operation_clock(float(report["joined_at"]) * sim.operation_scale()))
     if status not in ["전령 파견","명령 수령"]:
         var stamp: String=_operation_clock(float(report["resolved_at"])*sim.operation_scale())+"  " if report.has("resolved_at") and status!="실행 중" else ""
-        lines.append(stamp+status)
+        var result := stamp + status
+        if report.get("response", "") == "지원" and report.has("received_at") and not report.has("joined_at"):
+            result += " · 합류 지점으로 이동 중" if status == "실행 중" else " · 합류 미확인"
+        lines.append(result)
     if report.get("executed",false):
         lines.append("%s   ·   가한 피해 %d / 손실 %d" % [report["action_seen"],report["damage_delta"],report["loss_delta"]])
     return "\n".join(lines)

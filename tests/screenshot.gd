@@ -1276,6 +1276,10 @@ func _capture_field_report() -> bool:
         if not game.situation_record.text.contains(evidence):
             push_error("VISUAL_CAPTURE_FAIL: incomplete field response history")
             return false
+    var arrival := "지원군 합류" if report.has("joined_at") else "합류 미확인"
+    if not game.situation_record.text.contains(arrival):
+        push_error("VISUAL_CAPTURE_FAIL: support report missing physical arrival outcome")
+        return false
     if not _save_frame("field_dispatch_outcome.png"): return false
     game.situation_dialog.get_ok_button().pressed.emit()
     await process_frame
