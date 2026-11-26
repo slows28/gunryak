@@ -424,7 +424,7 @@ func _refresh_survey() -> void:
             note="적 시설 · 통행 제한" if float(structure["hp"])>0.0 else "파괴 · 통행 가능"
         "보급기지": note="군량·화살 보충" if sim.bases[0]["state"]=="가동" else str(sim.bases[0]["state"])
         "점령 거점": note="성문 파괴 후 거점 확보"
-    survey_detail.text="%s  %s\n%s" % [_grid_ref(point),survey_key,note]
+    survey_detail.text = "%s  %s" % [_grid_ref(point),note]
 
 func _apply()->void:
     if not has_destination:
