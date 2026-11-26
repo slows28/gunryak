@@ -155,10 +155,14 @@ var retreat_dialog: ConfirmationDialog
 var situation_btn: Button
 var situation_dialog: AcceptDialog
 var situation_list: ItemList
+var dispatch_headline: Button
+var situation_heading: Label
+var situation_record: Label
 var situation_detail: Label
 var situation_options: Array[Button] = []
 var situation_ids: Array[int] = []
 var situation_selected: int = -1
+var situation_pin:=Vector2.INF
 var situation_pause_before: bool = false
 var situation_notice: String = ""
 var last_audio_event: float = -1.0
@@ -379,9 +383,13 @@ func _build_interface() -> void:
         card.alignment=HORIZONTAL_ALIGNMENT_LEFT
         general_cards.append(card)
     _build_sector_board()
-    situation_btn = _button("긴급 보고",Vector2(830,61),Vector2(120,40),func():
-        _open_order_map()
-        _open_situations())
+    situation_btn = _button("긴급 보고",Vector2(830,61),Vector2(120,40),_open_situations)
+    dispatch_headline=_button("",Vector2(150,695),Vector2(795,28),_open_situations)
+    dispatch_headline.alignment=HORIZONTAL_ALIGNMENT_LEFT
+    dispatch_headline.add_theme_stylebox_override("normal",_ui_box(Color("#372e23"),Color("#836b44")))
+    dispatch_headline.add_theme_color_override("font_color",COL_GOLD)
+    dispatch_headline.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    dispatch_headline.hide()
     warning_label = _label("",Vector2(420,640),Vector2(513,24),12,COL_GOLD)
     warning_label.hide()
     warning_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -876,7 +884,13 @@ func _refresh_hud() -> void:
         status_label.tooltip_text += "\n수레 %s · 진행 %d%% · 내구도 %d%% · 호위 %d개" % [str(transport["state"]),roundi(float(transport["progress"])*100.0),roundi(sim.convoy["hp"]),int(transport["guards"])]
     if is_instance_valid(situation_btn):
         var active: bool=sim.started and not sim.finished
-        var count: int=sim.open_situations().size() if active else 0
+        var pending: Array[Dictionary]=[]
+        if active: pending=_prioritized_situations()
+        var count: int=pending.size()
+        dispatch_headline.visible=count>0
+        if count>0:
+            var lead: Dictionary=pending[0]
+            dispatch_headline.text="야전 보고    %s   ·   %s     ›" % [_report_sector(lead),lead["title"]]
         situation_btn.text="긴급 보고 %d" % count if count>0 else "긴급 보고"
         situation_btn.disabled=not active
         situation_btn.theme_type_variation=&"UrgentReport" if count>0 else &""
@@ -1619,6 +1633,12 @@ func _draw_map(_canvas: Control) -> void:
             map_layer.draw_arc(rp,46.0,0.0,TAU,40,Color(1.0,0.72,0.30,pulse),2.0,true)
         map_layer.draw_circle(rp+Vector2(15,-20)*k,7*k,Color("#574323"))
         _draw_string("!",rp+Vector2(12,-16)*k,maxi(8,roundi(13*k)),COL_GOLD)
+    if situation_dialog.visible and situation_pin!=Vector2.INF:
+        var k: float=1.0/camera_zoom
+        for corner in range(4):
+            var angle: float=corner*PI*0.5
+            map_layer.draw_arc(situation_pin,18*k,angle+0.12,angle+1.15,9,COL_GOLD,2*k,true)
+        _map_plate("보고 발신지",situation_pin+Vector2(0,33)*k,COL_GOLD,12)
     if not sim.convoy.is_empty():
         var wagon: Vector2 = sim.convoy["pos"]
         var cargo: Dictionary = sim.convoy_status()
@@ -3339,92 +3359,153 @@ func _setup_ambient_music() -> void:
 
 func _build_situations() -> void:
     situation_dialog = AcceptDialog.new()
-    situation_dialog.title = "책사 지휘실 · 긴급 전황"
+    situation_dialog.title = "야전 보고"
     situation_dialog.ok_button_text = "전장 복귀"
     situation_dialog.confirmed.connect(_close_situations)
     situation_dialog.canceled.connect(_close_situations)
     add_child(situation_dialog)
     var layout := VBoxContainer.new()
-    layout.custom_minimum_size = Vector2(640,320)
     layout.add_theme_constant_override("separation",9)
+    layout.custom_minimum_size.x=292
     situation_dialog.add_child(layout)
     situation_list = ItemList.new()
-    situation_list.custom_minimum_size = Vector2(620,120)
+    situation_list.custom_minimum_size = Vector2(292,92)
     situation_list.item_selected.connect(_select_situation)
     layout.add_child(situation_list)
-    situation_detail = Label.new()
-    situation_detail.custom_minimum_size = Vector2(620,100)
-    situation_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    layout.add_child(situation_detail)
-    var row := HBoxContainer.new()
-    row.add_theme_constant_override("separation",8)
+    situation_heading=_body_text(layout,19,COL_GOLD)
+    situation_detail=_body_text(layout,15,COL_TEXT)
+    situation_record=_body_text(layout,14,COL_BLUE)
+    for label in [situation_heading,situation_detail,situation_record]: label.custom_minimum_size.x=292
+    var row := GridContainer.new()
+    row.columns=3
+    row.add_theme_constant_override("h_separation",6)
+    row.add_theme_constant_override("v_separation",5)
     layout.add_child(row)
     for order in ["사수","재집결","지원","철수","현장 판단"]:
         var btn := Button.new()
-        btn.text = order
-        btn.custom_minimum_size = Vector2(112,36)
+        btn.text=order
+        btn.set_meta("order",order)
+        btn.custom_minimum_size=Vector2(91,32)
         btn.pressed.connect(_respond_situation.bind(order))
         row.add_child(btn)
         situation_options.append(btn)
 
+func _report_sector(report: Dictionary) -> String:
+    return ["북부 전선","중앙 전선","남부 전선"][FrontView.sector_for(report["pos"],sim.field_size)]
+
+func _prioritized_situations() -> Array[Dictionary]:
+    var pending: Array[Dictionary]=sim.open_situations()
+    const RANK={"포위 위험":0,"전열 붕괴 위험":0,"전선 압박":1,"장수 부상":1}
+    pending.sort_custom(func(a:Dictionary,b:Dictionary)->bool:
+        var left: int=RANK.get(a.get("kind",""),2)
+        var right: int=RANK.get(b.get("kind",""),2)
+        return left<right if left!=right else int(a["id"])<int(b["id"]))
+    return pending
+
 func _open_situations() -> void:
-    if not sim.started or sim.finished:
-        return
-    situation_pause_before = sim.paused
-    sim.paused = true
-    situation_notice = ""
-    situation_selected = -1
+    if not sim.started or sim.finished or situation_dialog.visible: return
+    if highlight_active: _stop_highlight("야전 보고 확인",false)
+    situation_pause_before=sim.paused
+    sim.paused=true
+    situation_notice=""
+    situation_selected=-1
+    situation_pin=Vector2.INF
+    situation_dialog.size=Vector2i(338,488)
     _refresh_situations()
-    situation_dialog.popup_centered()
+    var extent:=Vector2i(get_viewport_rect().size)
+    situation_dialog.popup_on_parent(Rect2i(extent.x-350,150,338,488))
 
 func _close_situations() -> void:
-    if sim.started and not sim.finished:
-        sim.paused = situation_pause_before
+    situation_pin=Vector2.INF
+    if sim.started and not sim.finished: sim.paused=situation_pause_before
     _refresh_hud()
+    map_layer.queue_redraw()
 
 func _refresh_situations() -> void:
     situation_list.clear()
     situation_ids.clear()
-    for report in sim.open_situations():
+    var rows: Array[Dictionary]=_prioritized_situations()
+    for i in range(sim.situation_reports.size()-1,-1,-1):
+        var report: Dictionary=sim.situation_reports[i]
+        if report["status"] in ["대기","미대응"]: continue
+        rows.append(report)
+    for report in rows:
         situation_ids.append(int(report["id"]))
-        situation_list.add_item("%s  |  %.0f초 남음" % [report["title"],maxf(0.0,float(report["expires"])-sim.battle_time)*sim.operation_scale()])
-    if situation_ids.is_empty():
-        situation_selected = -1
-        situation_detail.text = "현재 대응할 긴급 보고가 없습니다.\n보고는 장수의 실제 상태를 기반으로 지연 수신됩니다.\n"+situation_notice
-    else:
-        var index: int = situation_ids.find(situation_selected)
-        if index < 0: index = 0
-        situation_list.select(index)
-        _select_situation(index)
-    for btn in situation_options:
-        btn.disabled = situation_selected < 0 or (btn.text != "현장 판단" and (sim.turn < 6 or sim.command_points <= 0))
+        situation_list.add_item("%s   ·   %s" % [report["title"],report["status"]])
+    if rows.is_empty():
+        situation_heading.text="수신한 보고 없음"
+        situation_detail.text="장수의 보고가 도착하면 이곳에서 확인할 수 있습니다."
+        situation_record.text=""
+        for btn in situation_options: btn.hide()
+        return
+    var index: int=maxi(0,situation_ids.find(situation_selected))
+    situation_list.select(index)
+    situation_list.ensure_current_is_visible()
+    _select_situation(index)
 
 func _select_situation(index: int) -> void:
-    if index < 0 or index >= situation_ids.size():
-        return
-    situation_selected = situation_ids[index]
-    for report in sim.open_situations():
-        if int(report["id"]) != situation_selected:
-            continue
-        var context: String = ""
-        match str(report["kind"]):
-            "포위 위험": context = "지원군을 보내 퇴로를 확보하거나 철수로 병력을 보존하십시오."
-            "전열 붕괴 위험": context = "재집결은 응집과 피로 회복에 유리하나 전선을 양보할 수 있습니다."
-            "군량 부족": context = "철수 또는 재집결로 생존을 도모하십시오. 사수는 소모를 계속 감수합니다."
-            "명령 이탈": context = "독자 판단을 허용하거나 긴급 사수 지시로 작전을 수정할 수 있습니다."
-            _: context = "지정 위치 사수 또는 가까운 아군의 지원을 선택하십시오."
-        var officer: Dictionary=sim.find_unit(int(report["unit_id"]))
-        var mind: Dictionary=officer.get("mind",{})
-        situation_detail.text = "%s\n%s\n장수 건의: %s · 현재 %s\n긴급 지휘력 %d/4 · 전령 전달 · 6턴 이전에는 관찰만 가능\n%s" % [report["title"],context,str(report.get("proposal","없음")),str(mind.get("mood","미확인")),sim.command_points,situation_notice]
+    if index<0 or index>=situation_ids.size(): return
+    var id: int=situation_ids[index]
+    for report in sim.situation_reports:
+        if int(report["id"])!=id: continue
+        var point: Vector2=report["pos"]
+        var unit: Dictionary=sim.find_unit(int(report["unit_id"]))
+        if situation_selected!=id:
+            situation_pin=point
+            situation_notice=""
+            _frame_milestone({"point":point,"unit_id":unit.get("parent_id",report["unit_id"])})
+        situation_selected=id
+        var lines: Array[String]=[]
+        if report.has("written_at"):
+            lines.append("발신 %s   ·   %s" % [_operation_clock(float(report["written_at"])*sim.operation_scale()),_report_sector(report)])
+            lines.append("지시   %s\n행동   %s   ·   사기 %d   응집 %d" % [report["mission"],report["action"],report["morale"],report["cohesion"]])
+            match str(report.get("kind","")):
+                "군량 부족": lines.append("남은 군량 %d" % report["rations"])
+                "화살 부족": lines.append("남은 화살 %d" % report["ammo"])
+                "장수 부상": lines.append("장수 체력 %d" % report["general_hp"])
+                "전선 압박": lines.append("전열 압박 %d%%" % roundi(float(report["pressure"])*100.0))
+            lines.append(str(report["reason"]))
+        else: lines.append(_report_sector(report))
+        var proposal: String=str(report.get("proposal",""))
+        if not proposal.is_empty(): lines.append("장수의 건의   "+proposal)
+        situation_heading.text="%s   ·   %s" % [unit.get("name","아군"),report.get("kind",report["title"])]
+        situation_detail.text="\n".join(lines)
+        var pending: bool=report["status"]=="미대응"
+        if pending:
+            var remaining: float=maxf(0.0,float(report.get("expires",sim.battle_time))-sim.battle_time)*sim.operation_scale()
+            situation_record.text="응답 기한 %s   ·   지휘력 %d/4" % [_operation_clock(remaining),sim.command_points]
+            if sim.turn<6: situation_record.text+="\n6턴부터 전령 파견 가능"
+        else: situation_record.text=_situation_outcome(report)
+        if not situation_notice.is_empty(): situation_record.text+="\n"+situation_notice
+        var helper: Dictionary=sim.support_for_report(unit) if pending and not unit.is_empty() else {}
+        for btn in situation_options:
+            var order: String=btn.get_meta("order")
+            btn.visible=pending
+            if order=="지원": btn.text=str(helper["name"])+" 지원" if not helper.is_empty() else "지원군 없음"
+            var unavailable: bool=helper.is_empty() if order=="지원" else sim.has_pending_courier(int(report["unit_id"]))
+            btn.disabled=unit.is_empty() or float(unit.get("troops",0.0))<=0.0 or (order!="현장 판단" and (sim.turn<6 or sim.command_points<=0 or unavailable))
         break
 
+func _situation_outcome(report: Dictionary) -> String:
+    var lines: Array[String]=[]
+    var status: String=report["status"]
+    if report.has("sent_at"):
+        var actor: Dictionary=sim.find_unit(int(report["executor"]))
+        lines.append("%s  전령 파견   ·   %s에게 %s" % [_operation_clock(float(report["sent_at"])*sim.operation_scale()),actor.get("name","아군"),report["response"]])
+    if report.has("received_at"):
+        lines.append("%s  명령 수령" % _operation_clock(float(report["received_at"])*sim.operation_scale()))
+    if status not in ["전령 파견","명령 수령"]:
+        var stamp: String=_operation_clock(float(report["resolved_at"])*sim.operation_scale())+"  " if report.has("resolved_at") and status!="실행 중" else ""
+        lines.append(stamp+status)
+    if report.get("executed",false):
+        lines.append("%s   ·   가한 피해 %d / 손실 %d" % [report["action_seen"],report["damage_delta"],report["loss_delta"]])
+    return "\n".join(lines)
+
 func _respond_situation(order: String) -> void:
-    if situation_selected < 0:
-        return
-    if sim.respond_situation(situation_selected,order):
-        situation_notice = "대응 기록: "+order
-    else:
-        situation_notice = "지시 불가: 지휘력·중복 전령·지원 가능 부대를 확인하십시오."
+    if situation_selected<0: return
+    situation_notice=""
+    if not sim.respond_situation(situation_selected,order):
+        situation_notice="파견 불가 · 지휘력과 이동 중인 전령을 확인하십시오."
     _refresh_situations()
     _refresh_hud()
 

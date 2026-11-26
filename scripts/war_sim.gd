@@ -2468,7 +2468,12 @@ func _scan_situations() -> void:
         situation_keys[key] = battle_time
         situation_serial += 1
         var delay: float = 2.0+(unit["pos"] as Vector2).distance_to(commanders[0]["pos"])/150.0
-        situation_reports.append({"id":situation_serial,"unit_id":unit["id"],"title":str(unit["name"])+" · "+kind+(" / "+proposal+" 건의" if not proposal.is_empty() else ""),"kind":kind,"proposal":proposal,"pos":unit["pos"],"arrive":battle_time+delay,"expires":battle_time+delay+26.0,"status":"대기"})
+        var report: Dictionary={"id":situation_serial,"unit_id":unit["id"],"title":str(unit["name"])+" · "+kind+(" / "+proposal+" 건의" if not proposal.is_empty() else ""),
+            "kind":kind,"proposal":proposal,"pos":unit["pos"],"written_at":battle_time,"arrive":battle_time+delay,
+            "expires":battle_time+delay+26.0,"status":"대기","mission":unit["mission"],"action":unit["action"],"reason":unit["reason"],
+            "morale":roundi(unit["morale"]),"cohesion":roundi(unit["cohesion"]),"rations":roundi(unit["rations"]),
+            "ammo":roundi(unit["ammo"]),"general_hp":roundi(unit["general_hp"]),"pressure":float(unit["front_pressure"])}
+        situation_reports.append(report)
         if situation_reports.size() > 80:
             for j in range(situation_reports.size()):
                 if str(situation_reports[j]["status"]) not in ["대기","미대응","전령 파견","명령 수령","실행 중"]:
@@ -2532,6 +2537,23 @@ func open_situations() -> Array[Dictionary]:
             result_reports.append(report)
     return result_reports
 
+func has_pending_courier(id: int) -> bool:
+    for letter in couriers:
+        if int(letter["unit_id"])==id: return true
+    return false
+
+func support_for_report(target: Dictionary) -> Dictionary:
+    var best: Dictionary={}
+    var best_score: float=-INF
+    for ally in units:
+        if int(ally["side"])!=0 or ally["id"]==target["id"] or bool(ally["routed"]) or float(ally["troops"])<24.0: continue
+        if has_pending_courier(int(ally["id"])): continue
+        var score: float=float(ally["morale"])-(ally["pos"] as Vector2).distance_to(target["pos"])*0.1
+        if score>best_score:
+            best=ally
+            best_score=score
+    return best
+
 func respond_situation(report_id: int, response: String) -> bool:
     if not tactical_enabled or not started or finished:
         return false
@@ -2545,19 +2567,12 @@ func respond_situation(report_id: int, response: String) -> bool:
             return false
         if response == "현장 판단":
             report["status"] = "재량 유지"
+            report["resolved_at"] = battle_time
             GeneralMind.acknowledge(target,battle_time)
             _log(str(target["name"])+": 보고 확인, 기존 작전 유지")
             return true
         if response == "지원":
-            var best: Dictionary = {}
-            var best_score: float = -INF
-            for ally in units:
-                if int(ally["side"]) != 0 or int(ally["id"]) == id or bool(ally["routed"]) or float(ally["troops"]) < 24.0:
-                    continue
-                var score: float = float(ally["morale"])-(ally["pos"] as Vector2).distance_to(target["pos"])*0.1
-                if score > best_score:
-                    best = ally
-                    best_score = score
+            var best: Dictionary=support_for_report(target)
             if best.is_empty() or not request_tactical(int(best["id"]),"지원",id):
                 return false
         elif not request_tactical(id,response):
@@ -2583,9 +2598,7 @@ func request_tactical(unit_id: int, order: String, support_id: int = -1) -> bool
         var ally: Dictionary = find_unit(support_id)
         if ally.is_empty() or int(ally["side"]) != 0 or support_id == unit_id:
             return false
-    for letter in couriers:
-        if int(letter["unit_id"]) == unit_id:
-            return false
+    if has_pending_courier(unit_id): return false
     command_points -= 1
     couriers.append({"pos":commanders[0]["pos"],"unit_id":unit_id,"side":0,"mission":unit["mission"],"policy":unit["policy"],"tactical_order":order,"support_id":support_id})
     _log("긴급 전령 → %s / %s" % [unit["name"],order])

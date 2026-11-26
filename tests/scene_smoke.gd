@@ -69,6 +69,17 @@ func _process(_dt: float) -> bool:
         fixture.start()
         fixture.turn=6
         fixture.battle_time=80.0
+        var reporter: Dictionary=fixture.find_unit(0)
+        var first_helper: Dictionary=fixture.support_for_report(reporter)
+        if first_helper.is_empty() or not fixture.request_tactical(int(first_helper["id"]),"사수"):
+            push_error("GUNRYAK_SCENE_FAIL: support fixture could not dispatch a courier")
+            quit(1)
+            return false
+        var alternate: Dictionary=fixture.support_for_report(reporter)
+        if alternate.is_empty() or alternate["id"]==first_helper["id"]:
+            push_error("GUNRYAK_SCENE_FAIL: preview must select an available support commander")
+            quit(1)
+            return false
         fixture.situation_reports.append({"id":901,"unit_id":0,"title":"검사 보고","kind":"전선 압박","status":"미대응"})
         if not fixture.respond_situation(901,"사수"):
             push_error("GUNRYAK_SCENE_FAIL: report dispatch failed")

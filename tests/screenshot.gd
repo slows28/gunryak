@@ -675,6 +675,9 @@ func _capture() -> void:
     if not await _capture_combat_drill():
         quit(1)
         return
+    if not await _capture_field_report():
+        quit(1)
+        return
     print("GUNRYAK_VISUAL_CAPTURE_PASSED")
     quit(0)
 
@@ -831,6 +834,77 @@ func _capture_bow_motion(archer: Dictionary, target: Dictionary) -> bool:
         if not _save_frame("archer_motion_%02d.png" % i):
             return false
     print("ARCHER_MOTION_PASS")
+    return true
+
+func _capture_field_report() -> bool:
+    game.queue_free()
+    await process_frame
+    game=MAIN_SCENE.instantiate()
+    root.add_child(game)
+    game.set_process(false)
+    await process_frame
+    game.call("_leave_title")
+    game.call("_start")
+    game.game_speed=4.0
+    for tick in range(3600):
+        game.call("_process",0.1)
+        if game.sim.turn>=6 and not game.sim.open_situations().is_empty(): break
+    if game.sim.open_situations().is_empty():
+        push_error("VISUAL_CAPTURE_FAIL: no delivered field report in the operation")
+        return false
+    game.call("_refresh_hud")
+    var report: Dictionary=game.call("_prioritized_situations")[0]
+    if not game.dispatch_headline.visible or not game.dispatch_headline.text.contains(report["title"]):
+        push_error("VISUAL_CAPTURE_FAIL: current field dispatch is missing from the battlefield")
+        return false
+    game.dispatch_headline.pressed.emit()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if game.order_view.visible or not game.sim.paused or game.selected_id!=int(report["unit_id"]) or not game.situation_pin.is_equal_approx(report["pos"]) or not game.situation_detail.text.contains(report["reason"]):
+        push_error("VISUAL_CAPTURE_FAIL: report did not frame the observed event with its original evidence")
+        return false
+    if not _save_frame("field_dispatch.png"): return false
+    var support: Dictionary=game.sim.support_for_report(game.sim.find_unit(int(report["unit_id"])))
+    var btn: Button=game.situation_options[2]
+    if support.is_empty() or not btn.text.contains(support["name"]) or btn.disabled:
+        push_error("VISUAL_CAPTURE_FAIL: support preview does not identify an available commander")
+        return false
+    btn.pressed.emit()
+    if report["status"]!="전령 파견" or int(report["executor"])!=int(support["id"]) or not game.situation_record.text.contains(support["name"]):
+        push_error("VISUAL_CAPTURE_FAIL: issuing support did not retain the report and actual executor")
+        return false
+    game.situation_dialog.get_ok_button().pressed.emit()
+    await process_frame
+    if game.sim.paused or game.order_view.visible or game.situation_dialog.visible:
+        push_error("VISUAL_CAPTURE_FAIL: returning from the report did not resume the battlefield")
+        return false
+    for tick in range(1200):
+        game.call("_process",0.1)
+        if report["status"]=="실행 종료": break
+    game.sim.paused=true
+    game.situation_btn.pressed.emit()
+    var row: int=game.situation_ids.find(report["id"])
+    if row<0 or report["status"]!="실행 종료":
+        push_error("VISUAL_CAPTURE_FAIL: support order did not finish in the matched operation")
+        return false
+    game.situation_list.select(row)
+    game.situation_list.item_selected.emit(row)
+    await process_frame
+    await RenderingServer.frame_post_draw
+    for evidence in ["전령 파견","명령 수령","실행 종료",str(report["action_seen"]),"손실 %d" % report["loss_delta"]]:
+        if not game.situation_record.text.contains(evidence):
+            push_error("VISUAL_CAPTURE_FAIL: incomplete field response history")
+            return false
+    if not _save_frame("field_dispatch_outcome.png"): return false
+    game.situation_dialog.get_ok_button().pressed.emit()
+    await process_frame
+    if not game.sim.paused:
+        push_error("VISUAL_CAPTURE_FAIL: report unexpectedly unpaused a paused battle")
+        return false
+    print("FIELD_DISPATCH_PASS reporter=%s support=%s sent=%s received=%s resolved=%s damage=%d loss=%d" % [
+        game.sim.find_unit(int(report["unit_id"]))["name"],support["name"],game.call("_operation_clock",float(report["sent_at"])*game.sim.operation_scale()),
+        game.call("_operation_clock",float(report["received_at"])*game.sim.operation_scale()),game.call("_operation_clock",float(report["resolved_at"])*game.sim.operation_scale()),
+        report["damage_delta"],report["loss_delta"]])
     return true
 
 func _save_frame(filename: String) -> bool:
