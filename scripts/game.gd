@@ -2636,7 +2636,7 @@ func _open_briefing() -> void:
     if sim.scenario_id == 1:
         tactic = "고지에 화력을 집중하고 측면 지원군으로 접근로를 통제하십시오."
     elif sim.scenario_id == 2:
-        tactic = "보급기지 주변에 방어선을 정하고 기병을 기동 예비대로 운용하십시오."
+        tactic = "본진에 수비군을 남기십시오. 보급기지를 잃으면 그 주변의 배급이 끊깁니다."
     elif sim.scenario_id == 3:
         tactic = "수레 125 거리 내에 호위군을 유지하고 접근하는 적을 차단하십시오."
     elif sim.scenario_id==WarSim.TRAINING_SCENARIO:
@@ -3231,9 +3231,12 @@ func _quit_game(exit_code: int=0) -> void:
         if is_instance_valid(player):
             player.stop()
             player.stream=null
-    # The mixer releases the last playback on a later audio callback.
+            player.queue_free()
+    # A long simulation frame can expire a scene timer immediately. Let the real mixer drain.
     var tree:=get_tree()
-    tree.create_timer(0.25,true,false,true).timeout.connect(tree.quit.bind(exit_code))
+    var released_at:=Time.get_ticks_msec()+250
+    while Time.get_ticks_msec()<released_at: await tree.process_frame
+    tree.quit(exit_code)
 
 func _build_outcome_dialog() -> void:
     outcome_dialog = Control.new()

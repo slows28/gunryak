@@ -61,7 +61,5 @@ func _run() -> void:
     check(game.strategy_view.visible,"campaign UI opens")
     check(game.call("_launch_campaign_battle",1),"campaign UI launches real battle")
     check(game.sim.find_unit(0)["name"] == "왕평","campaign UI deployment")
-    game.queue_free()
-    await process_frame
     print("GUNRYAK_DEMO_PASS" if failures == 0 else "GUNRYAK_DEMO_FAIL "+str(failures))
-    quit(0 if failures == 0 else 1)
+    game._quit_game(0 if failures == 0 else 1)
