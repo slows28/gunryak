@@ -407,7 +407,7 @@ func _run() -> void:
     game.order_view.destination=Vector2(1000,800)
     game.order_view.has_destination=true
     game.order_view.call("_choose_action",2)
-    check(game.order_view.apply.disabled and game.order_view.feedback.text.contains("5턴"),"early draft shows the courier gate before submission")
+    check(game.order_view.apply.disabled and game.order_view.feedback.text.contains("5일차"),"early draft shows the courier gate before submission")
     game.order_view.call("_launch")
     check(not game.order_view.visible and not map_sim.paused,"return to battle without discarding an early draft")
     game.call("_open_order_map")
@@ -421,7 +421,7 @@ func _run() -> void:
     game.step_buffer=0.0
     game.call("_process",0.10)
     check(map_sim.turn==5 and game.order_view.in_battle and game.order_view.feedback.text.contains("파견 가능"),"entering turn five opens the actionable dispatch map")
-    check(game.order_view.visible and map_sim.paused,"midbattle map pauses simulation")
+    check(game.order_view.visible and map_sim.paused and game.order_view.title.text.contains("1차 중간회의"),"day five council pauses simulation")
     var next_dest:=Vector2(12,800)
     var reachable_dest:=Vector2(18,800)
     game.order_view.call("_select",1)

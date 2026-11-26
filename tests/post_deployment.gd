@@ -51,6 +51,7 @@ func _initialize() -> void:
     archer["ammo"]=40.0
     sim._supply_logic(0.1)
     check(archer["rations"]>40 and archer["ammo"]>40 and first["rations"]==archer["rations"],"all armies inside one radius replenish simultaneously")
+    _check_night_and_replies()
     _check_network()
     _check_supply_front()
     _check_crew_losses()
@@ -324,3 +325,67 @@ func _check_cavalry_intercept() -> void:
     crew["state"]="이동"
     s._decide(rider)
     check(rider["action"]=="보급부대 추격" and rider["goal"]==crew["pos"],"cavalry spots an exposed moving crew and pursues its actual position")
+
+func _check_night_and_replies() -> void:
+    var s := WarSim.new()
+    s.set_long_operation(true)
+    s.tactical_enabled = true
+    s.start()
+    var observer := s.find_unit(0)
+    var enemy := s.find_unit(3)
+    var home: Vector2 = s.headquarters[0]["pos"]
+    observer["pos"] = Vector2(630,780)
+    enemy["pos"] = Vector2(observer["pos"]) + Vector2(210,0)
+    for other in s.units:
+        if other != observer and other != enemy: other["troops"] = 0
+    check(s.day_caption() == "1일차 · 낮" and not s._nearest_visible_enemy(observer).is_empty(),"daylight identifies the distant contact")
+    s.battle_time = s.turn_duration() * 0.7
+    check(s.day_caption() == "1일차 · 밤" and s._nearest_visible_enemy(observer).is_empty(),"night conceals the same distant contact from the general")
+    check(is_equal_approx(s.watch_factor(home,0),0.85) and is_equal_approx(s.watch_factor(observer["pos"],0),0.55),"manned camp watch extends night vision")
+    s.bases[0]["pos"]=observer["pos"]
+    s.bases[0]["state"]="설치"
+    check(is_equal_approx(s.watch_factor(observer["pos"],0),0.55),"unfinished camp has no watch fires")
+    s.bases[0]["state"]="가동"
+    check(is_equal_approx(s.watch_factor(observer["pos"],0),0.85),"completed camp lights the watch")
+    s.bases[0]["alive"]=false
+    check(is_equal_approx(s.watch_factor(observer["pos"],0),0.55),"destroyed camp extinguishes its watch")
+    s.battle_time = s.turn_duration()
+    s.step(0.1)
+    check(s.day_caption() == "2일차 · 낮","dawn restores the day watch")
+    var report := {"id":801,"unit_id":0,"proposal":"사수","status":"대기","expires":100.0}
+    s.situation_reports.append(report)
+    check(not s.reply_to_report(801,true),"answers need an arrived report")
+    report["status"]="미대응"
+    var original: String=observer["mission"]
+    check(s.reply_to_report(801,false) and not s.reply_to_report(801,true),"a returned refusal cannot be answered twice")
+    check(report["reply_status"]=="이동 중" and observer["mission"]==original,"refusal rides back to the reporting commander")
+    s.couriers.back()["pos"]=observer["pos"]
+    s._update_couriers(0.1)
+    check(report["status"]=="불허 전달" and observer["mission"]==original and observer["tactical_order"]=="","refusal arrives and preserves existing orders")
+    var next := {"id":802,"unit_id":0,"proposal":"사수","status":"미대응","expires":100.0}
+    s.situation_reports.append(next)
+    check(s.reply_to_report(802,true) and observer["tactical_order"]=="","early approval travels without immediately changing the battle")
+    s.couriers.back()["pos"]=observer["pos"]
+    s._update_couriers(0.1)
+    check(next["reply_status"]=="회신 도착" and observer["tactical_order"]=="사수" and next["status"]=="명령 수령","received approval changes the reporting commander's actual orders")
+
+    var intercepted := {"id":803,"unit_id":0,"proposal":"재집결","status":"미대응","expires":100.0}
+    s.situation_reports.append(intercepted)
+    s.commanders[0]["pos"] = Vector2(350,800)
+    enemy["pos"] = s.commanders[0]["pos"]
+    check(s.reply_to_report(803,true),"a third request can receive its own decision")
+    s._update_couriers(0.1)
+    check(intercepted["status"]=="전령 차단" and intercepted["reply_status"]=="전령 차단" and observer["tactical_order"]=="사수","an intercepted approval never replaces an existing order")
+    enemy["troops"]=0
+    var across := {"id":804,"unit_id":0,"proposal":"재집결","status":"미대응","expires":100.0}
+    observer["pos"]=Vector2(s.river_x(640.0)+125,640)
+    s.commanders[0]["pos"]=Vector2(s.river_x(640.0)-90,640)
+    s.situation_reports.append(across)
+    check(s.reply_to_report(804,true),"dispatch a reply across the river")
+    var rider: Dictionary=s.couriers.back()
+    var wet:=false
+    for i in range(200):
+        s._update_couriers(0.1)
+        wet = wet or s.in_open_water(rider["pos"])
+        if s.couriers.is_empty(): break
+    check(not wet and rider["bridge_crossings"]==1 and across["status"]=="명령 수령","reply reaches the original sender through a real bridge")

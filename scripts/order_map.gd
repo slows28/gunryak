@@ -30,6 +30,8 @@ var font: Font
 var action_choice: OptionButton
 var action_buttons: Array[Button]=[]
 var label_areas: Array[Rect2]=[]
+var council_reports: Button
+var council_round := 0
 var goal_label: Label
 var progress_label: Label
 var action_description: Label
@@ -139,6 +141,8 @@ func configure(owner_game: Control,used_font: Font) -> void:
         _select(selected_id)
         feedback.text="이 군단의 미확정 변경을 취소했습니다.")
     _paper_button(cancel)
+    council_reports=_button("전령 회신",Vector2(1078,445),Vector2(177,33),func(): game.call("_open_situations"))
+    council_reports.hide()
     feedback=_label("",Vector2(274,727),Vector2(776,52),15,Color("#f3ecdc"))
     feedback.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     _button("상세 편성",Vector2(18,733),Vector2(126,41),func(): game.call("_open_planning"))
@@ -193,9 +197,11 @@ func _paper_button(button: Button) -> void:
     button.add_theme_color_override("font_hover_pressed_color",Color.WHITE)
 
 func open(mid_battle:bool=false)->void:
+    council_round = 0
+    council_reports.hide()
     in_battle=mid_battle
     goal_label.text="승리 목표   "+sim.scenario_goal
-    title.text=("%d턴 전령 지시" % sim.turn if mid_battle else "작전 지도")+"   /   "+sim.scenario_title
+    title.text=("%d일차 전령 지시" % sim.turn if mid_battle else "작전 지도")+"   /   "+sim.scenario_title
     progress_label.text="군단 선택 → 목적지 지정 → 지시 확정"
     launch.text="전장 복귀" if mid_battle else "전투 개시"
     placement.disabled=mid_battle
@@ -215,7 +221,7 @@ func open(mid_battle:bool=false)->void:
         roster.set_item_tooltip(roster.item_count-1,str(u["type"])+" · "+str(u["mission"]))
         roster.set_item_metadata(roster.item_count-1,id)
     feedback.text="군단 지시는 지도에 목적지를 찍어 작성하세요. 기지와 책사의 출발 위치는 오른쪽에서 지정합니다."
-    if mid_battle: feedback.text="5턴부터 전령을 보낼 수 있습니다. 명령은 전령이 도착하면 적용됩니다."
+    if mid_battle: feedback.text="5일차부터 전령을 보낼 수 있습니다. 명령은 전령이 도착하면 적용됩니다."
     if sim.commander_captured(0):
         title.text="작전 지도   /   "+sim.scenario_title
         feedback.text=sim.command_status(0)
@@ -238,6 +244,28 @@ func open(mid_battle:bool=false)->void:
     show()
     game.move_child(self,game.get_child_count()-1)
     queue_redraw()
+
+func open_council(number: int, day: int) -> void:
+    council_round = number
+    title.text = "%d차 중간회의   /   %d일차" % [number,day]
+    launch.text = "회의 마치기"
+    refresh_council()
+
+func refresh_council() -> void:
+    if council_round == 0: return
+    var reports: Array[Dictionary] = game._prioritized_situations()
+    var pending := reports.size()
+    var loss := 0
+    for unit in sim.units:
+        if unit["side"] == 0: loss += roundi(unit["casualties_taken"])
+    council_reports.show()
+    council_reports.text = "전령 회신  ·  %d건" % pending
+    council_reports.disabled = pending == 0
+    if not draft_dirty:
+        var agenda := "현재 접수한 추가 건의 없음"
+        if pending > 0: agenda = str(reports[0]["title"])
+        var authority: String = sim.command_status(0) if sim.commander_captured(0) else "전령 파견 가능"
+        feedback.text = "아군 잔존 %s명  ·  누적 전투 손실 %s명  ·  회신 대기 %d건\n%s  ·  %s" % [_troop_text(sim.total_troops(0)),_troop_text(loss),pending,authority,agenda]
 
 func _select(id:int)->void:
     var u:Dictionary=sim.find_unit(id)

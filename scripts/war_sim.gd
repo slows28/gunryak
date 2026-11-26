@@ -264,7 +264,7 @@ func _site_notice(side: int, message: String, point: Vector2) -> void:
     else: _log(message)
 
 func _log(message: String) -> void:
-    events.append("[%02d턴] %s" % [turn, message])
+    events.append("[%02d일차] %s" % [turn, message])
     if timeline.size() < 1200:
         timeline.append({"time":battle_time,"turn":turn,"message":message})
     if events.size() > 24:
@@ -402,7 +402,7 @@ func step(dt: float) -> void:
     _record_presentation()
 
 func _on_new_turn() -> void:
-    _log("작전 %d턴 진입" % turn)
+    _log("작전 %d일차 진입" % turn)
     if turn == COURIER_TURN and not commander_captured(0):
         _log("전령 명령 활성화 — 전달 시간은 책사 위치에서 계산")
     if tactical_enabled and turn >= COURIER_TURN and not commander_captured(0):
@@ -426,8 +426,13 @@ func _update_couriers(dt: float) -> void:
             continue
         var p: Vector2 = letter["pos"]
         var target_pos: Vector2 = target["pos"]
-        var route_goal: Vector2 = _courier_route(letter, target_pos)
-        letter["pos"] = p.move_toward(route_goal, 140.0 * dt)
+        var arrived: bool
+        if letter.has("reply_id") or letter.get("reply_support",false):
+            arrived = _advance_rider(letter,target_pos,dt)
+        else:
+            var route_goal: Vector2 = _courier_route(letter, target_pos)
+            letter["pos"] = p.move_toward(route_goal, 140.0 * dt)
+            arrived = (letter["pos"] as Vector2).distance_to(target_pos) < 16.0
         if _courier_intercepted(letter):
             intercepted_orders += 1
             _resolve_map_dispatch(letter,"차단")
@@ -435,8 +440,14 @@ func _update_couriers(dt: float) -> void:
             _site_notice(letter["side"],"%s에게 가던 전령이 차단됨" % str(target["name"]),letter["pos"])
             couriers.remove_at(i)
             continue
-        if (letter["pos"] as Vector2).distance_to(target_pos) < 16.0:
+        if arrived:
             delivered_orders += 1
+            if letter.has("verdict"):
+                _response_delivery(letter,"회신 도착")
+                GeneralMind.order(target,letter["verdict"]+" 회신 수령",battle_time)
+                if not letter.has("tactical_order"):
+                    couriers.remove_at(i)
+                    continue
             if letter.has("tactical_order"):
                 _deliver_tactical(target,letter)
                 couriers.remove_at(i)
@@ -806,7 +817,7 @@ func _can_see_base(unit: Dictionary, target_base: Dictionary) -> bool:
         return false
     var p: Vector2 = unit["pos"]
     var b: Vector2 = target_base["pos"]
-    return p.distance_to(b) < 210.0
+    return p.distance_to(b) < 210.0 * watch_factor(p,unit["side"])
 
 func _decide(unit: Dictionary) -> void:
     if command_confused(unit["side"]) and not unit["routed"]:
@@ -957,7 +968,7 @@ func _decide(unit: Dictionary) -> void:
         action = "기지 습격"
         reason = "보급기지 습격 지속: 마지막 관측 지점을 추적"
         goal = unit["raid_target"]
-    elif raid_allowed and unit["type"]=="기병" and enemy_distance>135.0 and enemy_crew["state"] in ["이동","회피"] and pos.distance_to(enemy_crew["pos"])<140.0 and not _in_forest(enemy_crew["pos"]) and (not long_operation or not _river_separates(pos,enemy_crew["pos"])):
+    elif raid_allowed and unit["type"]=="기병" and enemy_distance>135.0 and enemy_crew["state"] in ["이동","회피"] and pos.distance_to(enemy_crew["pos"])<140.0*watch_factor(pos,side) and not _in_forest(enemy_crew["pos"]) and (not long_operation or not _river_separates(pos,enemy_crew["pos"])):
         action="보급부대 추격"
         reason="노출된 적 수레를 발견해 추격"
         goal=enemy_crew["pos"]
@@ -1484,8 +1495,33 @@ func unit_exposure(unit: Dictionary) -> float:
         exposure *= 0.48
     return exposure
 
+# One operation day has a daylight march, dusk, night watch, and dawn.
+func night_depth() -> float:
+    if not long_operation or not started: return 0.0
+    var fraction := fposmod(battle_time, turn_duration()) / turn_duration()
+    return smoothstep(0.48,0.58,fraction) * (1.0 - smoothstep(0.86,1.0,fraction))
+
+func day_caption() -> String:
+    return "%d일차 · %s" % [turn,"밤" if night_depth() >= 0.5 else "낮"]
+
+const CAMP_LIGHT_RADIUS := 82.0
+
+func watch_factor(point: Vector2, side: int) -> float:
+    var dark := night_depth()
+    if dark <= 0.0: return 1.0
+    var night_range := 0.55
+    var home: Dictionary = headquarters[side]
+    if not home["occupied"] and point.distance_squared_to(home["pos"]) <= CAMP_LIGHT_RADIUS * CAMP_LIGHT_RADIUS:
+        night_range = 0.85
+    else:
+        for base in bases:
+            if base["side"] == side and base["alive"] and base["state"] == "가동" and point.distance_squared_to(base["pos"]) <= CAMP_LIGHT_RADIUS * CAMP_LIGHT_RADIUS:
+                night_range = 0.85
+                break
+    return lerpf(1.0,night_range,dark)
+
 func _vision_range(unit: Dictionary) -> float:
-    return AI_VISION_RANGE * (0.85 + _effective_stat(unit, "intelligence") * 0.002) * terrain_sight_factor(unit["pos"])
+    return AI_VISION_RANGE * (0.85 + _effective_stat(unit, "intelligence") * 0.002) * terrain_sight_factor(unit["pos"]) * watch_factor(unit["pos"],unit["side"])
 
 func _in_forest(p: Vector2) -> bool:
     for region in forests:
@@ -1994,7 +2030,7 @@ func _check_command_capture() -> void:
         c["captured"]=true
         c["goal"]=c["pos"]
         c["recover_at"]=battle_time+turn_duration()
-        _site_notice(side,_camp_side(side)+" 책사 생포 · 한 턴 동안 지휘 혼란",c["pos"])
+        _site_notice(side,_camp_side(side)+" 책사 생포 · 하루 동안 지휘 혼란",c["pos"])
         for i in range(couriers.size()-1,-1,-1):
             var letter: Dictionary=couriers[i]
             if letter["side"]!=side: continue
@@ -2362,7 +2398,7 @@ func _update_scouts(dt: float) -> void:
         var p: Vector2 = scout["pos"]
         var threat: Dictionary = {}
         var threat_d: float = 10000.0
-        var sight := 190.0 * terrain_sight_factor(p)
+        var sight := 190.0 * terrain_sight_factor(p) * watch_factor(p,side)
         for enemy in units:
             if int(enemy["side"]) == side or float(enemy["troops"]) <= 0.0 or bool(enemy["routed"]):
                 continue
@@ -2825,24 +2861,43 @@ func player_sees_enemy(unit: Dictionary) -> bool:
     return _player_observes(unit["pos"], unit_exposure(unit))
 
 func _player_observes(position: Vector2, factor: float) -> bool:
-    if not commander_captured(0) and (commanders[0]["pos"] as Vector2).distance_to(position) <= 170.0 * factor * terrain_sight_factor(commanders[0]["pos"]):
-        return true
+    if not commander_captured(0) and _within_watch(commanders[0]["pos"],position,170.0,factor): return true
     for unit in units:
-        if int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0 or bool(unit["routed"]):
-            continue
-        var sight: float = 200.0 * factor * (0.85 + _effective_stat(unit,"intelligence")*0.002)
-        sight *= terrain_sight_factor(unit["pos"])
-        if (unit["pos"] as Vector2).distance_to(position) <= sight:
-            return true
+        if unit["side"] == 0 and unit["troops"] > 0 and not unit["routed"] and _within_watch(unit["pos"],position,_corps_watch(unit),factor): return true
     for scout in scouts:
-        if int(scout["side"]) == 0 and bool(scout["alive"]) and (scout["pos"] as Vector2).distance_to(position) <= 145.0 * factor * terrain_sight_factor(scout["pos"]):
-            return true
+        if scout["side"] == 0 and scout["alive"] and _within_watch(scout["pos"],position,145.0,factor): return true
     return false
+
+func _corps_watch(unit: Dictionary) -> float:
+    return 200.0 * (0.85 + _effective_stat(unit,"intelligence") * 0.002)
+
+func _watch_range(origin: Vector2, radius: float) -> float:
+    return radius * terrain_sight_factor(origin) * watch_factor(origin,0)
+
+func _within_watch(origin: Vector2, point: Vector2, radius: float, factor: float) -> bool:
+    var distance := origin.distance_squared_to(point)
+    if distance > pow(radius * factor * 1.5,2.0): return false
+    return distance <= pow(_watch_range(origin,radius) * factor,2.0)
+
+func player_watch_posts() -> Array[Vector3]:
+    var sources: Array[Vector3] = []
+    if not commander_captured(0):
+        var p: Vector2 = commanders[0]["pos"]
+        sources.append(Vector3(p.x,p.y,_watch_range(p,170.0)))
+    for unit in units:
+        if unit["side"] == 0 and unit["troops"] > 0 and not unit["routed"]:
+            var p: Vector2 = unit["pos"]
+            sources.append(Vector3(p.x,p.y,_watch_range(p,_corps_watch(unit))))
+    for scout in scouts:
+        if scout["side"] == 0 and scout["alive"]:
+            var p: Vector2 = scout["pos"]
+            sources.append(Vector3(p.x,p.y,_watch_range(p,145.0)))
+    return sources
 
 func timeline_text() -> String:
     var lines: PackedStringArray = []
     for entry in timeline:
-        lines.append("%05.1f초 | %02d턴 | %s" % [float(entry["time"])*operation_scale(),int(entry["turn"]),str(entry["message"])])
+        lines.append("%05.1f초 | %02d일차 | %s" % [float(entry["time"])*operation_scale(),int(entry["turn"]),str(entry["message"])])
     return "\n".join(lines)
 
 func request_deputy_takeover(unit_id: int) -> bool:
@@ -3189,7 +3244,8 @@ func _scan_situations() -> void:
             continue
         situation_keys[key] = battle_time
         situation_serial += 1
-        if kind=="전선 압박" and proposal.is_empty(): proposal="지원"
+        if proposal.is_empty():
+            proposal = "지원" if kind in ["포위 위험","전선 압박"] else ("사수" if kind == "명령 이탈" else "재집결")
         var rider:=_field_rider(unit["pos"],side,-10-situation_serial*3)
         var report: Dictionary={"id":situation_serial,"unit_id":unit["id"],"title":str(unit["name"])+" · "+kind+(" / "+proposal+" 건의" if not proposal.is_empty() else ""),
             "kind":kind,"urgent":urgent,"side":side,"proposal":proposal,"pos":unit["pos"],"written_at":battle_time,"rider":rider,
@@ -3209,6 +3265,17 @@ func _scan_situations() -> void:
 
 # Follow actual courier and tactical execution, rather than treating dispatch as success.
 func _response_delivery(letter: Dictionary,status: String) -> void:
+    if letter.has("reply_id") and status not in ["명령 수령","명령 거부"]:
+        for report in situation_reports:
+            if report["id"] != letter["reply_id"]: continue
+            report["reply_status"] = status
+            if status == "회신 도착":
+                report["reply_at"] = battle_time
+                if letter["verdict"] == "불허":
+                    report["status"] = "불허 전달"
+                    report["resolved_at"] = battle_time
+            break
+        if status == "회신 도착": return
     var id: int=int(letter.get("report_id",-1))
     if id<0: return
     for report in situation_reports:
@@ -3231,6 +3298,7 @@ func _response_delivery(letter: Dictionary,status: String) -> void:
 func _update_response_outcomes() -> void:
     for report in situation_reports:
         var status: String=str(report["status"])
+        if finished and report.get("reply_status","") == "이동 중": report["reply_status"] = "종전 · 미전달"
         if status=="전령 파견" and finished:
             report["status"]="종전 · 미전달"
             continue
@@ -3291,6 +3359,45 @@ func support_for_report(target: Dictionary) -> Dictionary:
             best=ally
             best_score=score
     return best
+
+# A reply uses the reporting channel even during the preplanned opening days.
+# A support approval sends both the reporter's answer and the helper's order.
+func reply_to_report(report_id: int, approved: bool) -> bool:
+    if not tactical_enabled or not started or finished or commander_captured(0): return false
+    for report in situation_reports:
+        if report["id"] != report_id or report["status"] != "미대응": continue
+        if battle_time >= float(report["expires"]): return false
+        var sender := find_unit(report["unit_id"])
+        if sender.is_empty() or sender["troops"] <= 0: return false
+        var proposal := str(report.get("proposal",""))
+        if proposal not in ["재집결","사수","지원","철수"]: return false
+        var actor := sender
+        if approved and proposal == "지원":
+            actor = support_for_report(sender)
+            if actor.is_empty(): return false
+        var verdict := "허가" if approved else "불허"
+        var response := _field_rider(commanders[0]["pos"],0,-20-report_id*3)
+        response.merge({"unit_id":sender["id"],"mission":verdict+" 회신","verdict":verdict,"reply_id":report_id})
+        report["verdict"] = verdict
+        report["reply_status"] = "이동 중"
+        report["response"] = proposal if approved else "기존 임무 유지"
+        report["status"] = "전령 파견"
+        report["executor"] = actor["id"]
+        report["sent_at"] = battle_time
+        if approved:
+            var instruction := {"report_id":report_id,"tactical_order":proposal,"support_id":sender["id"] if proposal == "지원" else -1}
+            if actor == sender:
+                response.merge(instruction)
+            else:
+                instruction.merge(_field_rider(commanders[0]["pos"],0,-21-report_id*3))
+                instruction.merge({"unit_id":actor["id"],"mission":proposal,"reply_support":true})
+                couriers.append(instruction)
+        else:
+            response["report_id"] = report_id
+        couriers.append(response)
+        _log("%s 건의 %s · 회신 출발" % [sender["name"],verdict])
+        return true
+    return false
 
 func respond_situation(report_id: int, response: String) -> bool:
     if not tactical_enabled or not started or finished or commander_captured(0):
@@ -3472,9 +3579,9 @@ func _expand_layout() -> void:
     scenario_limit = [360.0,330.0,300.0,390.0,360.0,360.0][scenario_id]
     if six_armies and scenario_id == 0:
         outposts.append({"name":"중앙 동쪽 접근로","pos":Vector2(1370,850),"owner":-1,"challenger":-1,"progress":0.0,"hold":0.0})
-        scenario_goal = "6턴 이후 세 거점 중 두 곳을 8초 확보"
+        scenario_goal = "6일차 이후 세 거점 중 두 곳을 8초 확보"
     if scenario_id == 1:
-        scenario_goal = "6턴 이후 중앙 고지 30초 연속 확보"
+        scenario_goal = "6일차 이후 중앙 고지 30초 연속 확보"
     elif scenario_id == 2:
         scenario_goal = "300초 동안 아군 본진 사수"
     reserve_next = [36.0,36.0]
@@ -3984,7 +4091,7 @@ func map_order_issue(id: int, mission: String, destination: Vector2, partner: in
     if unit.is_empty() or int(unit["side"])!=0 or float(unit["troops"])<=0.0:
         return "지시할 수 있는 아군 군단을 선택하십시오."
     if not _valid_partner(unit,partner): return "현재 협동 대상에 지시를 연결할 수 없습니다."
-    if started and turn < COURIER_TURN: return "%d턴부터 전령을 파견할 수 있습니다." % COURIER_TURN
+    if started and turn < COURIER_TURN: return "%d일차부터 전령을 파견할 수 있습니다." % COURIER_TURN
     if started:
         for letter in couriers:
             if int(letter["unit_id"]) == id: return "이 군단에 이미 전령이 이동 중입니다."

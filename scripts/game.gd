@@ -96,7 +96,11 @@ var plan_deputy: OptionButton
 var plan_fog: CheckButton
 var plan_takeover: Button
 var map_mode: String = "선택"
-var fog_enabled: bool = false # Demo defaults to transparent battlefield; recon rules remain optional.
+var recon_selected := false
+var automatic_night_fog := false
+var fog_enabled: bool:
+    get: return recon_selected or automatic_night_fog
+    set(value): recon_selected = value
 var enemy_list: ItemList
 var enemy_tab: Button
 var friendly_tab: Button
@@ -173,7 +177,11 @@ var messenger_portrait: TextureRect
 var messenger_id: int=-1
 var arrival_rows: Array[Button] = []
 var arrival_messages: Array[Dictionary] = []
-var courier_map_seen := false
+var councils_held := 0
+var advanced_orders: Button
+var reply_yes: Button
+var reply_no: Button
+const WATCH_LIGHT = preload("res://scripts/watch_light.tres")
 var read_messengers: Dictionary={}
 var situation_stamp: Label
 var situation_current: Label
@@ -593,7 +601,9 @@ func _refresh_enemy_roster() -> void:
     friendly_tab.set_pressed_no_signal(not observing_enemy)
     enemy_tab.set_pressed_no_signal(observing_enemy)
     fog_button.set_pressed_no_signal(fog_enabled)
-    fog_button.text="정찰 시야" if fog_enabled else "전체 시야"
+    fog_button.disabled = automatic_night_fog
+    if is_instance_valid(plan_fog): plan_fog.disabled = automatic_night_fog
+    fog_button.text="야간 시야" if automatic_night_fog else ("정찰 시야" if fog_enabled else "전체 시야")
 
 # Actual activity takes priority over the strategic mission or inferred intent.
 func _field_action(u: Dictionary) -> String:
@@ -733,7 +743,8 @@ func _start() -> void:
     _show_friendly_roster()
     map_mode = "선택"
     runtime_notice = ""
-    courier_map_seen=false
+    councils_held=0
+    automatic_night_fog = false
     read_messengers.clear()
     next_combat_ms.clear()
     sim.start()
@@ -820,6 +831,7 @@ func _reset() -> void:
         return
     if highlight_active: _stop_highlight("초기화",false)
     sim.reset()
+    automatic_night_fog = false
     battle_samples.clear()
     recent_losses.clear()
     fallen_marks.clear()
@@ -858,18 +870,20 @@ func _commander_back() -> void:
     sim.reposition_commander(false)
     _refresh_hud()
 
-func _open_first_courier_map() -> void:
-    if courier_map_seen or not sim.started or sim.finished or sim.turn < WarSim.COURIER_TURN or sim.commander_captured(0): return
+func _open_due_council() -> void:
+    if not sim.started or sim.finished or councils_held >= 2: return
+    var due := 5 if councils_held == 0 else 10
+    if sim.turn < due or order_view.visible: return
     if sim.paused or title_screen.visible or strategy_view.visible: return
     for child in get_children():
         if child is Window and child.visible: return
     if highlight_active: _stop_highlight("전령 지시 개방",false)
     _open_order_map()
-    if not order_view.draft_dirty:
-        order_view.feedback.text="전령 파견 가능 · 군단과 목적지를 선택해 지시를 확정하세요."
+    councils_held += 1
+    order_view.open_council(councils_held,due)
 
 func _process(delta: float) -> void:
-    _open_first_courier_map()
+    _open_due_council()
     if sim.started and not sim.paused and not arrival_messages.is_empty():
         for i in range(arrival_messages.size()-1,-1,-1):
             arrival_messages[i]["remaining"]-=delta
@@ -897,7 +911,8 @@ func _process(delta: float) -> void:
             _update_contact_fronts(0.1)
             step_buffer -= 0.1
             ticks += 1
-            if not courier_map_seen and sim.turn >= WarSim.COURIER_TURN: _open_first_courier_map()
+            _update_night_watch()
+            _open_due_council()
             if highlight_active: _poll_highlight()
             if sim.finished or sim.paused:
                 break
@@ -930,21 +945,23 @@ func _process(delta: float) -> void:
         _show_outcome()
 
 func _refresh_hud() -> void:
-    var phase: String = "준비 중"
-    clock_label.text=_operation_clock(sim.operation_elapsed())
+    var phase: String = "출진 전"
+    clock_label.text="%d일차" % sim.turn
     battle_title_label.text = sim.scenario_title
     _refresh_objectives()
-    phase_label.text="북벌 전략 %d턴" % int(campaign.state["turn"]) if campaign_active else "작전 준비"
+    phase_label.text="북벌 전략 %d일차" % int(campaign.state["turn"]) if campaign_active else "작전 준비"
     if sim.finished:
         phase = "전투 종료"
         phase_label.text=sim.result
     elif sim.paused:
-        phase = "일시정지"
+        phase = "밤" if sim.night_depth() >= 0.5 else "낮"
+        phase += " · 정지"
         phase_label.text=sim.operation_phase()+"  |  제한 "+_operation_clock(sim.operation_limit())
     elif sim.started:
-        phase = "작전 %d턴" % sim.turn
+        phase = "밤" if sim.night_depth() >= 0.5 else "낮"
         phase_label.text = sim.operation_phase() + "  |  " + ("긴급 지휘력 %d / 4" % sim.command_points if sim.turn >= WarSim.COURIER_TURN else "초기 작전 수행 · 보고 수신")
-    turn_label.text=phase
+    turn_label.text = phase + "  " + _operation_clock(sim.operation_elapsed())
+    clock_label.tooltip_text = sim.day_caption()
     _refresh_enemy_roster()
     var enemy_text: String = "정찰 제한" if fog_enabled and not sim.finished else _number_text(sim.total_troops(1))
     friendly_strength.text=_number_text(sim.total_troops(0))
@@ -1003,7 +1020,7 @@ func _refresh_hud() -> void:
         highlight_button.text="탐색 중 · 중지" if highlight_active else "다음 주요 상황 ▶"
     _collect_journal()
     apply_btn.disabled = sim.started and (sim.turn < WarSim.COURIER_TURN or sim.finished or captured)
-    apply_btn.text = "초기 작전 설정" if not sim.started else "전령 보내기 (5턴~)"
+    apply_btn.text = "초기 작전 설정" if not sim.started else "전령 보내기 (5일차~)"
     start_btn.visible=not sim.started
     pause_btn.visible=sim.started
     live_order_button.disabled=sim.finished
@@ -1023,7 +1040,7 @@ func _refresh_hud() -> void:
         notice_label.text=""
     if not runtime_notice.is_empty(): notice_label.text=runtime_notice
     if sim.started and not sim.finished and captured and sim.command_confused(0):
-        notice_label.text="책사 생포 · 한 턴 동안 현 위치 방어"
+        notice_label.text="책사 생포 · 하루 동안 현 위치 방어"
     notice_label.tooltip_text=notice_label.text
 
 func _refresh_commander_desk() -> void:
@@ -1654,6 +1671,9 @@ func _draw_map(_canvas: Control) -> void:
             _draw_bridge(Vector2(sim.river_x(crossing),crossing))
     if camera_zoom<0.65:
         for tree in _visible_trees(): _draw_tree(tree,false,[])
+    var dark: float = sim.night_depth()
+    if dark > 0.0:
+        map_layer.draw_rect(map_rect,Color(0.045,0.095,0.22,0.72 * dark))
     if fog_enabled and sim.started and not sim.finished and visibility_texture != null:
         map_layer.draw_texture_rect(visibility_texture,map_rect,false)
     if sim.wide_field:
@@ -1666,7 +1686,9 @@ func _draw_map(_canvas: Control) -> void:
         for y in range(22,int(sim.field_size.y)-18,36):
             map_layer.draw_line(Vector2(270*sim.layout_scale,y),Vector2(270*sim.layout_scale,y+16),Color(COL_BLUE,0.5),1.5)
     for home in sim.headquarters:
-        _draw_field_site(0,home["pos"],1.08)
+        _draw_field_site(0,home["pos"],1.08,Color.WHITE.lerp(Color("#b3bdd1"),dark))
+        if dark > 0.0 and not home["occupied"] and (home["side"] == 0 or not fog_enabled or sim.player_can_see(home["pos"])):
+            _draw_watch_fire(home["pos"],WarSim.CAMP_LIGHT_RADIUS,dark)
     # Capture sites show control, contested progress and victory holds directly.
     for site in sim.outposts:
         var site_pos: Vector2 = _screen(site["pos"])
@@ -1698,6 +1720,8 @@ func _draw_map(_canvas: Control) -> void:
             map_layer.draw_arc(p,sim.supply_radius(),0,TAU,88,Color(rim,0.58),1.15/camera_zoom,true)
         var building: bool = base["state"] == "설치"
         _draw_field_site(2,p,0.96,Color(0.86,0.80,0.65,0.65) if building else Color.WHITE)
+        if dark > 0.0 and base["state"] == "가동":
+            _draw_watch_fire(p,WarSim.CAMP_LIGHT_RADIUS,dark)
         if building:
             var bar := Rect2(p + Vector2(-22,15)/camera_zoom, Vector2(44,4)/camera_zoom)
             map_layer.draw_rect(bar,Color("#372c22"))
@@ -1845,6 +1869,8 @@ func _draw_map(_canvas: Control) -> void:
         if field_view.has_point(unit["pos"]):
             _draw_unit(unit)
             _draw_combat_movement(unit)
+            if dark > 0.0:
+                _draw_watch_fire(Vector2(unit["pos"]) + _render_offset(unit["id"],unit["pos"]),20.0,dark)
     if not observing_enemy: _draw_cooperation_links()
     _draw_combat_effects()
     for home in sim.headquarters:
@@ -1907,6 +1933,14 @@ func _visible_trees() -> Array[Dictionary]:
         if view.has_point(tree["pos"]): result.append(tree)
     return result
 
+func _draw_watch_fire(center: Vector2, radius: float, dark: float) -> void:
+    var p := center + (Vector2(0,5) if radius < 30.0 else Vector2(8,5))
+    var strength := dark * (0.87 + 0.09 * sin(render_clock * 6.0 + p.x))
+    map_layer.draw_texture_rect(WATCH_LIGHT,Rect2(p - Vector2.ONE * radius,Vector2.ONE * radius * 2),false,Color(1,1,1,strength))
+    var size := maxf(1.0,1.0/camera_zoom)
+    map_layer.draw_line(p+Vector2(0,3)*size,p-Vector2(0,2)*size,Color(0.40,0.20,0.10,dark),1.5*size)
+    map_layer.draw_colored_polygon(PackedVector2Array([p-Vector2(2,1)*size,p-Vector2(-0.5,6)*size,p+Vector2(2,-1)*size]),Color(1,0.86,0.47,strength))
+
 func _draw_tree(tree: Dictionary,detail: bool,visible_units: Array) -> void:
     var index:int=int(tree["tile"])
     if index<0 or index>=forest_textures.size(): return
@@ -1929,6 +1963,7 @@ func _draw_tree(tree: Dictionary,detail: bool,visible_units: Array) -> void:
                 shade.a=minf(shade.a,lerpf(0.35,0.78,smoothstep(20.0,70.0,distance)))
         if fog_enabled and sim.started and not sim.finished and not sim.player_can_see(p):
             shade=Color(0.62,0.68,0.66,1.0)
+    shade *= Color.WHITE.lerp(Color("#737e9c"),sim.night_depth())
     map_layer.draw_texture_rect(texture,Rect2(p-size*TerrainArt.TREE_FOOT,size),false,shade)
 
 func _draw_depth_scene(soldiers:Array[Dictionary],trees:Array[Dictionary],visible_units:Array[Dictionary])->void:
@@ -2464,7 +2499,7 @@ func _build_planning_dialog() -> void:
     plan_deputy = _plan_option(root,"부장",["통솔형 부장","공격형 부장","책략형 부장"])
     plan_deputy.item_selected.connect(_change_deputy)
     plan_takeover = Button.new()
-    plan_takeover.text = "부상 장수 지휘 교체 전령 (5턴~)"
+    plan_takeover.text = "부상 장수 지휘 교체 전령 (5일차~)"
     root.add_child(plan_takeover)
     plan_takeover.pressed.connect(_request_takeover)
     var map_row := HBoxContainer.new()
@@ -2542,6 +2577,7 @@ func _change_scenario(index: int) -> void:
         return
     if highlight_active: _stop_highlight("전장 변경",false)
     if sim.set_scenario(index):
+        automatic_night_fog = false
         battle_samples.clear()
         recent_losses.clear()
         fallen_marks.clear()
@@ -2612,7 +2648,18 @@ func _open_timeline() -> void:
     timeline_view.text = sim.timeline_text() if sim.finished or not fog_enabled else "시야 제한 중에는 전체 타임라인을 공개하지 않습니다. 전투 종료 후 확인하거나 전체 관전 모드로 전환하세요."
     timeline_dialog.popup_centered()
 
+func _update_night_watch() -> void:
+    var night: bool = sim.started and not sim.finished and sim.night_depth() >= 0.5
+    if automatic_night_fog == night: return
+    automatic_night_fog = night
+    if night:
+        if observing_enemy: _show_friendly_roster()
+        _refresh_visibility()
+    if highlight_active: highlight_seen=FrontView.milestones(sim,fog_enabled)
+    _refresh_hud()
+
 func _toggle_fog(value: bool) -> void:
+    if automatic_night_fog: return
     if fog_enabled!=value:
         _clear_journal()
     fog_enabled = value
@@ -2629,7 +2676,7 @@ func _request_takeover() -> void:
         runtime_notice = "부장 지휘 교체 전령 파견"
         _refresh_hud()
     else:
-        plan_status.text = "지휘 교체 불가: 부상, 5턴 이후, 전령 중복 여부 확인"
+        plan_status.text = "지휘 교체 불가: 부상, 5일차 이후, 전령 중복 여부 확인"
 
 func _public_event(message: String) -> bool:
     # Conservative filtering of identifiable enemy-only events in limited view.
@@ -2748,7 +2795,7 @@ func _open_briefing() -> void:
     var story: String = ""
     if campaign_active and int(campaign.state["pending"]) >= 0:
         story = str(Campaign.NODES[int(campaign.state["pending"])]["story"])+"\n"
-    brief_text.text = story + "%s\n\n승리 목표: %s\n제한 시간: %s (기본 배속)\n\n권장 전략: %s\n\n1~4턴은 사전 작전을 수행합니다. 5턴이 시작되면 작전 지도에서 전령을 보낼 수 있습니다.\n장수별 능력과 성향, 정찰 정보, 보급을 고려하십시오." % [sim.scenario_title,sim.scenario_goal,_operation_clock(sim.operation_limit()),tactic]
+    brief_text.text = story + "%s\n\n승리 목표: %s\n제한 시간: %s (기본 배속)\n\n권장 전략: %s\n\n1~4일차에는 사전 작전을 수행합니다. 장수의 건의는 도착 즉시 회신할 수 있습니다. 5일차와 10일차에 중간회의가 열립니다.\n장수별 능력과 성향, 정찰 정보, 보급을 고려하십시오." % [sim.scenario_title,sim.scenario_goal,_operation_clock(sim.operation_limit()),tactic]
     brief_dialog.popup_centered()
 
 func _open_analysis() -> void:
@@ -3443,7 +3490,7 @@ func _show_outcome() -> void:
         if not battle_recorded:
             battle_recorded = campaign.conclude(sim)
             campaign.save()
-        outcome_text.text += "  /  전략 %d턴" % int(campaign.state["turn"])
+        outcome_text.text += "  /  전략 %d일차" % int(campaign.state["turn"])
     for child in outcome_cards.get_children():
         outcome_cards.remove_child(child)
         child.queue_free()
@@ -3637,7 +3684,7 @@ func _build_demo_help() -> void:
     tutorial_dialog = AcceptDialog.new()
     tutorial_dialog.title = "군략 · 첫 출전 안내"
     tutorial_dialog.ok_button_text = "확인"
-    tutorial_dialog.dialog_text = "0. 기본 전체 시야: 아군/적군 탭에서 양 진영 활동과 병력을 확인합니다. C: 최근 교전 위치, V: 정찰 시야 전환.\n1. 전략 지도에서 인접 지역을 선택합니다. 군량 55가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 종이 작전 지도에서 부대 말·목적지·행동·연계 대상을 지정합니다.\n4. 기본 배속 전투는 약 25분. 장수는 자율적으로 판단하며 5턴이 시작되면 작전 지도가 열립니다. 전령은 지시를 확정하면 출발합니다. 긴급 보고를 열어 지원·사수·재집결·철수 지시를 내릴 수 있습니다.\n5. 숫자 1~6 장수 선택, Space 일시정지, 휠 확대, 방향키/가운데 마우스 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
+    tutorial_dialog.dialog_text = "0. 기본 전체 시야: 아군/적군 탭에서 양 진영 활동과 병력을 확인합니다. C: 최근 교전 위치, V: 정찰 시야 전환.\n1. 전략 지도에서 인접 지역을 선택합니다. 군량 55가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 종이 작전 지도에서 부대 말·목적지·행동·연계 대상을 지정합니다.\n4. 기본 배속 전투는 약 25분. 장수는 자율적으로 판단하며 5일차와 10일차에 중간회의가 열립니다. 밤에는 시야가 줄고 본진과 기지에 불이 켜집니다. 좌측 전령 보고에서 건의에 허가·불허를 회신하세요.\n5. 숫자 1~6 장수 선택, Space 일시정지, 휠 확대, 방향키/가운데 마우스 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
     add_child(tutorial_dialog)
     retreat_dialog = ConfirmationDialog.new()
     retreat_dialog.title = "전투 철수"
@@ -3818,6 +3865,22 @@ func _build_situations() -> void:
     situation_current=_body_text(layout,14,COL_BLUE)
     situation_record=_body_text(layout,14,COL_BLUE)
     for label in [situation_heading,situation_stamp,situation_detail,situation_current,situation_record]: label.custom_minimum_size.x=350
+    var verdicts := HBoxContainer.new()
+    layout.add_child(verdicts)
+    reply_yes = Button.new()
+    reply_yes.text = "허가 회신"
+    _primary_button(reply_yes)
+    reply_no = Button.new()
+    reply_no.text = "불허 회신"
+    advanced_orders = Button.new()
+    advanced_orders.text = "별도 지시"
+    advanced_orders.toggle_mode = true
+    for b in [reply_yes,reply_no,advanced_orders]:
+        b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        verdicts.add_child(b)
+    reply_yes.pressed.connect(_reply_to_report.bind(true))
+    reply_no.pressed.connect(_reply_to_report.bind(false))
+    advanced_orders.toggled.connect(func(_on: bool): _refresh_situations())
     var row := GridContainer.new()
     row.columns=3
     row.add_theme_constant_override("h_separation",6)
@@ -3859,6 +3922,7 @@ func _open_situations(preferred_report: int=-1) -> void:
 
 func _close_situations() -> void:
     situation_pin=Vector2.INF
+    if order_view.visible: order_view.refresh_council()
     if sim.started and not sim.finished: sim.paused=situation_pause_before
     _refresh_hud()
     map_layer.queue_redraw()
@@ -3880,6 +3944,7 @@ func _refresh_situations(preferred_report: int=-1) -> void:
         situation_current.text=""
         situation_detail.text="장수의 보고가 도착하면 이곳에서 확인할 수 있습니다."
         situation_record.text=""
+        for btn in [reply_yes,reply_no,advanced_orders]: btn.hide()
         for btn in situation_options: btn.hide()
         return
     var index: int=maxi(0,situation_ids.find(preferred_report if preferred_report>=0 else situation_selected))
@@ -3895,6 +3960,7 @@ func _select_situation(index: int) -> void:
         var point: Vector2=report["pos"]
         var unit: Dictionary=sim.find_unit(int(report["unit_id"]))
         if situation_selected!=id:
+            advanced_orders.set_pressed_no_signal(false)
             situation_pin=point
             situation_notice=""
             _frame_milestone({"point":point,"unit_id":unit.get("parent_id",report["unit_id"])})
@@ -3918,17 +3984,27 @@ func _select_situation(index: int) -> void:
         var pending: bool=report["status"]=="미대응"
         if pending:
             var remaining: float=maxf(0.0,float(report.get("expires",sim.battle_time))-sim.battle_time)*sim.operation_scale()
-            situation_record.text="응답까지 남은 시간 %s   ·   지휘력 %d/4" % [_operation_clock(remaining),sim.command_points]
-            if sim.turn < WarSim.COURIER_TURN: situation_record.text+="\n5턴부터 전령 파견 가능"
+            situation_record.text="회신 기한  %s" % _operation_clock(remaining)
+            if advanced_orders.button_pressed: situation_record.text+="  ·  별도 지시는 5일차부터  ·  지휘력 %d/4" % sim.command_points
         else: situation_record.text=_situation_outcome(report)
         if not situation_notice.is_empty(): situation_record.text+="\n"+situation_notice
         if report.has("relief_answer"): situation_record.text+="\n"+str(report["relief_answer"])
         var helper: Dictionary=sim.support_for_report(unit) if pending and not unit.is_empty() else {}
         if pending and not helper.is_empty() and not sim.commander_captured(0):
             situation_current.text+="\n지원 후보  ·  %s  /  현재 임무 %s" % [helper["name"],helper["mission"]]
+        var proposal: String = report.get("proposal","")
+        var can_reply: bool = pending and not proposal.is_empty()
+        reply_yes.visible = can_reply
+        reply_no.visible = can_reply
+        advanced_orders.visible = pending
+        var locked: bool = sim.commander_captured(0) or unit.get("troops",0.0) <= 0
+        reply_yes.disabled = locked or (proposal == "지원" and helper.is_empty())
+        reply_no.disabled = locked
+        reply_yes.tooltip_text = proposal+" 허가" if not reply_yes.disabled else "지원할 군단 또는 지휘 가능한 책사가 필요합니다."
+        if can_reply: situation_heading.text += "  ·  "+proposal+" 건의"
         for btn in situation_options:
             var order: String=btn.get_meta("order")
-            btn.visible=pending
+            btn.visible=pending and (advanced_orders.button_pressed or not can_reply)
             if order=="지원": btn.text=str(helper["name"])+" 지원" if not helper.is_empty() else "지원군 없음"
             var unavailable: bool=helper.is_empty() if order=="지원" else sim.has_pending_courier(int(report["unit_id"]))
             btn.disabled=sim.commander_captured(0) or unit.is_empty() or float(unit.get("troops",0.0))<=0.0 or (order!="현장 판단" and (sim.turn < WarSim.COURIER_TURN or sim.command_points<=0 or unavailable))
@@ -3937,6 +4013,8 @@ func _select_situation(index: int) -> void:
 func _situation_outcome(report: Dictionary) -> String:
     var lines: Array[String]=[]
     var status: String=report["status"]
+    if report.has("verdict"):
+        lines.append("%s 회신  ·  %s" % [report["verdict"],report["reply_status"]])
     if report.has("sent_at"):
         var actor: Dictionary=sim.find_unit(int(report["executor"]))
         lines.append("%s  전령 파견   ·   %s에게 %s" % [_operation_clock(float(report["sent_at"])*sim.operation_scale()),actor.get("name","아군"),report["response"]])
@@ -3953,6 +4031,11 @@ func _situation_outcome(report: Dictionary) -> String:
     if report.get("executed",false):
         lines.append("%s   ·   가한 피해 %d / 손실 %d" % [report["action_seen"],report["damage_delta"],report["loss_delta"]])
     return "\n".join(lines)
+
+func _reply_to_report(approved: bool) -> void:
+    situation_notice = "" if sim.reply_to_report(situation_selected,approved) else "회신할 수 없습니다. 발신 부대와 회신 기한을 확인하세요."
+    _refresh_situations()
+    _refresh_hud()
 
 func _respond_situation(order: String) -> void:
     if situation_selected<0: return
@@ -3992,10 +4075,15 @@ func _refresh_visibility() -> void:
     # Only an indication of the same actual player visibility used for unit disclosure.
     # Cached low-resolution mask; no simulation advantage from rendering.
     var image := Image.create_empty(90,57,false,Image.FORMAT_RGBA8)
+    var observers: Array[Vector3] = sim.player_watch_posts()
     for y in range(57):
         for x in range(90):
             var p: Vector2 = Vector2((float(x)+0.5)/90.0,(float(y)+0.5)/57.0)*sim.field_size
-            var visible_now: bool = sim.player_can_see(p)
+            var visible_now := false
+            for watch in observers:
+                if p.distance_squared_to(Vector2(watch.x,watch.y)) <= watch.z*watch.z:
+                    visible_now = true
+                    break
             image.set_pixel(x,y,Color(0.025,0.045,0.045,0.0 if visible_now else 0.43))
     visibility_texture = ImageTexture.create_from_image(image)
     visibility_stamp = sim.battle_time
@@ -4151,7 +4239,6 @@ func _open_order_map() -> void:
     order_pause_before=sim.paused
     if sim.started: sim.paused=true
     order_view.open(sim.started)
-    if sim.started and sim.turn >= WarSim.COURIER_TURN and not sim.commander_captured(0): courier_map_seen=true
 
 func _return_to_battle() -> void:
     sim.paused=order_pause_before

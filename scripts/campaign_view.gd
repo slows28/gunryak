@@ -138,7 +138,7 @@ func refresh() -> void:
     if not is_instance_valid(resources):
         return
     var state: Dictionary = campaign.state
-    resources.text = "전략 %d턴   군자금 %d   군량 %d   예비병 %d   점령 %d/6   승 %d / 패 %d" % [state["turn"],state["gold"],state["food"],state["pool"],state["owned"].size(),state["victories"],state["defeats"]]
+    resources.text = "전략 %d일차   군자금 %d   군량 %d   예비병 %d   점령 %d/6   승 %d / 패 %d" % [state["turn"],state["gold"],state["food"],state["pool"],state["owned"].size(),state["victories"],state["defeats"]]
     if state["complete"]:
         region_info.text = "북벌 데모 완주 — 천수 확보. 전략 기록을 저장하고 다른 경로에 도전하십시오."
     elif state["failed"]:
@@ -255,7 +255,7 @@ func _recruit() -> void:
 func _assign() -> void:
     _tell(campaign.assign(selected_slot,selected_officer),"장수 배치 완료")
 func _rest() -> void:
-    _tell(campaign.rest(),"휴식 및 전략 턴 진행")
+    _tell(campaign.rest(),"하루 휴식 및 전략 일자 진행")
 func _resupply() -> void:
     _tell(campaign.resupply(),"군량 45 확보")
 func _save() -> void:

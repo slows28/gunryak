@@ -701,6 +701,10 @@ func _capture() -> void:
     var additional_steps: int = 0
     while not bool(simulator.get("finished")) and additional_steps < 4200:
         game.call("_process", 0.1)
+        if game.order_view.visible:
+            if simulator.turn != 10 or game.order_view.council_round != 2 or not simulator.paused: quit(1); return
+            if not await _deployment_frame("day_ten_council.png"): quit(1); return
+            game.order_view.launch.pressed.emit()
         additional_steps += 1
     if not bool(simulator.get("finished")):
         push_error("VISUAL_CAPTURE_FAIL: unable to reach post-battle report")
@@ -1242,6 +1246,7 @@ func _capture_field_report() -> bool:
         return false
     if not _save_frame("field_dispatch.png"): return false
     var support: Dictionary=game.sim.support_for_report(game.sim.find_unit(int(report["unit_id"])))
+    if game.advanced_orders.visible: game.advanced_orders.button_pressed = true
     var btn: Button=game.situation_options[2]
     if support.is_empty() or not btn.text.contains(support["name"]) or btn.disabled:
         push_error("VISUAL_CAPTURE_FAIL: support preview does not identify an available commander")
