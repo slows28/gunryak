@@ -413,40 +413,23 @@ static func campaign_map(nodes: Array, owned: Array) -> ImageTexture:
             image.set_pixel(x,y,c)
     return ImageTexture.create_from_image(image)
 
-# Soft, irregular translucent texture generated once. It is used only for actual
-# soil-contact particles, not baked into terrain or screenshot artwork.
+# Tapered wake built once. Noise breaks the edge into thin wisps while the
+# shaded lower ridge stays close to the feet that disturbed the ground.
 static func dust_cloud() -> ImageTexture:
-    var img:=Image.create_empty(64,64,false,Image.FORMAT_RGBA8)
-    var noise:=FastNoiseLite.new()
-    noise.seed=381
-    noise.frequency=0.095
-    noise.fractal_octaves=3
-    for y in range(64):
-        for x in range(64):
-            var p:=Vector2(x,y)
-            var d: float=(p-Vector2(31.5,31.5)).length()/31.5
-            var n: float=noise.get_noise_2d(x,y)*0.5+0.5
-            var a: float=pow(maxf(0.0,1.0-d),1.3)*(0.45+0.55*n)
-            var c: Color=Color("#baa17d").lerp(Color("#e2c89b"),n)
-            c.a=a
-            img.set_pixel(x,y,c)
-    return ImageTexture.create_from_image(img)
-
-# A low strip of disturbed soil with a frayed tail and a denser leading edge.
-static func contact_dust() -> ImageTexture:
-    var image := Image.create_empty(64, 24, false, Image.FORMAT_RGBA8)
+    var image := Image.create_empty(88, 40, false, Image.FORMAT_RGBA8)
     var noise := FastNoiseLite.new()
     noise.seed = 5813
-    noise.frequency = 0.14
-    for x in range(64):
-        var along := float(x) / 63.0
-        var spine := 11.5 + 3.0 * sin(along * 8.0) + noise.get_noise_2d(x, 0) * 3.0
-        var density := smoothstep(0.0, 0.68, along) * (1.0 - smoothstep(0.79, 1.0, along))
-        for y in range(24):
+    noise.frequency = 0.094
+    for x in range(88):
+        var along := float(x) / 87.0
+        var spine := 20.0 + sin(along * 8.0) * 3.5 + noise.get_noise_2d(x, 1) * 5.0
+        var density := smoothstep(0.0, 0.42, along) * (1.0 - smoothstep(0.76, 1.0, along))
+        for y in range(40):
             var grain := noise.get_noise_2d(x, y) * 0.5 + 0.5
-            var rim := absf(float(y) - spine) / (2.8 + 7.0 * (1.0 - along))
-            var soil := Color("#987c5b").lerp(Color("#c6ad85"), grain)
-            soil.a = density * (1.0 - smoothstep(0.0, 0.55 + grain, rim)) * smoothstep(0.15, 0.75, grain)
+            var height := (float(y) - spine) / (5.0 + (1.0 - along) * 9.0)
+            var edge := 1.0 - smoothstep(0.1, 0.35 + grain * 1.5, absf(height))
+            var soil := Color("#aa8e65").lerp(Color("#decca4"), clampf(grain - height * 0.30, 0.0, 1.0))
+            soil.a = density * edge * smoothstep(0.08, 0.79, grain)
             image.set_pixel(x, y, soil)
     return ImageTexture.create_from_image(image)
 

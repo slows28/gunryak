@@ -141,7 +141,6 @@ var map_clip: Control
 var camera_zoom: float = 1.0
 var camera_center: Vector2 = MAP_SIZE * 0.5
 var visibility_texture: ImageTexture
-var contact_dust: ImageTexture
 var dust_texture: ImageTexture
 var visibility_stamp: float = -100.0
 var render_clock: float = 0.0
@@ -233,7 +232,6 @@ func _ready() -> void:
     _build_map_layer()
     _rebuild_terrain()
     dust_texture = TerrainArt.dust_cloud()
-    contact_dust = TerrainArt.contact_dust()
     _reset_camera()
     _build_interface()
     _build_presentation()
@@ -1915,7 +1913,7 @@ func _draw_depth_scene(soldiers:Array[Dictionary],trees:Array[Dictionary],visibl
         else:
             var item:Dictionary=soldiers[si]
             _draw_soldier(item["point"],item["unit"],item["accent"],int(item["index"]),
-                item["target"],float(item["bow_age"]),bool(item["shadow"]))
+                item["target"],float(item["bow_age"]),bool(item["shadow"]),item["reaction"])
             si+=1
 
 func _update_contact_fronts(dt: float) -> void:
@@ -2047,10 +2045,13 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         formation_render_cache.clear()
         contact_cache_step=sim.step_count
     var volleys: Dictionary={}
+    var impacts: Dictionary={}
     for fx in sim.visual_effects:
         var age: float=render_clock-float(fx["time"])
         if fx["kind"]=="화살" and age>=0.0 and age<FrontView.VOLLEY_RECOVERY+FrontView.volley_lane_delay(2) and _combat_effect_visible(fx):
             volleys[int(fx["attacker_id"])]=fx
+        if fx.has("defender_id") and age >= 0.0 and age < (1.1 if fx["kind"] == "화살" else 0.26) and _combat_effect_visible(fx):
+            _collect_impact(impacts, fx, age)
     for unit in visible_units:
         if not field_view.has_point(unit["pos"]): continue
         var accent: Color=COL_BLUE if int(unit["side"])==0 else COL_RED
@@ -2099,6 +2100,7 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         var march_offset:=_render_offset(id,center)
         var scatter: float=(100.0-float(unit["cohesion"]))*0.045
         if bool(unit["routed"]): scatter+=6.5
+        var incoming: Array = impacts.get(id, [])
         var last_attack_age: float=render_clock-float(unit.get("last_visual",-100.0))
         for index in range(draw_count):
             var point: Vector2=display_slots[index]+march_offset
@@ -2126,10 +2128,33 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             if point!=display_slots[index] and sim.in_open_water(point): point=display_slots[index]
             point=point.clamp(Vector2.ZERO,sim.field_size)
             batch.append({"point":point,"unit":unit,"accent":accent,"index":index,"target":local_target,
-                "bow_age":bow_age,"shadow":index<core})
+                "bow_age":bow_age,"shadow":index<core,"reaction":FrontView.hit_reaction(point, index, incoming)})
     batch.sort_custom(func(a:Dictionary,b:Dictionary)->bool: return (a["point"] as Vector2).y<(b["point"] as Vector2).y)
     return batch
 
+
+# Only visible damage events can make a file flinch. An archer's target reacts
+# when that lane lands, after its release delay and flight.
+func _collect_impact(impacts: Dictionary, fx: Dictionary, age: float) -> void:
+    var arrow: bool = fx["kind"] == "화살"
+    var lanes: Array = fx.get("arrow_lanes", [fx.get("visual_from", fx["from"]), fx.get("visual_to", fx["to"])])
+    for i in range(0, lanes.size(), 2):
+        var origin: Vector2 = lanes[i]
+        var target: Vector2 = lanes[i+1]
+        var elapsed := age
+        if arrow:
+            if fog_enabled and not sim.finished and (not sim.player_can_see(origin) or not sim.player_can_see(target)): continue
+            elapsed = FrontView.arrow_age(age, i >> 1) - _arrow_flight(origin, target)
+        if elapsed < 0.0 or elapsed >= 0.26: continue
+        var defender: int = fx["defender_id"]
+        if not impacts.has(defender): impacts[defender] = []
+        var direction := (fx["from"] as Vector2).direction_to(fx["to"])
+        impacts[defender].append({"target":target, "direction":direction, "age":elapsed,
+            "radius":24.0 if fx["kind"] == "돌격" else (12.0 if arrow else 15.0)})
+
+func _arrow_flight(origin: Vector2, target: Vector2) -> float:
+    var launch := origin + (origin.direction_to(target)*2.4 + Vector2(0,-6.0))*SOLDIER_SCALE
+    return clampf(launch.distance_to(target + Vector2(0,-3.4)*SOLDIER_SCALE)/390.0, 0.17, 0.45)
 
 func _nearest_volley_lane(point: Vector2, lanes: Array[Vector2]) -> int:
     var selected: int=0
@@ -2142,7 +2167,7 @@ func _nearest_volley_lane(point: Vector2, lanes: Array[Vector2]) -> int:
     return selected
 
 func _render_offset(id: int, center: Vector2) -> Vector2:
-    if sim.started and not sim.finished and not sim.paused and previous_centers.has(id):
+    if sim.started and not sim.finished and previous_centers.has(id):
         var previous: Vector2=previous_centers[id]
         return previous.lerp(center,clampf(step_buffer/0.1,0.0,1.0))-center
     return Vector2.ZERO
@@ -2234,7 +2259,7 @@ func _draw_unit(unit: Dictionary) -> void:
         if deformed_slot_cache.has(id): drawn_slots=deformed_slot_cache[id]
         elif formation_render_cache.has(id): drawn_slots=formation_render_cache[id]
         else: drawn_slots=_contact_slots(unit,_visual_slots(unit))
-    _draw_corps_standard(unit,p,accent.a)
+    _draw_corps_standard(unit,p+_render_offset(id,p),accent.a)
     var forward: Vector2 = unit["facing"]
     if detailed_map:
         map_layer.draw_line(p + forward*22.0, p + forward*35.0, Color(accent,0.8), 1.8)
@@ -2777,32 +2802,36 @@ func _soldier_region(unit: Dictionary) -> Rect2:
 
 # Read-only pose selection. Attack frames follow the actual emitted combat event.
 # The sim clock freezes in pause; marching phase is scaled to operation time.
-func _soldier_pose(unit: Dictionary, index: int, now: float) -> int:
+func _soldier_pose(unit: Dictionary, index: int, now: float, in_reach: bool = true) -> int:
     if not sim.started or sim.finished: return -1
     var kind: String = str(unit["type"])
-    var moving: bool = float(unit.get("motion_speed",0.0))>2.0
+    var moving := float(unit.get("stride_step", float(unit.get("motion_speed", 0.0)) * 0.1)) > 0.12
     var routed: bool = bool(unit.get("routed",false))
-    if not routed and now>=float(unit.get("last_hit",-100.0)) and now-float(unit.get("last_hit",-100.0))<0.09 and index%7==0:
-        return 5
     var age: float = now-float(unit.get("last_visual",-100.0))
-    if kind!="궁병" and not routed:
+    if kind!="궁병" and not routed and in_reach:
         if age>=0.0 and age<0.27:
             return 3 if age<0.11 else 4
         if int(unit.get("contact_troops",0))>0 and age>=0.36 and age<=0.65:
             return 2
     if moving:
-        var cadence: float = 7.0 if kind=="기병" else (4.8 if routed else 3.6)
-        return posmod(floori(now*sim.operation_scale()*cadence+float(index%5)*0.23),2)
+        return 0 if sin(_stride_phase(unit, index)) >= 0.0 else 1
     return -1
+
+func _stride_phase(unit: Dictionary, index: int) -> float:
+    var distance: float = unit.get("stride_distance", 0.0)
+    if not sim.finished:
+        distance -= float(unit.get("stride_step", 0.0)) * (1.0 - clampf(step_buffer / 0.1, 0.0, 1.0))
+    var cycle := 22.0 if unit["type"] == "기병" else 13.0
+    return TAU * distance / cycle + index * 2.39996
 
 func _soldier_motion_region(base: Rect2,pose: int) -> Rect2:
     return Rect2(base.position+Vector2(pose*288,0),base.size)
 
-func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, target: Vector2, bow_age: float, draw_shadow: bool) -> void:
+func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, target: Vector2, bow_age: float, draw_shadow: bool, reaction: Vector2) -> void:
     var direction: Vector2 = unit["facing"]
     if target!=Vector2.INF and not bool(unit["routed"]) and p.distance_squared_to(target)>0.1:
         direction=(target-p).normalized()
-    var moving: bool = float(unit.get("motion_speed",0.0)) > 2.0 and sim.started and not sim.finished
+    var moving: bool = float(unit["stride_step"]) > 0.12 and sim.started and not sim.finished
     var kind: int = 1 if str(unit["type"])=="궁병" else (2 if str(unit["type"])=="기병" else 0)
     # The atlas uses a shared foot anchor. Taller silhouettes, compact lateral footprint.
     var extent: Vector2 = (Vector2(13,18) if kind==2 else Vector2(9,13))*SOLDIER_SCALE
@@ -2810,8 +2839,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     # Front and rear ranks no longer perform the same thrust on every tick.
     var visual_contact: bool=target!=Vector2.INF
     var delay: float=float(index%5)*0.026
-    var pose: int = _soldier_pose(unit,index,render_clock-delay)
-    if not visual_contact and pose in [2,3,4]: pose=-1
+    var pose: int = _soldier_pose(unit,index,render_clock-delay,visual_contact)
     var aiming: FrontView.BowPhase=FrontView.bow_phase(bow_age)
     var tilt: float=0.0
     if aiming!=FrontView.BowPhase.IDLE:
@@ -2829,30 +2857,26 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
             FrontView.BowPhase.LOWER:
                 pose=4
                 tilt=lerpf(0.06,0.19,smoothstep(FrontView.VOLLEY_RELEASE+0.075,FrontView.VOLLEY_RECOVERY,bow_age))
-    var phase: float = render_clock*sim.operation_scale()*(13.0 if kind==2 else 9.0)+index*1.7
-    var hit: bool = sim.battle_time-float(unit.get("last_hit",-100.0))<0.16 and index%4==0
+    var ground := p
     if moving:
-        var stride: float=sin(phase)*SOLDIER_SCALE
-        p+=direction*stride*(2.0 if kind==2 else 1.0)
-        p.y+=stride*0.9
-    if moving and kind == 2 and unit["charge"] > 0.0:
-        var gallop := smoothstep(8.0, 80.0, unit["charge"])
-        var stride_phase := render_clock * 16.0 + float(index % 7) * 0.7
-        var extension := sin(stride_phase)
-        p += direction * extension * 2.4 * gallop * SOLDIER_SCALE
-        p.y -= maxf(0.0, extension) * 2.0 * gallop * SOLDIER_SCALE
-        tilt = (0.12 + 0.06 * extension) * gallop
-        extent.x *= 1.0 + gallop * (0.14 + 0.08 * extension)
+        var stride := sin(_stride_phase(unit, index))
+        var gallop := smoothstep(8.0, 80.0, unit["charge"]) if kind == 2 else 0.0
+        p.y -= absf(stride) * (0.65 + gallop * 1.7) * SOLDIER_SCALE
+        tilt += stride * 0.028 + gallop * 0.12
+        if gallop > 0.0: extent.x *= 1.0 + gallop * (0.10 + stride * 0.06)
+    var hit := reaction.length_squared() > 0.025
+    if hit:
+        p += reaction * SOLDIER_SCALE * 2.6
+        pose = 5
     if pose==3 and kind!=1 and visual_contact:
         p+=direction*(3.5 if kind==2 else 2.2)*SOLDIER_SCALE
     elif pose==2 and kind!=1: p-=direction*0.8*SOLDIER_SCALE
-    if hit: p-=direction*SOLDIER_SCALE
     var variation: float=0.95+float(posmod(index*17+int(unit["id"])*7,11))*0.012
-    var shade: Color = Color(1.0,0.78,0.70,accent.a) if hit else Color(variation,variation,variation,accent.a)
+    var shade: Color = Color(0.95,0.88,0.79,accent.a) if hit else Color(variation,variation,variation,accent.a)
     var map_offset: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
     # A shared shadow under each small file keeps densely packed feet readable.
     if camera_zoom>=1.10 and draw_shadow:
-        map_layer.draw_set_transform(map_offset+(p+Vector2(2.5,1.0)*SOLDIER_SCALE)*camera_zoom,0.0,Vector2(1.0,0.45)*camera_zoom)
+        map_layer.draw_set_transform(map_offset+(ground+Vector2(2.5,1.0)*SOLDIER_SCALE)*camera_zoom,0.0,Vector2(1.0,0.45)*camera_zoom)
         map_layer.draw_circle(Vector2.ZERO,(7.0 if kind==2 else 4.8)*SOLDIER_SCALE,Color(0.04,0.05,0.035,0.30))
     var column: int=0
     if absf(direction.y)>absf(direction.x)*1.10: column=1 if direction.y>0.0 else 2
@@ -2957,12 +2981,12 @@ func _draw_contact_scuffs(view: Rect2) -> void:
         if axis == Vector2.ZERO: continue
         var charge: bool = fx["kind"] == "돌격"
         var seed_value := hash([fx["time"], fx["attacker_id"], fx.get("defender_id", -1)])
-        var track_count := 4 if charge else 2
+        var track_count := clampi(int(fx.get("contacts", 1)) + 3, 6, 12) if charge else clampi(int(fx.get("contacts", 1)) + 2, 3, 8)
         var recoil: Vector2 = fx.get("recoil", Vector2.ZERO)
         var displacement := recoil * clampf(age / 0.28, 0.0, 1.0)
         for i in range(track_count):
             # Stagger the hoof or boot marks along the two meeting ranks.
-            var jitter := float((seed_value >> (i * 5)) & 31) / 31.0
+            var jitter := float(hash(Vector2i(seed_value, i)) & 31) / 31.0
             var lateral := (float(i) + jitter * 0.7 - float(track_count) * 0.5) * (4.2 if charge else 2.8)
             var foot := contact + axis.orthogonal() * lateral - axis * (1.0 + jitter * 3.5)
             foot += displacement * (0.18 + jitter * 0.24)
@@ -2973,15 +2997,17 @@ func _draw_contact_scuffs(view: Rect2) -> void:
             var furrow := Color("#524432") if wet else Color("#786047")
             furrow.a = (0.52 - jitter * 0.12) * (1.0 - smoothstep(0.18, 0.72, age))
             map_layer.draw_line(foot - axis * length, foot, furrow, 0.7 + jitter * 0.35, true)
-            if charge and i % 2 == 0 and not wet and age < 0.43:
-                var drift := age / 0.43
-                var screen := offset + (foot - axis * drift * 3.8) * camera_zoom
-                map_layer.draw_set_transform(screen, axis.angle(), Vector2.ONE * camera_zoom)
-                var extent := Vector2(12.0 + drift * 7.0, 3.8 + drift * 2.7)
-                var tint := Color.WHITE
-                tint.a = (0.52 - drift * 0.52) * (0.7 if terrain == "숲" else 1.0)
-                map_layer.draw_texture_rect(contact_dust, Rect2(-extent * Vector2(0.83, 0.5), extent), false, tint)
-                map_layer.draw_set_transform(offset, 0.0, Vector2.ONE * camera_zoom)
+            var dust_age := age - jitter * 0.085
+            if wet or dust_age < 0.0 or dust_age >= 0.67 or i % 2 != 0: continue
+            var drift := dust_age / 0.67
+            var screen := offset + (foot - axis * drift * (9.0 + jitter * 6.0)) * camera_zoom
+            map_layer.draw_set_transform(screen, axis.angle(), Vector2.ONE * camera_zoom)
+            var extent := Vector2(39.0, 13.0) if charge else Vector2(19.0, 7.5)
+            extent *= 0.70 + drift * 0.95
+            var tint := Color.WHITE
+            tint.a = (0.85 if charge else 0.60) * (1.0 - drift) * (0.40 if terrain == "숲" else 1.0)
+            map_layer.draw_texture_rect(dust_texture, Rect2(-extent * Vector2(0.74, 0.5), extent), false, tint)
+            map_layer.draw_set_transform(offset, 0.0, Vector2.ONE * camera_zoom)
 
 func _draw_combat_effects() -> void:
     for fx in sim.visual_effects:
@@ -3016,7 +3042,7 @@ func _draw_volley(fx: Dictionary, origin: Vector2, target: Vector2, age: float) 
         var launch: Vector2=from+(direction*2.4+Vector2(0,-6.0))*SOLDIER_SCALE
         var impact: Vector2=to+Vector2(0,-3.4)*SOLDIER_SCALE
         var separation: float=launch.distance_to(impact)
-        var flight: float=clampf(separation/390.0,0.17,0.45)
+        var flight: float=_arrow_flight(from,to)
         var rise: float=clampf(separation*0.23,7.0,29.0)
         # One real volley per lane. Nearby soldiers spread out the drawn arrows.
         for j in range(arrow_count):
@@ -3961,17 +3987,22 @@ func _visual_slots(unit: Dictionary) -> Array[Vector2]:
 
 func _draw_march_dust(view: Rect2) -> void:
     if dust_texture == null or camera_zoom < 0.60: return
+    var offset := MAP_SIZE * 0.5 - camera_center * camera_zoom
+    var bounds := view.grow(55.0)
     for puff in sim.dust_effects:
-        var p: Vector2 = puff["pos"]
-        if not view.grow(50.0).has_point(p): continue
-        if fog_enabled and not sim.finished and int(puff["side"])!=0 and not sim.player_can_see(p): continue
-        var age: float = clampf((sim.battle_time-float(puff["time"]))/WarSim.DUST_LIFE,0.0,1.0)
-        var radius: float = float(puff["radius"])*(0.70+age*1.35)
+        var foot: Vector2 = puff["pos"]
+        if not bounds.has_point(foot): continue
+        if fog_enabled and not sim.finished and int(puff["side"]) != 0 and not sim.player_can_see(foot): continue
+        var age := clampf((render_clock - float(puff["time"])) / WarSim.DUST_LIFE, 0.0, 1.0)
         var direction: Vector2 = puff["dir"]
-        p -= direction*age*16.0
-        p += direction.orthogonal()*float(puff["phase"])*age*6.0
-        var opacity: float = (1.0-age)*(1.0-age)*0.68
-        map_layer.draw_texture_rect(dust_texture,Rect2(p-Vector2(radius,radius*0.67),Vector2(radius*2.0,radius*1.34)),false,Color(1.0,0.96,0.86,opacity))
+        var phase: float = puff["phase"]
+        var center := foot - direction * age * 12.0 + direction.orthogonal() * phase * age * 7.0
+        var extent := Vector2(2.3, 0.95) * float(puff["radius"]) * (0.62 + age * 1.38)
+        var tint := Color.WHITE
+        tint.a = (0.84 if puff["surface"] == "도로" else 0.65) * (1.0 - age) * (1.0 - age * 0.4)
+        map_layer.draw_set_transform(offset + center * camera_zoom, direction.angle() + phase * 0.14, Vector2.ONE * camera_zoom)
+        map_layer.draw_texture_rect(dust_texture, Rect2(-extent * Vector2(0.72, 0.5), extent), false, tint)
+    map_layer.draw_set_transform(offset, 0.0, Vector2.ONE * camera_zoom)
 
 func _scenery_tile(tile: int,rect: Rect2,tint: Color=Color.WHITE) -> void:
     var source:=Rect2((tile%3)*256,floori(float(tile)/3.0)*256,256,256)

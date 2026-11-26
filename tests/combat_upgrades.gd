@@ -7,6 +7,7 @@ func _initialize() -> void:
     _bows()
     _charge_and_rear()
     _running_charge()
+    _contact_footwork()
     _targeting()
     _simultaneous_losses()
     print("GUNRYAK_COMBAT_PASS" if failures==0 else "GUNRYAK_COMBAT_FAIL %d" % failures)
@@ -35,6 +36,43 @@ func _place(unit: Dictionary, point: Vector2, kind: String, formation: String="�
     unit["facing"]=Vector2.RIGHT if int(unit["side"])==0 else Vector2.LEFT
     unit["troops"]=unit["initial_troops"]
     return unit
+
+func _contact_footwork() -> void:
+    var sim := _field()
+    var foot := _place(sim.find_unit(0), Vector2(720,750), "보병")
+    var enemy := _place(sim.find_unit(3), Vector2(765,750), "보병")
+    foot["action"] = "공격 지속"
+    foot["goal"] = enemy["pos"]
+    foot["contact_target_id"] = enemy["id"]
+    foot["mission"] = "공격"
+    foot["has_destination"] = true
+    foot["order_destination"] = Vector2(793,750)
+    var approach := sim._destination_order(foot,enemy,"방어","",foot["pos"],73.0)
+    _check(approach["action"] == "교전" and not foot["destination_reached"], "attack orders engage the observed blocker outside the arrival radius")
+    var limit := sim._body_distance(foot,enemy)
+    foot["pos"] = enemy["pos"] - Vector2.RIGHT * limit
+    var start: Vector2 = foot["pos"]
+    sim._move_unit(foot,0.1)
+    _check(start.distance_to(foot["pos"]) < 0.05, "a file already in contact holds its ground instead of marching into its opponent")
+    foot["action"] = "후퇴"
+    foot["goal"] = start - Vector2(120,0)
+    sim._move_unit(foot,0.1)
+    _check(foot["pos"].x < start.x and Vector2(foot["facing"]).dot(Vector2.RIGHT) > 0.96,
+        "a withdrawing file can move away while it turns through the reversal")
+    var front = preload("res://scripts/front_view.gd")
+    var impacts := [{"target":Vector2.ZERO, "direction":Vector2.DOWN, "age":0.085, "radius":18.0}]
+    _check(front.hit_reaction(Vector2.ZERO,0,impacts).y > 0.9 and front.hit_reaction(Vector2(28,0),0,impacts) == Vector2.ZERO,
+        "only nearby files flinch in the incoming direction")
+    var horse := _place(sim.find_unit(2), Vector2(600,750), "기병", "봉시진")
+    horse["motion_speed"] = 135.0
+    sim._emit_march_dust(horse, horse["pos"]-Vector2(13,0), Vector2(13,0))
+    _check(sim.dust_effects.any(func(puff: Dictionary) -> bool: return puff["surface"] == "평지"),
+        "galloping cavalry raises dust on dry open ground")
+    sim.dust_effects.clear()
+    horse["pos"] = Vector2(sim.river_x(850),850)
+    horse["troops"] = 100
+    sim._emit_march_dust(horse, horse["pos"]-Vector2(8,0), Vector2(8,0))
+    _check(sim.dust_effects.is_empty(), "even at a gallop a hoof on the bridge raises no soil")
 
 func _bows() -> void:
     var sim := _field()

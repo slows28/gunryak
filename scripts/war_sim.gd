@@ -86,7 +86,7 @@ var combat_history: Array[Dictionary] = []
 const COMBAT_HISTORY_SECONDS: float = 2.0
 var dust_effects: Array[Dictionary] = []
 const DUST_LIFE: float = 1.8
-const DUST_LIMIT: int = 180
+const DUST_LIMIT: int = 420
 var troop_history: Array[Dictionary] = []
 var sample_at: float = 0.0
 var mind_sample_at: float = 0.0
@@ -217,7 +217,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "pos": start, "facing": Vector2.RIGHT if side == 0 else Vector2.LEFT,
         "goal": start, "mission": mission,
         "policy": "현장 판단", "formation": "횡대", "next_formation": "",
-        "form_remaining": 0.0, "form_duration": 1.0, "motion_speed": 0.0, "dust_distance": 0.0, "troops": people, "initial_troops": people,
+        "form_remaining": 0.0, "form_duration": 1.0, "motion_speed": 0.0, "stride_step": 0.0, "stride_distance": 0.0, "walking_step": Vector2.ZERO, "dust_distance": 0.0, "troops": people, "initial_troops": people,
         "morale": 100.0, "out_supply": 0.0, "supplied": true,
         "action": "대기", "reason": "초기 배치", "ai_cooldown": 0.0,
         "contact_target_id":-1, "brace_stops":0, "rear_losses":0.0, "last_arrow_hit":-100.0,
@@ -365,10 +365,23 @@ func step(dt: float) -> void:
             unit["ai_cooldown"] = 1.4 + (100.0 - _effective_stat(unit, "judgment")) * 0.015
         _formation_transition(unit, dt)
     if six_armies: march_plans=LinkedMarch.plan(self,march_plans,dt)
+    var departures: Dictionary = {}
     for unit in units:
         if float(unit["troops"]) > 0.0:
+            departures[unit["id"]] = unit["pos"]
             _move_unit(unit, dt)
     _resolve_frontline(dt)
+    # Count ground actually gained by the feet. A line can stop or push a body
+    # after its movement order has been executed.
+    for unit in units:
+        if not departures.has(unit["id"]): continue
+        var start: Vector2 = departures[unit["id"]]
+        var walking: Vector2 = unit["walking_step"]
+        var net: Vector2 = unit["pos"] - start
+        var walked := clampf(net.dot(walking.normalized()), 0.0, walking.length())
+        unit["stride_step"] = walked
+        unit["stride_distance"] += walked
+        if six_armies: _emit_march_dust(unit, start, walking.normalized() * walked)
     _update_structures(dt)
     _update_convoy(dt)
     _update_battle_condition(dt)
@@ -1053,6 +1066,8 @@ func _movement_rate(unit: Dictionary, enemy: Dictionary) -> float:
     return rate
 
 func _move_unit(unit: Dictionary, dt: float) -> void:
+    unit["walking_step"] = Vector2.ZERO
+    var prior_heading: Vector2 = unit["facing"]
     if command_confused(unit["side"]) and not unit["routed"]:
         unit["motion_speed"]=0.0
         unit["charge"]=0.0
@@ -1099,6 +1114,12 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         if not structures.is_empty() and (str(unit["type"]) == "기병" or bool(unit["routed"])):
             goal = _detour_goal(unit,pos,goal)
         var new_pos: Vector2 = pos.move_toward(goal, rate * dt)
+        # Once the files meet, spend only the available forward room. A
+        # lateral order or a withdrawal can still slide along or leave the line.
+        if long_operation and march.is_empty() and not enemy.is_empty() and unit["type"] != "궁병" and unit["contact_target_id"] == enemy["id"]:
+            var normal := pos.direction_to(enemy["pos"])
+            var room := maxf(0.0, pos.distance_to(enemy["pos"]) - _body_distance(unit, enemy))
+            new_pos -= normal * maxf(0.0, (new_pos - pos).dot(normal) - room)
         var legal:Vector2=_structure_move(unit,pos,_field_point(new_pos))
         if long_operation: legal=_land_motion(unit,pos,legal)
         unit["pos"]=legal
@@ -1116,7 +1137,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
             var ally: Dictionary=find_unit(int(unit["link_id"]))
             if not ally.is_empty() and float(ally["troops"])>0.0 and (unit["pos"] as Vector2).distance_to(ally["pos"])<=150.0:
                 unit["support_seconds"]+=dt
-    if six_armies: _emit_march_dust(unit,pos,actual_move)
+    unit["walking_step"] = actual_move
     if str(unit["type"]) == "기병":
         _update_charge(unit, actual_move, dt, running_in)
     if not enemy.is_empty() and (dressing_line or pos.distance_to(enemy["pos"]) < 168.0) and (dressing_line or str(unit["action"]) not in ["후퇴", "패주", "재집결", "측면 우회", "기지 습격", "보급 복귀", "탄약 보충", "매복","협동 우회","협동 엄호"]):
@@ -1127,6 +1148,15 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
                 unit["facing"]=heading.rotated(clampf(heading.angle_to(front),-2.0*dt,2.0*dt)) if not heading.is_zero_approx() else front.normalized()
             else:
                 unit["facing"] = (unit["facing"] as Vector2).lerp(front.normalized(),minf(1.0,dt*2.0)).normalized()
+
+    # A pre-aligned column starts on its ordered bearing at deployment.
+    var deployed: bool = step_count <= 1 and march.get("phase", "") == "연계 행군"
+    if long_operation and not deployed and not prior_heading.is_zero_approx():
+        var desired: Vector2 = unit["facing"]
+        if march.is_empty() and actual_move.is_zero_approx() and not enemy.is_empty() and unit["contact_target_id"] == enemy["id"] and not unit["routed"]:
+            desired = pos.direction_to(enemy["pos"])
+        var turn_rate := 2.8 if unit["type"] == "기병" else 2.1
+        unit["facing"] = prior_heading.rotated(clampf(prior_heading.angle_to(desired), -turn_rate * dt, turn_rate * dt)).normalized()
 
 
 # M2-1: Keep formation bodies separate. This applies to friends and enemies.
@@ -3556,7 +3586,7 @@ func _formation_extent(unit: Dictionary,direction: Vector2) -> float:
     return extent
 
 # Soil classification is deliberately independent of the army's order or animation.
-# Only exposed dirt roads produce dust. Grass, forest, hill, river, wooden bridge do not.
+# A walking column can lift loose dirt here without already churning the ground.
 func dusty_ground(p: Vector2) -> bool:
     return terrain_at(p) == "도로"
 
@@ -3567,22 +3597,27 @@ func _emit_march_dust(unit: Dictionary,previous: Vector2,displacement: Vector2) 
         return
     var accumulated: float = float(unit.get("dust_distance",0.0))+distance
     var cavalry: bool = str(unit["type"])=="기병"
-    var spacing: float = 7.0 if cavalry else 10.0
+    var spacing := 5.8 if cavalry else 8.0
     if accumulated < spacing:
         unit["dust_distance"] = accumulated
         return
-    unit["dust_distance"] = fmod(accumulated,spacing)
-    var forward: Vector2 = displacement.normalized()
-    var slots: Array[Vector2] = formation_slots(unit)
-    # Sample actual representative feet along the traveled segment, not the target position.
-    for i in range(0,slots.size(),3):
-        var foot: Vector2 = slots[i]-displacement*0.5
-        if not dusty_ground(foot): continue
-        var seed_value: float = float(step_count*37+int(unit["id"])*19+i*13)
-        var variation: float = sin(seed_value*1.73)
-        var radius: float = (17.0 if cavalry else 12.0)*(0.8+absf(variation)*0.5)
-        dust_effects.append({"pos":foot,"dir":forward,"time":battle_time,"radius":radius,"side":unit["side"],"phase":variation,"surface":"도로"})
-        if dust_effects.size()>DUST_LIMIT: dust_effects.pop_front()
+    unit["dust_distance"] = fmod(accumulated, spacing)
+    var forward := displacement.normalized()
+    var slots := formation_slots(unit)
+    var fast_ground := cavalry and float(unit["motion_speed"]) >= 55.0
+    var churned: bool = fast_ground or unit["routed"] or int(unit["contact_troops"]) > 0
+    # Each sample represents a different file, spread along the completed step.
+    var stride := 2 if cavalry else 3
+    for i in range(posmod(step_count, stride), slots.size(), stride):
+        var variation := sin(float(step_count * 37 + int(unit["id"]) * 19 + i * 13) * 1.73)
+        var foot: Vector2 = previous + (slots[i] - Vector2(unit["pos"])) + displacement * (0.50 + variation * 0.45)
+        var surface := terrain_at(foot)
+        if surface != "도로" and not (churned and surface in ["평지", "고지"]): continue
+        var radius := (22.0 if cavalry else 15.5) * (0.85 + absf(variation) * 0.45)
+        dust_effects.append({"pos":foot, "dir":forward, "time":battle_time, "radius":radius, "side":unit["side"],
+            "phase":variation, "surface":surface})
+        if dust_effects.size() > DUST_LIMIT: dust_effects.pop_front()
+
 
 # Contextual counter relations. The numerical factor is a prototype, not an
 # automatic victory: range, direction, formation, fatigue and terrain still matter.
@@ -3893,14 +3928,17 @@ func _destination_order(unit: Dictionary,enemy: Dictionary,action: String,reason
     if mission=="철수": return {"action":"전술 철수","reason":"책사의 철수 지시","goal":dest}
     if p.distance_to(dest)<=65.0: unit["destination_reached"]=true
     if action=="거리 유지" and distance<110.0: return original
+    if mission == "공격" and not enemy.is_empty() and Vector2(enemy["pos"]).distance_to(dest) < 240.0:
+        # A defender at the edge of the order area can block the last few
+        # steps. Engage the observed target without declaring the area secured.
+        if unit["destination_reached"] or (distance < 85.0 and not _river_separates(p, enemy["pos"])):
+            return {"action":"돌파" if unit["type"]=="기병" else "교전", "reason":"지정 지역 적군 공격", "goal":enemy["pos"]}
     if not bool(unit["destination_reached"]):
         if distance<85.0 and action in ["거리 유지","측면 방어","교전","돌파","방어"]: return original
         return {"action":"지정 위치 이동","reason":"책사가 지정한 작전 지역으로 이동","goal":dest}
     if mission in ["지역 사수","예비 대기","지정 위치 이동"]:
         return {"action":"예비 대기" if mission=="예비 대기" else "지정 지역 사수","reason":"지정 지역 확보 및 현장 판단","goal":dest if p.distance_to(dest)>55.0 else p}
     if mission=="공격":
-        if not enemy.is_empty() and (enemy["pos"] as Vector2).distance_to(dest)<240.0:
-            return {"action":"돌파" if str(unit["type"])=="기병" else "교전","reason":"지정 지역 적군 공격","goal":enemy["pos"]}
         return {"action":"지정 지역 사수","reason":"목표 지역 장악","goal":dest if p.distance_to(dest)>55.0 else p}
     return original
 

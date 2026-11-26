@@ -82,6 +82,18 @@ static func local_target(point: Vector2, anchors: Array[Vector2], reach: float) 
             result=q
     return result
 
+static func hit_reaction(point: Vector2, index: int, impacts: Array) -> Vector2:
+    var reaction := Vector2.ZERO
+    for hit: Dictionary in impacts:
+        var distance := point.distance_to(hit["target"])
+        var radius: float = hit["radius"]
+        if distance >= radius: continue
+        var age := float(hit["age"]) - distance * 0.002 - float(index % 4) * 0.009
+        if age < 0.0 or age >= 0.17: continue
+        var weight := (1.0 - smoothstep(0.0, radius, distance)) * sin(PI * age / 0.17)
+        if weight > reaction.length(): reaction = Vector2(hit["direction"]) * weight
+    return reaction
+
 static func advance_toward_contact(point: Vector2,target: Vector2,phase: float,kind: String) -> Vector2:
     if target==Vector2.INF or kind=="궁병": return point
     var gap: float=point.distance_to(target)
