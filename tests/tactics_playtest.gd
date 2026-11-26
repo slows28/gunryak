@@ -10,6 +10,7 @@ func check(ok: bool,label: String) -> void:
 func _initialize() -> void:
     call_deferred("_run")
 func _run() -> void:
+    _check_returning_rider()
     var sim := WarSim.new()
     sim.tactical_enabled = true
     sim.start()
@@ -20,7 +21,9 @@ func _run() -> void:
     sim.turn = 6
     sim._scan_situations()
     check(sim.open_situations().is_empty(),"report delay is real")
-    sim.battle_time = 100.0
+    for i in range(100):
+        sim.battle_time+=0.1
+        sim._move_reporting_messengers(0.1)
     sim._scan_situations()
     check(not sim.open_situations().is_empty(),"delayed allied report arrives")
     if not sim.open_situations().is_empty():
@@ -71,3 +74,51 @@ func _run() -> void:
     check(distinct.size() >= 2,"strategic policies produce different actual outcomes")
     print("GUNRYAK_TACTICS_PASS" if failures == 0 else "GUNRYAK_TACTICS_FAIL "+str(failures))
     quit(0 if failures == 0 else 1)
+
+func _check_returning_rider() -> void:
+    var sim:=WarSim.new()
+    sim.tactical_enabled=true
+    sim.set_long_operation(true)
+    sim.start()
+    var unit:=sim.find_unit(0)
+    var origin:=Vector2(sim.river_x(520)+170,520)
+    var post:=Vector2(sim.river_x(530)-220,530)
+    unit["pos"]=origin
+    unit["morale"]=40.0
+    sim.commanders[0]["pos"]=post
+    sim.battle_time=4.0
+    sim._scan_situations()
+    var report: Dictionary=sim.incoming_reports[0]
+    var rider: Dictionary=report["rider"]
+    check(report["sender"]=="왕평" and not report.has("arrive") and sim.open_situations().is_empty(),"unreceived letter has no arrival time or inbox entry")
+    sim._scan_situations()
+    check(sim.incoming_reports.size()==1,"one field dispatch per incident")
+    sim.paused=true
+    sim.step(0.1)
+    check(rider["pos"]==origin and sim.battle_time==4.0,"pause freezes the reporting rider")
+    sim.paused=false
+    unit["name"]="교대 장수"
+    unit["morale"]=76.0
+    unit["pos"]+=Vector2(80,0)
+    var wet:=false
+    var moved:=false
+    for tick in range(350):
+        sim.battle_time+=0.1
+        if tick==36: sim.commanders[0]["pos"]=post+Vector2(-140,175)
+        sim._move_reporting_messengers(0.1)
+        moved=moved or rider["pos"]!=origin
+        wet=wet or sim.in_open_water(rider["pos"])
+        if report["status"]!="대기": break
+    check(moved and not wet and rider["bridge_crossings"]==1,"reporting rider physically crosses at a bridge")
+    check(rider["pos"]==sim.commanders[0]["pos"] and sim.open_situations().has(report),"letter reaches the strategist's new position")
+    check(report["sender"]=="왕평" and report["pos"]==origin and report["morale"]==40,"dispatch identity position and condition are immutable")
+    check(is_equal_approx(report["expires"]-report["arrive"],26.0),"response window starts on actual delivery")
+    sim.reset()
+    sim.start()
+    sim.find_unit(0)["morale"]=40.0
+    sim._scan_situations()
+    sim.commanders[0]["captured"]=true
+    sim._move_reporting_messengers(0.1)
+    sim.battle_time+=4.0
+    sim._scan_situations()
+    check(sim.incoming_reports.is_empty() and sim.situation_reports.is_empty(),"a captured strategist cannot receive or reveal an undelivered report")

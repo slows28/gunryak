@@ -750,6 +750,10 @@ func _capture() -> void:
         push_error("VISUAL_CAPTURE_FAIL: mission target, camera or debrief")
         quit(1)
         return
+    if not await _capture_messenger():
+        push_error("VISUAL_CAPTURE_FAIL: Wang Ping's returning messenger or account")
+        quit(1)
+        return
     print("GUNRYAK_VISUAL_CAPTURE_PASSED")
     quit(0)
 
@@ -1311,3 +1315,48 @@ func _capture_objectives() -> bool:
     if not await _deployment_frame("objective_debrief.png"): return false
     print("OBJECTIVE_FOCUS_VISUAL_PASS")
     return true
+
+# Standard northern operation, no injected damage, report, or enemy position.
+func _capture_messenger() -> bool:
+    game._leave_title(0)
+    game._start()
+    game.set_process(false)
+    var sim=game.sim
+    var letter: Dictionary={}
+    var road_seen:=false
+    for tick in range(3750):
+        sim.step(0.1)
+        if letter.is_empty():
+            for pending in sim.incoming_reports:
+                if pending["sender"]=="왕평" and pending["kind"]=="전선 압박" and pending["push"].length()>=4:
+                    letter=pending
+                    break
+        if letter.is_empty(): continue
+        if letter["status"]=="대기":
+            var pos: Vector2=letter["rider"]["pos"]
+            if not road_seen and pos.distance_to(letter["pos"])>65:
+                game.camera_center=pos
+                game.camera_zoom=1.40
+                game._clamp_camera()
+                game.detailed_map=true
+                game._refresh_hud()
+                if sim.open_situations().has(letter) or game.messenger_id==letter["id"]: return false
+                if not await _deployment_frame("wang_messenger_road.png"): return false
+                road_seen=true
+        else: break
+    if not road_seen or letter.get("status")!="미대응": return false
+    game._refresh_hud()
+    if not game.messenger_card.visible or game.messenger_id!=letter["id"] or sim.paused: return false
+    game.camera_center=letter["pos"]
+    game._clamp_camera()
+    if not await _deployment_frame("wang_messenger_arrival.png"): return false
+    game.messenger_card.pressed.emit()
+    await process_frame
+    if game.situation_selected!=letter["id"] or not sim.paused or game.situation_pin!=letter["pos"]: return false
+    if "왕평군 전령" not in game.situation_heading.text or letter["opponent"] not in game.situation_detail.text or "밀리고" not in game.situation_detail.text: return false
+    if "본부 도착" not in game.situation_stamp.text or "현재 아군" not in game.situation_current.text: return false
+    if not await _deployment_frame("wang_messenger_account.png"): return false
+    print("WANG_MESSENGER_VISUAL_PASS ",game.situation_stamp.text," ",game.situation_detail.text)
+    game.situation_dialog.get_ok_button().pressed.emit()
+    await process_frame
+    return not sim.paused and game.messenger_id!=letter["id"]

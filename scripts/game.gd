@@ -165,6 +165,14 @@ var retreat_dialog: ConfirmationDialog
 var situation_btn: Button
 var situation_dialog: AcceptDialog
 var situation_list: ItemList
+var messenger_card: Button
+var messenger_name: Label
+var messenger_summary: Label
+var messenger_portrait: TextureRect
+var messenger_id: int=-1
+var read_messengers: Dictionary={}
+var situation_stamp: Label
+var situation_current: Label
 var dispatch_headline: Button
 var situation_heading: Label
 var situation_record: Label
@@ -420,6 +428,7 @@ func _build_interface() -> void:
     dispatch_headline.add_theme_color_override("font_color",COL_GOLD)
     dispatch_headline.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
     dispatch_headline.hide()
+    _build_messenger_card()
     warning_label = _label("",Vector2(420,640),Vector2(513,24),12,COL_GOLD)
     warning_label.hide()
     warning_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -926,6 +935,8 @@ func _refresh_hud() -> void:
     if is_instance_valid(situation_btn):
         var active: bool=sim.started and not sim.finished
         if active: pending=_prioritized_situations()
+        if sim.situation_serial==0: read_messengers.clear()
+        _refresh_messenger_card(pending)
         var count: int=pending.size()
         dispatch_headline.visible=count>0
         notice_label.size.x=284.0 if count>0 else 685.0
@@ -1677,6 +1688,14 @@ func _draw_map(_canvas: Control) -> void:
         if not fog_enabled or sim.player_can_see(report_p): continue
         map_layer.draw_arc(report_p, 12.0, 0.0, TAU, 24, Color(COL_GOLD, maxf(0.15, 0.65 - age * 0.025)), 1.5)
         _draw_string("정찰 %.0f초 전 · %d%%" % [age*sim.operation_scale(),int(float(report.get("confidence",0.0))*100.0)], report_p + Vector2(-30, 19), 10, COL_GOLD)
+    for report in sim.incoming_reports:
+        var rider: Vector2=report["rider"]["pos"]
+        if not Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom).grow(35).has_point(rider): continue
+        var k:=1.0/camera_zoom
+        _paint_tile(42,Rect2(rider-Vector2(9,10)*k,Vector2(18,20)*k))
+        map_layer.draw_circle(rider+Vector2(7,-6)*k,3*k,COL_GOLD)
+        if report["unit_id"]==selected_id and detailed_map:
+            _map_plate(str(report["sender"])+"군 전령",rider+Vector2(0,-20)*k,COL_GOLD,12)
     for letter in sim.couriers:
         if fog_enabled and not sim.finished and int(letter["side"]) != 0 and not sim.player_can_see(letter["pos"]):
             continue
@@ -3513,25 +3532,107 @@ func _setup_ambient_music() -> void:
     music_player.play()
 
 
+func _build_messenger_card() -> void:
+    messenger_card=_button("",Vector2(28,154),Vector2(307,75),func(): _open_situations(messenger_id))
+    messenger_card.add_theme_stylebox_override("normal",_ui_box(Color("#25332e"),Color("#bc985a")))
+    messenger_card.mouse_default_cursor_shape=Control.CURSOR_POINTING_HAND
+    messenger_portrait=TextureRect.new()
+    messenger_portrait.position=Vector2(8,9)
+    messenger_portrait.size=Vector2(54,54)
+    messenger_portrait.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
+    messenger_portrait.mouse_filter=Control.MOUSE_FILTER_IGNORE
+    messenger_card.add_child(messenger_portrait)
+    messenger_name=_label("",Vector2(72,6),Vector2(222,25),17,COL_GOLD)
+    messenger_summary=_label("",Vector2(72,32),Vector2(228,38),14,COL_TEXT)
+    messenger_summary.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    for label in [messenger_name,messenger_summary]:
+        label.mouse_filter=Control.MOUSE_FILTER_IGNORE
+        label.reparent(messenger_card,false)
+    messenger_card.hide()
+
+func _report_place(report: Dictionary) -> String:
+    var point: Vector2=report["pos"]
+    if sim.long_operation and sim.near_crossing(point.y) and absf(point.x-sim.river_x(point.y))<150.0:
+        return _bridge_name(point.y)
+    return _goal_name(point)
+
+func _push_direction(push: Vector2) -> String:
+    var compass:=["동쪽","남동쪽","남쪽","남서쪽","서쪽","북서쪽","북쪽","북동쪽"]
+    return compass[posmod(roundi(push.angle()/(PI/4.0)),8)]
+
+func _refresh_messenger_card(pending: Array[Dictionary]) -> void:
+    messenger_id=-1
+    messenger_card.hide()
+    if not sim.started or sim.finished or sim.commander_captured(0): return
+    var newest: Dictionary={}
+    for report in pending:
+        if not report.has("sender") or read_messengers.has(report["id"]): continue
+        if report["kind"] not in ["전선 압박","포위 위험","전열 붕괴 위험"]: continue
+        if newest.is_empty() or report["arrive"]>newest["arrive"] or (report["arrive"]==newest["arrive"] and report["unit_id"]==selected_id):
+            newest=report
+    if not newest.is_empty():
+        var report:=newest
+        messenger_id=report["id"]
+        messenger_name.text=str(report["sender"])+"군 전령 도착   ›"
+        var push: Vector2=report.get("push",Vector2.ZERO)
+        var news: String="전열이 "+_push_direction(push)+"으로 밀림" if push.length()>=4.0 else str(report["kind"])
+        messenger_summary.text=_report_place(report)+" · "+news
+        messenger_portrait.texture=_commander_icon(report["sender"],0)
+        messenger_card.tooltip_text="전령의 보고를 듣고 발신 위치를 봅니다."
+        messenger_card.accessibility_name=messenger_name.text+" "+messenger_summary.text
+        messenger_card.visible=not situation_dialog.visible
+        return
+
+func _messenger_account(report: Dictionary) -> String:
+    var lines:=PackedStringArray()
+    var push: Vector2=report.get("push",Vector2.ZERO)
+    var contact: String=str(report.get("opponent",""))
+    if not contact.is_empty(): lines.append("%s에서 적 %s 부대와 맞붙었습니다." % [_report_place(report),contact])
+    else: lines.append("%s에서 전합니다." % _report_place(report))
+    if push.length()>=4.0:
+        lines.append("제가 떠날 때 우리 전열이 %s으로 밀리고 있었습니다." % _push_direction(push))
+    else:
+        match report.get("kind",""):
+            "포위 위험": lines.append("여러 방향에서 적이 접근해 퇴로가 위태롭습니다.")
+            "전열 붕괴 위험": lines.append("대열을 유지하기 어렵습니다. 당시 사기는 %d, 응집은 %d였습니다." % [report["morale"],report["cohesion"]])
+            "전선 압박": lines.append("적이 우리 전열을 강하게 누르고 있었습니다.")
+            "군량 부족": lines.append("군량이 %d%%밖에 남지 않았습니다." % report["rations"])
+            "화살 부족": lines.append("남은 화살은 정량의 %d%%입니다." % report["ammo"])
+            "장수 부상": lines.append("장군께서 부상을 입으셨습니다. 당시 체력은 %d%%였습니다." % report["general_hp"])
+            _: lines.append("받은 지시는 ‘%s’, 현장 행동은 ‘%s’였습니다." % [report["mission"],report["action"]])
+    if int(report.get("losses",0))>0:
+        lines.append("출발 전 %d초 동안 %d명을 잃었습니다." % [report["sample_seconds"],report["losses"]])
+    var proposal: String=report.get("proposal","")
+    var request: String=""
+    match proposal:
+        "지원": request="장군께서 지원군을 보내 달라 하셨습니다."
+        "재집결": request="장군께서 부대를 물려 대열을 추스를 수 있게 해 달라 하셨습니다."
+        "사수": request="장군께서 이 자리를 지키겠다고 하셨습니다."
+    var account: String=" ".join(lines)
+    if not request.is_empty(): account+="\n"+request
+    return account
+
 func _build_situations() -> void:
     situation_dialog = AcceptDialog.new()
-    situation_dialog.title = "야전 보고"
+    situation_dialog.title = "야전 전령 보고"
     situation_dialog.ok_button_text = "전장 복귀"
     situation_dialog.confirmed.connect(_close_situations)
     situation_dialog.canceled.connect(_close_situations)
     add_child(situation_dialog)
     var layout := VBoxContainer.new()
     layout.add_theme_constant_override("separation",9)
-    layout.custom_minimum_size.x=292
+    layout.custom_minimum_size.x=350
     situation_dialog.add_child(layout)
     situation_list = ItemList.new()
-    situation_list.custom_minimum_size = Vector2(292,92)
+    situation_list.custom_minimum_size = Vector2(350,65)
     situation_list.item_selected.connect(_select_situation)
     layout.add_child(situation_list)
     situation_heading=_body_text(layout,19,COL_GOLD)
-    situation_detail=_body_text(layout,15,COL_TEXT)
+    situation_stamp=_body_text(layout,13,COL_MUTED)
+    situation_detail=_body_text(layout,16,COL_TEXT)
+    situation_current=_body_text(layout,14,COL_BLUE)
     situation_record=_body_text(layout,14,COL_BLUE)
-    for label in [situation_heading,situation_detail,situation_record]: label.custom_minimum_size.x=292
+    for label in [situation_heading,situation_stamp,situation_detail,situation_current,situation_record]: label.custom_minimum_size.x=350
     var row := GridContainer.new()
     row.columns=3
     row.add_theme_constant_override("h_separation",6)
@@ -3566,10 +3667,10 @@ func _open_situations(preferred_report: int=-1) -> void:
     situation_notice=""
     situation_selected=-1
     situation_pin=Vector2.INF
-    situation_dialog.size=Vector2i(338,488)
+    situation_dialog.size=Vector2i(398,560)
     _refresh_situations(preferred_report)
     var extent:=Vector2i(get_viewport_rect().size)
-    situation_dialog.popup_on_parent(Rect2i(extent.x-350,150,338,488))
+    situation_dialog.popup_on_parent(Rect2i(extent.x-410,98,398,560))
 
 func _close_situations() -> void:
     situation_pin=Vector2.INF
@@ -3590,6 +3691,8 @@ func _refresh_situations(preferred_report: int=-1) -> void:
         situation_list.add_item("%s   ·   %s" % [report["title"],report["status"]])
     if rows.is_empty():
         situation_heading.text="수신한 보고 없음"
+        situation_stamp.text=""
+        situation_current.text=""
         situation_detail.text="장수의 보고가 도착하면 이곳에서 확인할 수 있습니다."
         situation_record.text=""
         for btn in situation_options: btn.hide()
@@ -3611,29 +3714,32 @@ func _select_situation(index: int) -> void:
             situation_notice=""
             _frame_milestone({"point":point,"unit_id":unit.get("parent_id",report["unit_id"])})
         situation_selected=id
-        var lines: Array[String]=[]
+        read_messengers[id]=true
+        messenger_card.hide()
+        var sender: String=report.get("sender",unit.get("name","아군"))
+        situation_heading.text="%s군 전령  ·  %s" % [sender,report.get("kind",report["title"])]
+        situation_stamp.text=_report_place(report)
+        situation_current.text=""
         if report.has("written_at"):
-            lines.append("발신 %s   ·   %s" % [_operation_clock(float(report["written_at"])*sim.operation_scale()),_report_sector(report)])
-            lines.append("지시   %s\n행동   %s   ·   사기 %d   응집 %d" % [report["mission"],report["action"],report["morale"],report["cohesion"]])
-            match str(report.get("kind","")):
-                "군량 부족": lines.append("남은 군량 %d" % report["rations"])
-                "화살 부족": lines.append("남은 화살 %d" % report["ammo"])
-                "장수 부상": lines.append("장수 체력 %d" % report["general_hp"])
-                "전선 압박": lines.append("전열 압박 %d%%" % roundi(float(report["pressure"])*100.0))
-            lines.append(str(report["reason"]))
-        else: lines.append(_report_sector(report))
-        var proposal: String=str(report.get("proposal",""))
-        if not proposal.is_empty(): lines.append("장수의 건의   "+proposal)
-        situation_heading.text="%s   ·   %s" % [unit.get("name","아군"),report.get("kind",report["title"])]
-        situation_detail.text="\n".join(lines)
+            var scale_time: float=sim.operation_scale()
+            situation_stamp.text="출발 %s    →    본부 도착 %s" % [_operation_clock(report["written_at"]*scale_time),_operation_clock(report.get("arrive",report["written_at"])*scale_time)]
+            situation_detail.text=_messenger_account(report)
+            situation_detail.text+="\n발신 당시 장수 판단  ·  "+str(report["reason"])
+            if not unit.is_empty():
+                var state: String="패주" if unit["routed"] else str(unit["action"])
+                if unit["troops"]<=0: state="부대 소멸"
+                situation_current.text="현재 아군  ·  %s %s명  /  %s" % [sender,_number_text(roundi(unit["troops"])),state]
+        else: situation_detail.text=str(report["title"])
         var pending: bool=report["status"]=="미대응"
         if pending:
             var remaining: float=maxf(0.0,float(report.get("expires",sim.battle_time))-sim.battle_time)*sim.operation_scale()
-            situation_record.text="응답 기한 %s   ·   지휘력 %d/4" % [_operation_clock(remaining),sim.command_points]
+            situation_record.text="응답까지 남은 시간 %s   ·   지휘력 %d/4" % [_operation_clock(remaining),sim.command_points]
             if sim.turn<6: situation_record.text+="\n6턴부터 전령 파견 가능"
         else: situation_record.text=_situation_outcome(report)
         if not situation_notice.is_empty(): situation_record.text+="\n"+situation_notice
         var helper: Dictionary=sim.support_for_report(unit) if pending and not unit.is_empty() else {}
+        if pending and not helper.is_empty() and not sim.commander_captured(0):
+            situation_current.text+="\n지원 후보  ·  %s  /  현재 임무 %s" % [helper["name"],helper["mission"]]
         for btn in situation_options:
             var order: String=btn.get_meta("order")
             btn.visible=pending

@@ -55,6 +55,7 @@ var tactical_enabled: bool = false
 var command_points: int = 3
 var situation_reports: Array[Dictionary] = []
 var situation_keys: Dictionary = {}
+var incoming_reports: Array[Dictionary] = []
 var situation_serial: int = 0
 var tactical_delivered: int = 0
 var tactical_refused: int = 0
@@ -130,6 +131,7 @@ func reset() -> void:
     convoy.clear()
     command_points = 3
     situation_reports.clear()
+    incoming_reports.clear()
     situation_keys.clear()
     situation_serial = 0
     tactical_delivered = 0
@@ -343,6 +345,7 @@ func step(dt: float) -> void:
     _combat(dt)
     _update_outposts(dt)
     if tactical_enabled:
+        _move_reporting_messengers(dt)
         _scan_situations()
     _check_victory()
     if battle_time>=mind_sample_at or finished:
@@ -1162,6 +1165,9 @@ func _resolve_frontline(dt: float) -> void:
             var prior_position: Vector2 = current_b if shift > 0.0 else current_a
             var displacement: Vector2 = (losing_unit["pos"] as Vector2)-prior_position
             if displacement.length_squared()>0.0001:
+                if tactical_enabled and losing_unit["side"]==0:
+                    losing_unit["report_push"]=Vector2(losing_unit.get("report_push",Vector2.ZERO))+displacement
+                    losing_unit["report_opponent"]=a["id"] if shift>0.0 else b["id"]
                 var left_id: int = int(a["id"])
                 var right_id: int = int(b["id"])
                 front_shifts[Vector2i(mini(left_id,right_id),maxi(left_id,right_id))] = {
@@ -2715,24 +2721,59 @@ func order_retreat() -> bool:
 
 # Reports describe allied observations, arrive after a physical-distance delay,
 # and expire. A report never grants live information about unseen enemies.
+# The letter keeps the dispatch position. Only its bearer moves towards the strategist.
+func _move_reporting_messengers(dt: float) -> void:
+    for i in range(incoming_reports.size()-1,-1,-1):
+        var report:=incoming_reports[i]
+        if commander_captured(0):
+            situation_reports.erase(report)
+            incoming_reports.remove_at(i)
+            continue
+        if battle_time < report["written_at"]+2.0: continue
+        var rider: Dictionary=report["rider"]
+        var p: Vector2=rider["pos"]
+        var headquarters: Vector2=commanders[0]["pos"]
+        var waypoint:=headquarters
+        if long_operation: waypoint=_committed_bridge_route(rider,p,headquarters)
+        elif wide_field: waypoint=_crossing_route(p,headquarters)
+        var next:=p.move_toward(waypoint,150.0*dt)
+        rider["pos"]=_land_motion(rider,p,next) if long_operation else next
+        if not (rider["pos"] as Vector2).is_equal_approx(headquarters): continue
+        report["arrive"]=battle_time
+        report["expires"]=battle_time+26.0
+        report["status"]="미대응"
+        report.erase("rider")
+        incoming_reports.remove_at(i)
+        _log("%s군 전령 도착 · %s" % [report["sender"],report["kind"]])
+
 func _scan_situations() -> void:
     if battle_time-last_situation_scan < 2.0:
         return
+    var span:=battle_time-maxf(0.0,last_situation_scan)
     last_situation_scan = battle_time
     for report in situation_reports:
-        if report["status"] == "대기" and battle_time >= float(report["arrive"]):
-            report["status"] = "미대응"
-            _log("긴급 보고: "+str(report["title"]))
         if report["status"] == "미대응" and battle_time >= float(report["expires"]):
             report["status"] = "시간 경과"
+    if commander_captured(0): return
     for unit in units:
         if int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0 or bool(unit["reserve"]):
             continue
+        var push: Vector2=unit.get("report_push",Vector2.ZERO)
+        var foe:=find_unit(int(unit.get("report_opponent",-1)))
+        var opponent: String=""
+        if not foe.is_empty() and _locally_observed(unit,foe): opponent=foe["name"]
+        unit["report_push"]=Vector2.ZERO
+        unit["report_opponent"]=-1
+        var losses: float=unit["casualties_taken"]
+        var recent_losses:=maxi(0,roundi(losses-float(unit.get("report_losses",losses))))
+        unit["report_losses"]=losses
         var kind: String = ""
         if bool(unit["surrounded"]):
             kind = "포위 위험"
         elif float(unit["morale"]) < 45.0 or float(unit["cohesion"]) < 42.0:
             kind = "전열 붕괴 위험"
+        elif push.length()>=4.0:
+            kind="전선 압박"
         elif float(unit["rations"]) < 24.0:
             kind = "군량 부족"
         elif battle_time-float(unit["last_deviation"]) < 3.0:
@@ -2752,13 +2793,16 @@ func _scan_situations() -> void:
             continue
         situation_keys[key] = battle_time
         situation_serial += 1
-        var delay: float = 2.0+(unit["pos"] as Vector2).distance_to(commanders[0]["pos"])/150.0
+        if kind=="전선 압박" and proposal.is_empty(): proposal="지원"
+        var rider: Dictionary={"id":-10-situation_serial,"side":0,"pos":unit["pos"],"bridge_y":-1.0,"bridge_bank":0,"bridge_crossings":0,"blocked_water_steps":0}
         var report: Dictionary={"id":situation_serial,"unit_id":unit["id"],"title":str(unit["name"])+" · "+kind+(" / "+proposal+" 건의" if not proposal.is_empty() else ""),
-            "kind":kind,"proposal":proposal,"pos":unit["pos"],"written_at":battle_time,"arrive":battle_time+delay,
-            "expires":battle_time+delay+26.0,"status":"대기","mission":unit["mission"],"action":unit["action"],"reason":unit["reason"],
+            "kind":kind,"proposal":proposal,"pos":unit["pos"],"written_at":battle_time,"rider":rider,
+            "sender":str(unit["name"]),"troops":roundi(unit["troops"]),"push":push,"opponent":opponent,
+            "losses":recent_losses,"sample_seconds":roundi(span*operation_scale()),"status":"대기","mission":unit["mission"],"action":unit["action"],"reason":unit["reason"],
             "morale":roundi(unit["morale"]),"cohesion":roundi(unit["cohesion"]),"rations":roundi(unit["rations"]),
             "ammo":roundi(unit["ammo"]),"general_hp":roundi(unit["general_hp"]),"pressure":float(unit["front_pressure"])}
         situation_reports.append(report)
+        incoming_reports.append(report)
         if situation_reports.size() > 80:
             for j in range(situation_reports.size()):
                 if str(situation_reports[j]["status"]) not in ["대기","미대응","전령 파견","명령 수령","실행 중"]:
