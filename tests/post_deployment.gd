@@ -203,6 +203,19 @@ func _check_crew_losses() -> void:
     marcher["pos"]=home+Vector2(0,430)
     s._extend_supply(0)
     check(s.bases.size()==2 and s._has_supply(0,home),"destroyed builders cannot found camps and existing depots operate independently")
+    var ready: float = crew["reassemble_at"]
+    raider["pos"] = s.headquarters[0]["pos"]
+    s.battle_time = ready - 0.1
+    s._update_supply_crew(crew,0.1)
+    check(crew["strength"] == 0, "losing a crew costs a full operation turn")
+    s.battle_time = ready
+    s._update_supply_crew(crew,0.1)
+    check(crew["strength"] == 0, "enemy at headquarters blocks reassembly")
+    raider["pos"] = s.headquarters[1]["pos"]
+    s._update_supply_crew(crew,0.1)
+    check(crew["state"] == "대기" and crew["strength"] == 60 and crew["pos"] == s.headquarters[0]["pos"] and s.bases.size() == 2,
+        "a weak replacement starts at secure headquarters without creating a depot")
+
 
 func _check_capture() -> void:
     var s:=WarSim.new()

@@ -577,7 +577,10 @@ func crew_caption(side: int) -> String:
                     return "기지 구축 %d초" % ceili(float(base["build_timer"]) * operation_scale())
         "이동": return "후속 기지로 이동" if crew.get("extending",false) else "현장 복귀"
         "회피": return "보급부대 대피"
-        "괴멸": return "보급부대 괴멸"
+        "괴멸":
+            if not crew.has("reassemble_at"): return "보급부대 괴멸"
+            var left := ceili(maxf(0.0,float(crew["reassemble_at"]) - battle_time) * operation_scale())
+            return "보급대 재편 %d초" % left if left > 0 else "본진 안전 대기"
     return "보급부대 대기"
 
 func supply_radius() -> float:
@@ -687,8 +690,21 @@ func _safe_crew_site(side: int, point: Vector2) -> bool:
     return enemy_post.is_empty() or point.distance_to(enemy_post["pos"])>GUARD_RADIUS
 
 func _update_supply_crew(crew: Dictionary, dt: float) -> void:
-    if crew["strength"]<=0: return
     var side: int=crew["side"]
+    if crew["strength"] <= 0:
+        if not crew.has("reassemble_at") or battle_time < float(crew["reassemble_at"]): return
+        var home: Dictionary = headquarters[side]
+        if home["occupied"] or _nearby_corps(1-side,home["pos"],GUARD_RADIUS) > 0: return
+        crew.erase("reassemble_at")
+        crew["pos"] = home["pos"]
+        crew["goal"] = home["pos"]
+        crew["bridge_y"] = -1.0
+        crew["bridge_bank"] = 0
+        crew["extending"] = false
+        crew["strength"] = 60.0
+        crew["state"] = "대기"
+        _site_notice(side,_camp_side(side)+" 본진에서 보급부대 재편",home["pos"])
+        return
     var pos: Vector2=crew["pos"]
     var attackers:=0
     var closest: Dictionary={}
@@ -710,6 +726,7 @@ func _update_supply_crew(crew: Dictionary, dt: float) -> void:
         crew["strength"]=maxf(0.0,crew["strength"]-dt*attackers*(4.0 if escorted else 25.0))
         if crew["strength"]<=0:
             crew["state"]="괴멸"
+            if long_operation: crew["reassemble_at"] = battle_time + turn_duration()
             _site_notice(side,_camp_side(side)+" 보급부대 괴멸",pos)
             for b in bases:
                 if b["side"]==side and b["alive"] and b["state"]=="설치":
