@@ -20,6 +20,9 @@ const LONG_LIMIT: float = 375.0
 const LONG_OBJECTIVE_OPEN: float = 270.0
 var field_size: Vector2 = Vector2(FIELD_W,FIELD_H)
 var layout_scale: float = 1.0
+signal messenger_arrived(report_id: int, sender: String, message: String)
+
+const COURIER_TURN: int = 5
 const TURN_SECONDS: float = 18.0
 const LAST_TURN: int = 10
 const MAX_SECONDS: float = TURN_SECONDS * float(LAST_TURN)
@@ -305,7 +308,7 @@ func find_unit(unit_id: int) -> Dictionary:
     return {}
 
 func request_order(unit_id: int, mission: String, policy: String, partner: int = -1, destination: Vector2 = Vector2(-1,-1)) -> bool:
-    if not started or finished or turn < 6 or commander_captured(0):
+    if not started or finished or turn < COURIER_TURN or commander_captured(0):
         return false
     var unit: Dictionary = find_unit(unit_id)
     if unit.is_empty() or int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0:
@@ -385,9 +388,9 @@ func step(dt: float) -> void:
 
 func _on_new_turn() -> void:
     _log("작전 %d턴 진입" % turn)
-    if turn == 6 and not commander_captured(0):
+    if turn == COURIER_TURN and not commander_captured(0):
         _log("전령 명령 활성화 — 전달 시간은 책사 위치에서 계산")
-    if tactical_enabled and turn >= 6 and not commander_captured(0):
+    if tactical_enabled and turn >= COURIER_TURN and not commander_captured(0):
         command_points = mini(4,command_points+1)
 
 func _move_commanders(dt: float) -> void:
@@ -2624,7 +2627,7 @@ func timeline_text() -> String:
 
 func request_deputy_takeover(unit_id: int) -> bool:
     var unit: Dictionary = find_unit(unit_id)
-    if not started or finished or commander_captured(0) or turn < 6 or unit.is_empty() or int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0 or bool(unit["active_deputy"]):
+    if not started or finished or commander_captured(0) or turn < COURIER_TURN or unit.is_empty() or int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0 or bool(unit["active_deputy"]):
         return false
     if str(unit["general_state"]) != "부상":
         return false
@@ -2823,6 +2826,7 @@ func _move_reporting_messengers(dt: float) -> void:
         if side==0:
             if report["urgent"]: urgent_deliveries+=1
             _log("%s군 전령 도착 · %s" % [report["sender"],report["kind"]])
+            messenger_arrived.emit(report["id"],report["sender"],report["kind"])
 
 func _field_rider(position: Vector2, side: int, id: int) -> Dictionary:
     return {"id":id,"side":side,"pos":position,"bridge_y":-1.0,"bridge_bank":0,"bridge_crossings":0,"blocked_water_steps":0}
@@ -2883,7 +2887,9 @@ func _move_relief_riders(dt: float) -> void:
         if not _advance_rider(request["rider"],dest,dt): continue
         if returning:
             report["relief_answer"]=request["answer"]
-            if side==0: _field_notice(request["answer"],report["pos"],report["unit_id"])
+            if side==0:
+                _field_notice(request["answer"],report["pos"],report["unit_id"])
+                messenger_arrived.emit(-1,"구원 회신",request["answer"])
             relief_riders.remove_at(i)
             continue
         var sender:=find_unit(report["unit_id"])
@@ -3075,7 +3081,7 @@ func respond_situation(report_id: int, response: String) -> bool:
     return false
 
 func request_tactical(unit_id: int, order: String, support_id: int = -1) -> bool:
-    if not tactical_enabled or not started or finished or commander_captured(0) or turn < 6 or command_points <= 0:
+    if not tactical_enabled or not started or finished or commander_captured(0) or turn < COURIER_TURN or command_points <= 0:
         return false
     if order not in ["사수","재집결","철수","지원"]:
         return false
@@ -3647,7 +3653,7 @@ func map_order_issue(id: int, mission: String, destination: Vector2, partner: in
     if unit.is_empty() or int(unit["side"])!=0 or float(unit["troops"])<=0.0:
         return "지시할 수 있는 아군 군단을 선택하십시오."
     if not _valid_partner(unit,partner): return "현재 협동 대상에 지시를 연결할 수 없습니다."
-    if started and turn < 6: return "6턴부터 전령을 파견할 수 있습니다."
+    if started and turn < COURIER_TURN: return "%d턴부터 전령을 파견할 수 있습니다." % COURIER_TURN
     if started:
         for letter in couriers:
             if int(letter["unit_id"]) == id: return "이 군단에 이미 전령이 이동 중입니다."

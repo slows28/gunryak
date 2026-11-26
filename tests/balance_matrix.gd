@@ -22,7 +22,7 @@ func _run() -> void:
                 if tick%20 != 0: continue
                 for report in sim.open_situations():
                     reports_seen[report["id"]] = true
-                    if sim.turn < 6: continue
+                    if sim.turn < WarSim.COURIER_TURN: continue
                     var response: String = "현장 판단"
                     if strategy == "엄수": response = "사수"
                     elif strategy == "지원": response = "지원"

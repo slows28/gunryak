@@ -45,7 +45,7 @@ func _play() -> void:
             if sim.finished:
                 break
             sim.step(STEP)
-            if tick % 20 != 0 or sim.turn < 6:
+            if tick % 20 != 0 or sim.turn < WarSim.COURIER_TURN:
                 continue
             for report in sim.open_situations():
                 var order := "현장 판단"

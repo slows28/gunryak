@@ -44,6 +44,7 @@ func _run() -> void:
     AudioServer.add_bus_effect(0,tap)
     print("AUDIO_DRIVER ",AudioServer.get_driver_name()," rate=",AudioServer.get_mix_rate())
     check(await _sample("ambient",0.85)>0.00005,"ambient music reaches the master bus")
+    check(game.music_player.stream is AudioStreamOggVorbis and game.music_player.stream.loop and game.music_player.stream.get_length()>90.0,"full chamber score loops in the game")
     game.music_player.stop()
     await create_timer(0.15).timeout
     var point: Vector2=sim.find_unit(0)["pos"]
@@ -66,7 +67,14 @@ func _run() -> void:
             check(not sim.player_can_see(unseen),"second simultaneous fight is outside allied vision")
         game._update_audio_and_warning()
         check(game.combat_audio_cursor==cursor+1,"visible "+kind+" reaches an audio player")
-        var peak:=await _sample(kind,0.60)
+        var channel: AudioStreamPlayer=game.combat_players[cursor%game.combat_players.size()]
+        var first_take:=channel.stream
+        game._play_combat_audio({"kind":kind,"from":point,"to":point})
+        check(game.combat_audio_cursor==cursor+1,"simultaneous impacts respect real-time spacing "+kind)
+        var peak:=await _sample(kind,0.74)
+        game._play_combat_audio({"kind":kind,"from":point,"to":point})
+        check(game.combat_players[(cursor+1)%game.combat_players.size()].stream!=first_take,"next audible event uses another performance "+kind)
+        await create_timer(0.62).timeout
         check(peak>0.001 and not is_equal_approx(peak,previous),"distinct audible effect "+kind)
         previous=peak
     sim.visual_effects.clear()

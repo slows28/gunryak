@@ -612,8 +612,18 @@ func _capture() -> void:
         quit(1)
         return
     game.call("_reset_camera")
+    var gate_captured:=false
     for i in range(320):
-        game.call("_process", 0.1)
+        game.call("_process",0.1)
+        if game.order_view.visible:
+            if gate_captured or game.sim.turn!=5 or not game.sim.paused: quit(1); return
+            gate_captured=true
+            if not await _deployment_frame("turn_five_dispatch.png"): quit(1); return
+            game.order_view.launch.pressed.emit()
+    if not gate_captured:
+        push_error("VISUAL_CAPTURE_FAIL: turn five did not open dispatch map")
+        quit(1)
+        return
     game.call("_refresh_hud")
     game.queue_redraw()
     await process_frame
@@ -1184,7 +1194,8 @@ func _capture_field_report() -> bool:
     game.game_speed=4.0
     for tick in range(3600):
         game.call("_process",0.1)
-        if game.sim.turn>=6 and not game.sim.open_situations().is_empty(): break
+        if game.order_view.visible: game.order_view.launch.pressed.emit()
+        if game.sim.turn>=5 and not game.sim.open_situations().is_empty(): break
     if game.sim.open_situations().is_empty():
         push_error("VISUAL_CAPTURE_FAIL: no delivered field report in the operation")
         return false
@@ -1416,9 +1427,14 @@ func _capture_messenger() -> bool:
         sim.step(0.1)
     if not letter.has("relief_answer"): return false
     game._refresh_hud()
-    game.journal_button.pressed.emit()
+    var reply: Button=null
+    for row in game.arrival_rows:
+        if row.visible and letter["relief_answer"] in row.text: reply=row
+    if reply==null or reply.position.x>40 or sim.paused: return false
+    if not await _deployment_frame("relief_return_left.png"): return false
+    reply.pressed.emit()
     await process_frame
-    if letter["relief_answer"] not in str(game.journal_events): return false
+    if not game.journal_dialog.visible or letter["relief_answer"] not in str(game.journal_events): return false
     if not await _deployment_frame("relief_reply_inbox.png"): return false
     print("RELIEF_RETURNED ",letter["relief_answer"])
     game.journal_dialog.hide()

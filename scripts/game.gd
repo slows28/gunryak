@@ -153,7 +153,9 @@ var analysis_chart: Control
 var portrait: Control
 var sound_player: AudioStreamPlayer
 var combat_players: Array[AudioStreamPlayer] = []
-var combat_sounds: Dictionary = {}
+var combat_sounds: Dictionary = BattleAudio.COMBAT
+var next_combat_take: Dictionary = {}
+var next_combat_ms: Dictionary = {}
 var combat_audio_cursor: int=0
 var sound_enabled: bool = true
 var shutting_down:=false
@@ -169,6 +171,9 @@ var messenger_name: Label
 var messenger_summary: Label
 var messenger_portrait: TextureRect
 var messenger_id: int=-1
+var arrival_rows: Array[Button] = []
+var arrival_messages: Array[Dictionary] = []
+var courier_map_seen := false
 var read_messengers: Dictionary={}
 var situation_stamp: Label
 var situation_current: Label
@@ -236,6 +241,7 @@ func _ready() -> void:
     _build_outcome_dialog()
     _build_demo_help()
     _build_situations()
+    sim.messenger_arrived.connect(_on_messenger_arrived)
     strategy_view = CampaignView.new()
     strategy_view.configure(campaign,korean_font,PAINTED_ART,_launch_campaign_battle,_show_title)
     add_child(strategy_view)
@@ -697,7 +703,7 @@ func _apply_order() -> void:
     var policy: String = policy_choice.get_item_text(policy_choice.selected)
     if not sim.started:
         runtime_notice = "사전 작전 반영 완료" if sim.select_unit_mission(selected_id, mission, policy,int(sim.find_unit(selected_id).get("assigned_link",-1))) else "작전 설정 불가"
-    elif sim.turn >= 6:
+    elif sim.turn >= WarSim.COURIER_TURN:
         runtime_notice = "전령 출발 · 도착 전까지 기존 명령 유지" if sim.request_order(selected_id, mission, policy,int(sim.find_unit(selected_id).get("assigned_link",-1))) else "파견 불가 · 기존 전령 또는 부대 상태 확인"
     _select_unit()
     _refresh_hud()
@@ -725,6 +731,9 @@ func _start() -> void:
     _show_friendly_roster()
     map_mode = "선택"
     runtime_notice = ""
+    courier_map_seen=false
+    read_messengers.clear()
+    next_combat_ms.clear()
     sim.start()
     last_audio_clock=-100.0
     last_audio_event=-1.0
@@ -846,7 +855,22 @@ func _commander_back() -> void:
     sim.reposition_commander(false)
     _refresh_hud()
 
+func _open_first_courier_map() -> void:
+    if courier_map_seen or not sim.started or sim.finished or sim.turn < WarSim.COURIER_TURN or sim.commander_captured(0): return
+    if sim.paused or title_screen.visible or strategy_view.visible: return
+    for child in get_children():
+        if child is Window and child.visible: return
+    if highlight_active: _stop_highlight("전령 지시 개방",false)
+    _open_order_map()
+    if not order_view.draft_dirty:
+        order_view.feedback.text="전령 파견 가능 · 군단과 목적지를 선택해 지시를 확정하세요."
+
 func _process(delta: float) -> void:
+    _open_first_courier_map()
+    if sim.started and not sim.paused and not arrival_messages.is_empty():
+        for i in range(arrival_messages.size()-1,-1,-1):
+            arrival_messages[i]["remaining"]-=delta
+            if arrival_messages[i]["remaining"]<=0.0: arrival_messages.remove_at(i)
     if sim.started and not sim.paused and not sim.finished:
         render_clock = sim.battle_time + step_buffer
     if is_instance_valid(title_screen) and not title_screen.visible and (not is_instance_valid(strategy_view) or not strategy_view.visible) and not sim.finished:
@@ -866,6 +890,7 @@ func _process(delta: float) -> void:
             _update_contact_fronts(0.1)
             step_buffer -= 0.1
             ticks += 1
+            if not courier_map_seen and sim.turn >= WarSim.COURIER_TURN: _open_first_courier_map()
             if highlight_active: _poll_highlight()
             if sim.finished or sim.paused:
                 break
@@ -894,7 +919,7 @@ func _process(delta: float) -> void:
         map_layer.queue_redraw()
     if sim.finished and not finish_seen:
         finish_seen = true
-        _play_cue(520.0, 0.28)
+        _play_cue(BattleAudio.END)
         _show_outcome()
 
 func _refresh_hud() -> void:
@@ -911,7 +936,7 @@ func _refresh_hud() -> void:
         phase_label.text=sim.operation_phase()+"  |  제한 "+_operation_clock(sim.operation_limit())
     elif sim.started:
         phase = "작전 %d턴" % sim.turn
-        phase_label.text = sim.operation_phase() + "  |  " + ("긴급 지휘력 %d / 4" % sim.command_points if sim.turn >= 6 else "초기 작전 수행 · 보고 수신")
+        phase_label.text = sim.operation_phase() + "  |  " + ("긴급 지휘력 %d / 4" % sim.command_points if sim.turn >= WarSim.COURIER_TURN else "초기 작전 수행 · 보고 수신")
     turn_label.text=phase
     _refresh_enemy_roster()
     var enemy_text: String = "정찰 제한" if fog_enabled and not sim.finished else _number_text(sim.total_troops(1))
@@ -937,6 +962,7 @@ func _refresh_hud() -> void:
         if active: pending=_prioritized_situations()
         if sim.situation_serial==0: read_messengers.clear()
         _refresh_messenger_card(pending)
+        _refresh_arrival_rows()
         var count: int=pending.size()
         dispatch_headline.visible=active and sim.scenario_id!=2 and sim.headquarters[0]["occupation"]>0
         notice_label.size.x=284.0 if dispatch_headline.visible else 685.0
@@ -952,8 +978,8 @@ func _refresh_hud() -> void:
         highlight_button.disabled=not sim.started or sim.finished
         highlight_button.text="탐색 중 · 중지" if highlight_active else "다음 주요 상황 ▶"
     _collect_journal()
-    apply_btn.disabled = sim.started and (sim.turn < 6 or sim.finished or captured)
-    apply_btn.text = "초기 작전 설정" if not sim.started else "전령 보내기 (6턴~)"
+    apply_btn.disabled = sim.started and (sim.turn < WarSim.COURIER_TURN or sim.finished or captured)
+    apply_btn.text = "초기 작전 설정" if not sim.started else "전령 보내기 (5턴~)"
     start_btn.visible=not sim.started
     pause_btn.visible=sim.started
     live_order_button.disabled=sim.finished
@@ -1197,6 +1223,7 @@ func _clear_journal() -> void:
     contact_fronts.clear()
     fronts_by_unit.clear()
     deformed_slot_cache.clear()
+    arrival_messages.clear()
     journal_events.clear()
     journal_keys.clear()
     if is_instance_valid(journal_button): journal_button.text="알림"
@@ -1584,8 +1611,11 @@ func _draw_map(_canvas: Control) -> void:
     map_label_areas.append(Rect2(screen_corner+Vector2(MAP_SIZE.x-60,4)/camera_zoom,Vector2(56,56)/camera_zoom))
     map_label_areas.append(Rect2(screen_corner+Vector2(8,MAP_SIZE.y-46)/camera_zoom,Vector2(397,37)/camera_zoom))
     map_label_areas.append(Rect2(screen_corner+Vector2(MAP_SIZE.x-126,MAP_SIZE.y-46)/camera_zoom,Vector2(122,37)/camera_zoom))
-    if messenger_card.visible:
-        var card_rect:=messenger_card.get_global_rect()
+    var dispatch_controls: Array[Button] = [messenger_card]
+    dispatch_controls.append_array(arrival_rows)
+    for card in dispatch_controls:
+        if not card.visible: continue
+        var card_rect:=card.get_global_rect()
         map_label_areas.append(Rect2(screen_corner+(card_rect.position-map_layer.global_position)/camera_zoom,card_rect.size/camera_zoom))
     var map_rect: Rect2 = Rect2(Vector2.ZERO,sim.field_size)
     if terrain_cache != null:
@@ -2363,7 +2393,7 @@ func _build_planning_dialog() -> void:
     plan_deputy = _plan_option(root,"부장",["통솔형 부장","공격형 부장","책략형 부장"])
     plan_deputy.item_selected.connect(_change_deputy)
     plan_takeover = Button.new()
-    plan_takeover.text = "부상 장수 지휘 교체 전령 (6턴~)"
+    plan_takeover.text = "부상 장수 지휘 교체 전령 (5턴~)"
     root.add_child(plan_takeover)
     plan_takeover.pressed.connect(_request_takeover)
     var map_row := HBoxContainer.new()
@@ -2425,7 +2455,7 @@ func _open_planning() -> void:
     plan_donor.select((ids.find(selected_id)+1)%ids.size())
     plan_deputy.select(int(unit["deputy_index"]))
     plan_deputy.disabled = sim.started
-    plan_takeover.disabled = not sim.started or sim.finished or sim.commander_captured(0) or sim.turn < 6 or str(unit["general_state"]) != "부상" or bool(unit["active_deputy"])
+    plan_takeover.disabled = not sim.started or sim.finished or sim.commander_captured(0) or sim.turn < WarSim.COURIER_TURN or str(unit["general_state"]) != "부상" or bool(unit["active_deputy"])
     plan_fog.set_pressed_no_signal(fog_enabled)
     for btn in plan_actions:
         btn.disabled = sim.started
@@ -2527,7 +2557,7 @@ func _request_takeover() -> void:
         runtime_notice = "부장 지휘 교체 전령 파견"
         _refresh_hud()
     else:
-        plan_status.text = "지휘 교체 불가: 부상, 6턴 이후, 전령 중복 여부 확인"
+        plan_status.text = "지휘 교체 불가: 부상, 5턴 이후, 전령 중복 여부 확인"
 
 func _public_event(message: String) -> bool:
     # Conservative filtering of identifiable enemy-only events in limited view.
@@ -2646,7 +2676,7 @@ func _open_briefing() -> void:
     var story: String = ""
     if campaign_active and int(campaign.state["pending"]) >= 0:
         story = str(Campaign.NODES[int(campaign.state["pending"])]["story"])+"\n"
-    brief_text.text = story + "%s\n\n승리 목표: %s\n제한 시간: %s (기본 배속)\n\n권장 전략: %s\n\n첫 5분: 사전 작전 수행 / 이후: 전령 파견\n장수별 능력과 성향, 정찰 정보, 보급을 고려하십시오." % [sim.scenario_title,sim.scenario_goal,_operation_clock(sim.operation_limit()),tactic]
+    brief_text.text = story + "%s\n\n승리 목표: %s\n제한 시간: %s (기본 배속)\n\n권장 전략: %s\n\n1~4턴은 사전 작전을 수행합니다. 5턴이 시작되면 작전 지도에서 전령을 보낼 수 있습니다.\n장수별 능력과 성향, 정찰 정보, 보급을 고려하십시오." % [sim.scenario_title,sim.scenario_goal,_operation_clock(sim.operation_limit()),tactic]
     brief_dialog.popup_centered()
 
 func _open_analysis() -> void:
@@ -3013,7 +3043,6 @@ func _setup_sound() -> void:
     sound_player = AudioStreamPlayer.new()
     sound_player.volume_db = -18.0
     add_child(sound_player)
-    combat_sounds=BattleAudio.build()
     for i in range(4):
         var channel:=AudioStreamPlayer.new()
         channel.volume_db=-13.0
@@ -3027,51 +3056,44 @@ func _toggle_sound() -> void:
     if not sound_enabled:
         sound_player.stop()
         for channel in combat_players: channel.stop()
-        if is_instance_valid(music_player): music_player.stop()
+        if is_instance_valid(music_player): music_player.stream_paused=true
     elif is_instance_valid(music_player):
-        music_player.play()
+        music_player.stream_paused=false
+        if not music_player.playing: music_player.play()
     _refresh_hud()
 
-func _play_cue(frequency: float, duration: float) -> void:
-    if not sound_enabled or not is_instance_valid(sound_player):
-        return
-    var sample_rate: int = 16000
-    var count: int = int(duration*sample_rate)
-    var data := PackedByteArray()
-    data.resize(count*2)
-    for i in range(count):
-        var t: float = float(i)/sample_rate
-        var envelope: float = minf(1.0,t*80.0)*maxf(0.0,1.0-t/duration)
-        var waveform: float = sin(TAU*frequency*t) + 0.22*sin(TAU*frequency*1.5*t)
-        data.encode_s16(i*2,int(clampf(waveform*envelope*9000.0,-32767.0,32767.0)))
-    var wav := AudioStreamWAV.new()
-    wav.format = AudioStreamWAV.FORMAT_16_BITS
-    wav.mix_rate = sample_rate
-    wav.data = data
-    sound_player.stream = wav
+func _play_cue(stream: AudioStream) -> void:
+    if not sound_enabled: return
+    sound_player.stream=stream
     sound_player.play()
 
 func _play_combat_audio(fx: Dictionary) -> void:
     if not sound_enabled or combat_players.is_empty(): return
     var kind: String=str(fx["kind"])
     if not combat_sounds.has(kind): return
+    var now:=Time.get_ticks_msec()
+    if now < int(next_combat_ms.get(kind,0)): return
+    next_combat_ms[kind]=now+int(BattleAudio.SPACING_MS[kind])
+    var takes: Array=combat_sounds[kind]
+    var index: int=next_combat_take.get(kind,0)
+    next_combat_take[kind]=(index+1)%takes.size()
     var channel: AudioStreamPlayer=combat_players[combat_audio_cursor%combat_players.size()]
     combat_audio_cursor+=1
     var midpoint: Vector2=(fx["from"] as Vector2).lerp(fx["to"],0.5)
     var distance: float=camera_center.distance_to(midpoint)
-    channel.volume_db=-10.0-clampf(distance/55.0,0.0,18.0)
+    channel.volume_db=-13.0-clampf(distance/55.0,0.0,18.0)
     channel.pitch_scale=0.96+float(combat_audio_cursor%7)*0.014
-    channel.stream=combat_sounds[kind]
+    channel.stream=takes[index]
     channel.play()
 
 func _update_audio_and_warning() -> void:
     if not sim.started or sim.paused or sim.finished: return
     var warning: String = "본진 피습" if sim.headquarters[0]["occupation"]>0 else ""
     if warning != "" and warning != last_warning:
-        _play_cue(230.0,0.25)
+        _play_cue(BattleAudio.HQ_ALARM)
         last_audio_clock = sim.battle_time
     elif sim.urgent_deliveries>heard_urgent_deliveries:
-        _play_cue(620.0,0.15)
+        _play_cue(BattleAudio.DISPATCH)
     heard_urgent_deliveries=sim.urgent_deliveries
     last_warning = warning
     if sim.visual_effects.is_empty():
@@ -3512,7 +3534,7 @@ func _build_demo_help() -> void:
     tutorial_dialog = AcceptDialog.new()
     tutorial_dialog.title = "군략 · 첫 출전 안내"
     tutorial_dialog.ok_button_text = "확인"
-    tutorial_dialog.dialog_text = "0. 기본 전체 시야: 아군/적군 탭에서 양 진영 활동과 병력을 확인합니다. C: 최근 교전 위치, V: 정찰 시야 전환.\n1. 전략 지도에서 인접 지역을 선택합니다. 군량 55가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 종이 작전 지도에서 부대 말·목적지·행동·연계 대상을 지정합니다.\n4. 기본 배속 전투는 약 25분. 장수는 자율적으로 판단하며 5분 경과 후 전령 파견 가능. 긴급 보고를 열어 지원·사수·재집결·철수 지시를 내릴 수 있습니다.\n5. 숫자 1~6 장수 선택, Space 일시정지, 휠 확대, 방향키/가운데 마우스 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
+    tutorial_dialog.dialog_text = "0. 기본 전체 시야: 아군/적군 탭에서 양 진영 활동과 병력을 확인합니다. C: 최근 교전 위치, V: 정찰 시야 전환.\n1. 전략 지도에서 인접 지역을 선택합니다. 군량 55가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 종이 작전 지도에서 부대 말·목적지·행동·연계 대상을 지정합니다.\n4. 기본 배속 전투는 약 25분. 장수는 자율적으로 판단하며 5턴이 시작되면 작전 지도가 열립니다. 전령은 지시를 확정하면 출발합니다. 긴급 보고를 열어 지원·사수·재집결·철수 지시를 내릴 수 있습니다.\n5. 숫자 1~6 장수 선택, Space 일시정지, 휠 확대, 방향키/가운데 마우스 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
     add_child(tutorial_dialog)
     retreat_dialog = ConfirmationDialog.new()
     retreat_dialog.title = "전투 철수"
@@ -3537,37 +3559,12 @@ func _confirm_retreat() -> void:
         finish_seen = true
         _show_outcome()
 
-# Original synthesized ambient motif, not a sampled or licensed music track.
 func _setup_ambient_music() -> void:
     music_player = AudioStreamPlayer.new()
-    music_player.volume_db = -28.0
+    music_player.volume_db = -12.0
+    music_player.stream=preload("res://assets/audio/river_watch.ogg")
     add_child(music_player)
-    var rate: int = 12000
-    var length: float = 12.0
-    var count: int = int(float(rate)*length)
-    var pcm := PackedByteArray()
-    pcm.resize(count*2)
-    var notes: Array[float] = [146.83,196.0,220.0,196.0,164.81,146.83,110.0,130.81]
-    for i in range(count):
-        var t: float = float(i)/float(rate)
-        var idx: int = mini(7,floori(t/1.5))
-        var local: float = fmod(t,1.5)
-        var env: float = minf(1.0,local*12.0)*exp(-local*2.5)
-        var freq: float = notes[idx]
-        var drone: float = sin(TAU*73.415*t)*0.14
-        var voice: float = (sin(TAU*freq*local)+0.35*sin(TAU*freq*2.0*local))*env*0.40
-        var seam: float = minf(1.0,minf(t,length-t)*4.0)
-        pcm.encode_s16(i*2,int(clampf((drone+voice)*seam*18000.0,-32767.0,32767.0)))
-    var wav := AudioStreamWAV.new()
-    wav.format = AudioStreamWAV.FORMAT_16_BITS
-    wav.mix_rate = rate
-    wav.data = pcm
-    wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
-    wav.loop_begin = 0
-    wav.loop_end = count
-    music_player.stream = wav
     music_player.play()
-
 
 func _build_messenger_card() -> void:
     messenger_card=_button("",Vector2(28,154),Vector2(307,75),func(): _open_situations(messenger_id))
@@ -3586,6 +3583,46 @@ func _build_messenger_card() -> void:
         label.mouse_filter=Control.MOUSE_FILTER_IGNORE
         label.reparent(messenger_card,false)
     messenger_card.hide()
+    for index in range(2):
+        var row:=_button("",Vector2(28,154),Vector2(307,35),_open_arrival.bind(index))
+        row.alignment=HORIZONTAL_ALIGNMENT_LEFT
+        row.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+        var style:=_ui_box(Color("#25332e"),Color("#967d50"))
+        style.content_margin_left=10
+        style.content_margin_right=10
+        row.add_theme_stylebox_override("normal",style)
+        row.hide()
+        arrival_rows.append(row)
+
+func _on_messenger_arrived(id: int,sender: String,message: String) -> void:
+    var heading:=sender+"군 전령" if id>=0 else sender
+    arrival_messages.push_front({"id":id,"text":heading+"  ·  "+message,"remaining":10.0})
+    if arrival_messages.size()>6: arrival_messages.pop_back()
+
+func _refresh_arrival_rows() -> void:
+    for row in arrival_rows: row.hide()
+    if not sim.started or sim.finished or situation_dialog.visible: return
+    var index:=0
+    for message in arrival_messages:
+        var id: int=message["id"]
+        if id>=0 and (id==messenger_id or read_messengers.has(id)): continue
+        var row:=arrival_rows[index]
+        row.position.y=(235 if messenger_card.visible else 154)+index*40
+        row.text=message["text"]
+        row.tooltip_text=row.text
+        row.set_meta("report_id",id)
+        row.show()
+        index+=1
+        if index==arrival_rows.size(): break
+
+func _open_arrival(index: int) -> void:
+    var id: int=arrival_rows[index].get_meta("report_id")
+    for report in sim.situation_reports:
+        if id==report["id"]:
+            _open_situations(id)
+            return
+    _collect_journal()
+    _open_journal()
 
 func _report_place(report: Dictionary) -> String:
     var point: Vector2=report["pos"]
@@ -3779,7 +3816,7 @@ func _select_situation(index: int) -> void:
         if pending:
             var remaining: float=maxf(0.0,float(report.get("expires",sim.battle_time))-sim.battle_time)*sim.operation_scale()
             situation_record.text="응답까지 남은 시간 %s   ·   지휘력 %d/4" % [_operation_clock(remaining),sim.command_points]
-            if sim.turn<6: situation_record.text+="\n6턴부터 전령 파견 가능"
+            if sim.turn < WarSim.COURIER_TURN: situation_record.text+="\n5턴부터 전령 파견 가능"
         else: situation_record.text=_situation_outcome(report)
         if not situation_notice.is_empty(): situation_record.text+="\n"+situation_notice
         if report.has("relief_answer"): situation_record.text+="\n"+str(report["relief_answer"])
@@ -3791,7 +3828,7 @@ func _select_situation(index: int) -> void:
             btn.visible=pending
             if order=="지원": btn.text=str(helper["name"])+" 지원" if not helper.is_empty() else "지원군 없음"
             var unavailable: bool=helper.is_empty() if order=="지원" else sim.has_pending_courier(int(report["unit_id"]))
-            btn.disabled=sim.commander_captured(0) or unit.is_empty() or float(unit.get("troops",0.0))<=0.0 or (order!="현장 판단" and (sim.turn<6 or sim.command_points<=0 or unavailable))
+            btn.disabled=sim.commander_captured(0) or unit.is_empty() or float(unit.get("troops",0.0))<=0.0 or (order!="현장 판단" and (sim.turn < WarSim.COURIER_TURN or sim.command_points<=0 or unavailable))
         break
 
 func _situation_outcome(report: Dictionary) -> String:
@@ -3988,7 +4025,7 @@ func _change_link(partner: int) -> void:
     var ok: bool=false
     if not sim.started:
         ok=sim.select_unit_mission(selected_id,str(unit["mission"]),str(unit["policy"]),partner)
-    elif sim.turn>=6 and not sim.finished:
+    elif sim.turn >= WarSim.COURIER_TURN and not sim.finished:
         ok=sim.request_order(selected_id,str(unit["mission"]),str(unit["policy"]),partner)
     plan_status.text="협동 대상 지정 완료" if ok and not sim.started else ("협동 대상 변경 전령 파견" if ok else "지정 불가: 자신·전멸 부대 또는 전령 제한")
     _refresh_hud()
@@ -4001,6 +4038,7 @@ func _open_order_map() -> void:
     order_pause_before=sim.paused
     if sim.started: sim.paused=true
     order_view.open(sim.started)
+    if sim.started and sim.turn >= WarSim.COURIER_TURN and not sim.commander_captured(0): courier_map_seen=true
 
 func _return_to_battle() -> void:
     sim.paused=order_pause_before

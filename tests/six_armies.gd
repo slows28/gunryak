@@ -289,7 +289,7 @@ func _run() -> void:
             sim.step(0.1)
             for u in sim.units:
                 if float(u["troops"])>0.0 and sim.terrain_at(u["pos"])=="하천": water_ticks+=1
-            if sim.turn>=6 and not issued:
+            if sim.turn>=WarSim.COURIER_TURN and not issued:
                 issued=sim.request_order(8,"중앙 진격","재량 위임")
         check(sim.operation_limit()==(1680.0 if scenario==3 else 1500.0),"25-minute scenario budget / 28-minute escort")
         check(sim.finished and sim.validate_state().is_empty() and sim.units.size()<=14,"battle valid, at most seven per faction")
@@ -407,7 +407,7 @@ func _run() -> void:
     game.order_view.destination=Vector2(1000,800)
     game.order_view.has_destination=true
     game.order_view.call("_choose_action",2)
-    check(game.order_view.apply.disabled and game.order_view.feedback.text.contains("6턴"),"early draft shows the courier gate before submission")
+    check(game.order_view.apply.disabled and game.order_view.feedback.text.contains("5턴"),"early draft shows the courier gate before submission")
     game.order_view.call("_launch")
     check(not game.order_view.visible and not map_sim.paused,"return to battle without discarding an early draft")
     game.call("_open_order_map")
@@ -415,12 +415,23 @@ func _run() -> void:
     game.order_view.drafts.clear()
     game.order_view.draft_dirty=false
     game.order_view.call("_launch")
-    map_sim.turn=6
-    game.call("_open_order_map")
+    map_sim.battle_time=4.0*map_sim.turn_duration()-0.05
+    map_sim.turn=4
+    game.game_speed=4.0
+    game.step_buffer=0.0
+    game.call("_process",0.10)
+    check(map_sim.turn==5 and game.order_view.in_battle and game.order_view.feedback.text.contains("파견 가능"),"entering turn five opens the actionable dispatch map")
     check(game.order_view.visible and map_sim.paused,"midbattle map pauses simulation")
     var next_dest:=Vector2(12,800)
     var reachable_dest:=Vector2(18,800)
-    check(map_sim.issue_map_order(1,"지역 사수",next_dest,-1),"midbattle destination order dispatched")
+    game.order_view.call("_select",1)
+    game.order_view.destination=next_dest
+    game.order_view.has_destination=true
+    game.order_view.partner_choice.select(0)
+    game.order_view.call("_choose_action",2)
+    check(not game.order_view.apply.disabled,"turn-five order can be confirmed on the map")
+    game.order_view.apply.pressed.emit()
+    check(map_sim.has_pending_courier(1),"midbattle destination order dispatched")
     game.order_view.call("_select",0)
     game.order_view.call("_select",1)
     check(game.order_view.destination==reachable_dest and game.order_view.action_choice.selected==2,"planning sheet restores a dispatched destination before delivery")
@@ -434,16 +445,25 @@ func _run() -> void:
     check(map_sim.map_dispatches[1]["status"]=="도착","courier status resolves only on actual delivery")
     game.order_view.hide()
     game.call("_return_to_battle")
-    check(not map_sim.paused,"return restores battle clock")
+    game.call("_process",0.10)
+    check(not map_sim.paused and not game.order_view.visible,"return restores battle clock without reopening the dispatch map")
     check(game.order_status_label.text.contains("전령 도착") and game.order_status_label.text.contains("목적지 미도달"),
         "inspector distinguishes courier delivery from reaching the destination")
     map_unit["destination_reached"]=true
     game.call("_refresh_hud")
     check(game.order_status_label.text.ends_with("목적지 도달"),"inspector shows verified arrival")
     check(game.situation_btn.theme_type_variation==&"" and not game.situation_btn.disabled,"idle reports button is neutral and accessible")
-    map_sim.situation_reports.append({"id":90,"unit_id":1,"title":"군량 부족","status":"미대응","pos":map_unit["pos"]})
+    var routine: Dictionary={"id":90,"unit_id":1,"sender":map_unit["name"],"kind":"군량 부족","title":"군량 부족","status":"대기","urgent":false,"pos":map_unit["pos"],"written_at":map_sim.battle_time}
+    routine["rider"]=map_sim._field_rider(map_sim.commanders[0]["pos"],0,-90)
+    map_sim.situation_reports.append(routine)
+    map_sim.incoming_reports.append(routine)
+    map_sim._move_reporting_messengers(0.1)
+    check(not game.arrival_messages.any(func(m): return m["id"]==90),"report in transit stays hidden")
+    routine["written_at"]-=2.0
+    map_sim._move_reporting_messengers(0.1)
     game.call("_refresh_hud")
     check(game.situation_btn.theme_type_variation==&"" and not game.messenger_card.visible and not game.dispatch_headline.visible,"routine reports enter the inbox quietly")
+    check(game.arrival_rows[0].visible and game.arrival_rows[0].get_meta("report_id")==90 and "군량 부족" in game.arrival_rows[0].text and not map_sim.paused,"ordinary courier posts a nonblocking message on the left")
     map_sim.respond_situation(90,"현장 판단")
     map_sim.situation_reports.append({"id":91,"unit_id":1,"title":"전선 압박","status":"미대응","pos":map_unit["pos"]})
     game.call("_refresh_hud")

@@ -133,6 +133,7 @@ jobs:
           test -s dist/Gunryak.exe
           test -s dist/Gunryak.x86_64
           chmod +x dist/Gunryak.x86_64
+          cp audio_source/FluidR3-COPYRIGHT.txt dist/
           dist/Gunryak.x86_64 --headless --quit-after 10 2>&1 | tee /tmp/gunryak-export-startup.log
           if grep -E "SCRIPT ERROR|Parse Error" /tmp/gunryak-export-startup.log; then exit 1; fi
           printf '%s\n' 'Gunryak public demo candidate 0.9 — not a final release.' 'Windows: run Gunryak.exe. Linux: run Gunryak.x86_64.' 'Korean UI; local campaign saves. Windows GUI is not verified by headless tests.' > dist/README.txt

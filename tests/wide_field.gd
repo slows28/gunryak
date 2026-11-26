@@ -39,7 +39,7 @@ func _run() -> void:
             if sim.finished: break
             sim.step(0.1)
             max_x = maxf(max_x,float((sim.units[0]["pos"] as Vector2).x))
-            if i%30 == 0 and sim.turn >= 6:
+            if i%30 == 0 and sim.turn >= WarSim.COURIER_TURN:
                 for report in sim.open_situations():
                     sim.respond_situation(int(report["id"]),"지원")
         var valid: bool = sim.finished and sim.validate_state().is_empty()

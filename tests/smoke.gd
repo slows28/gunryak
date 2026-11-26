@@ -21,7 +21,7 @@ func _initialize() -> void:
     check(s.commanders.size() == 2, "both strategists exist")
     check(s.select_unit_mission(0, "중앙 진격", "방진 유지"), "planning before battle")
     check(str(s.find_unit(0)["formation"]) == "방진", "planned formation installed")
-    check(not s.request_order(0, "본진 방어", "현장 판단"), "courier prohibited before turn six")
+    check(not s.request_order(0, "본진 방어", "현장 판단"), "courier prohibited before turn five")
     s.start()
     check(s.started, "battle start")
     var first_step: float = s.battle_time
@@ -210,13 +210,13 @@ func _initialize() -> void:
     # Messenger must travel, rather than changing orders immediately.
     var messages = WarSim.new()
     messages.start()
-    messages.turn = 6
+    messages.turn = WarSim.COURIER_TURN
     messages.battle_time = 90.0
     var subject: Dictionary = messages.find_unit(0)
     subject["pos"] = Vector2(500, 260)
     messages.commanders[0]["pos"] = Vector2(200, 260)
     var former: String = str(subject["mission"])
-    check(messages.request_order(0, "본진 방어", "방진 유지"), "turn six messenger dispatch")
+    check(messages.request_order(0, "본진 방어", "방진 유지"), "turn five messenger dispatch")
     check(not messages.request_order(0, "남측 우회", "횡대 유지"), "duplicate courier blocked")
     messages._update_couriers(0.1)
     check(str(subject["mission"]) == former, "order unchanged before courier arrival")

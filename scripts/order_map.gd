@@ -195,7 +195,7 @@ func _paper_button(button: Button) -> void:
 func open(mid_battle:bool=false)->void:
     in_battle=mid_battle
     goal_label.text="승리 목표   "+sim.scenario_goal
-    title.text=("전령 지시" if mid_battle else "작전 지도")+"   /   "+sim.scenario_title
+    title.text=("%d턴 전령 지시" % sim.turn if mid_battle else "작전 지도")+"   /   "+sim.scenario_title
     progress_label.text="군단 선택 → 목적지 지정 → 지시 확정"
     launch.text="전장 복귀" if mid_battle else "전투 개시"
     placement.disabled=mid_battle
@@ -215,7 +215,7 @@ func open(mid_battle:bool=false)->void:
         roster.set_item_tooltip(roster.item_count-1,str(u["type"])+" · "+str(u["mission"]))
         roster.set_item_metadata(roster.item_count-1,id)
     feedback.text="군단 지시는 지도에 목적지를 찍어 작성하세요. 기지와 책사의 출발 위치는 오른쪽에서 지정합니다."
-    if mid_battle: feedback.text="전투 중 명령은 6턴부터 전령으로 전달됩니다. 확정 전까지 기존 작전 유지."
+    if mid_battle: feedback.text="5턴부터 전령을 보낼 수 있습니다. 명령은 전령이 도착하면 적용됩니다."
     if sim.commander_captured(0):
         title.text="작전 지도   /   "+sim.scenario_title
         feedback.text=sim.command_status(0)

@@ -16,7 +16,7 @@ func _run() -> void:
     sim.tactical_enabled = true
     sim.start()
     var target: Dictionary = sim.find_unit(0)
-    check(not sim.request_tactical(0,"사수"),"no tactical commands before turn six")
+    check(not sim.request_tactical(0,"사수"),"no tactical commands before turn five")
     target["morale"] = 39.0
     sim.battle_time = 90.0
     sim.turn = 6
@@ -60,7 +60,7 @@ func _run() -> void:
         for i in range(1801):
             if game.finished: break
             game.step(0.1)
-            if game.turn >= 6 and i%20 == 0:
+            if game.turn >= WarSim.COURIER_TURN and i%20 == 0:
                 for report in game.open_situations():
                     var response: String = "현장 판단" if strategy == "재량 위임" else ("사수" if strategy == "명령 엄수" else "지원")
                     if game.respond_situation(int(report["id"]),response):
