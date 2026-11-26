@@ -8,6 +8,7 @@ func _initialize() -> void:
     _charge_and_rear()
     _running_charge()
     _contact_footwork()
+    _change_ranks()
     _targeting()
     _simultaneous_losses()
     print("GUNRYAK_COMBAT_PASS" if failures==0 else "GUNRYAK_COMBAT_FAIL %d" % failures)
@@ -74,6 +75,32 @@ func _contact_footwork() -> void:
     horse["troops"] = 100
     sim._emit_march_dust(horse, horse["pos"]-Vector2(8,0), Vector2(8,0))
     _check(sim.dust_effects.is_empty(), "even at a gallop a hoof on the bridge raises no soil")
+
+func _change_ranks() -> void:
+    var sim := _field()
+    var unit := _place(sim.find_unit(0), Vector2(700,750), "보병")
+    sim._order_formation(unit, "종대")
+    sim._formation_transition(unit, float(unit["form_duration"]) * 0.52)
+    var halfway := sim.formation_slots(unit)
+    sim._order_formation(unit, "학익진")
+    _check(halfway == sim.formation_slots(unit), "a new formation order starts at the files' occupied positions")
+    sim._formation_transition(unit, float(unit["form_duration"]) * 0.35)
+    var changed := sim.formation_slots(unit)
+    sim._order_formation(unit, "횡대")
+    _check(changed == sim.formation_slots(unit), "a reversal returns to the original ranks without snapping")
+    sim._formation_transition(unit, 20.0)
+    _check(unit["reforms_completed"] == 0, "withdrawing an unfinished formation order does not count as a new formation")
+    sim._order_formation(unit, "방진")
+    var duration: float = unit["form_duration"]
+    sim._formation_transition(unit, duration - 0.001)
+    var almost := sim.formation_slots(unit)
+    sim._formation_transition(unit, 0.002)
+    var settled := sim.formation_slots(unit)
+    var shape := sim.army_slots(unit, settled.size(), 12.0, "방진")
+    var continuous := true
+    for i in range(settled.size()):
+        continuous = continuous and almost[i].distance_to(settled[i]) < 0.05 and settled[i] in shape
+    _check(continuous and unit["formation"] == "방진", "each file holds its assigned place when the square finishes")
 
 func _bows() -> void:
     var sim := _field()

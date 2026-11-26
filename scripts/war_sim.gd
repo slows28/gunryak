@@ -1,4 +1,5 @@
 extends RefCounted
+const FormationDrill = preload("res://scripts/formation_drill.gd")
 ## Independent battle model: no UI nodes, textures, or rendering calls.
 ## Intentionally bounded fixed-step updates; safe for headless simulation tests.
 
@@ -567,6 +568,18 @@ func supply_caption(base: Dictionary) -> String:
     if base["state"]=="착공 예정": return "기지 예정지"
     return kind
 
+func crew_caption(side: int) -> String:
+    var crew: Dictionary = supply_crews[side]
+    match str(crew["state"]):
+        "구축":
+            for base in bases:
+                if base["side"] == side and base["alive"] and base["state"] == "설치" and crew["pos"] == base["pos"]:
+                    return "기지 구축 %d초" % ceili(float(base["build_timer"]) * operation_scale())
+        "이동": return "후속 기지로 이동" if crew.get("extending",false) else "현장 복귀"
+        "회피": return "보급부대 대피"
+        "괴멸": return "보급부대 괴멸"
+    return "보급부대 대기"
+
 func supply_radius() -> float:
     return SUPPLY_RADIUS*1.6 if six_armies else SUPPLY_RADIUS
 
@@ -593,29 +606,80 @@ func _buildable_ground(point: Vector2) -> bool:
         if structure["hp"]>0 and (structure["rect"] as Rect2).grow(8.0).has_point(point): return false
     return true
 
-func _extend_supply(side: int) -> void:
-    var crew: Dictionary=supply_crews[side]
-    if crew["state"]!="대기": return
-    for base in bases:
-        if base["side"]==side and base["alive"] and base["state"]=="설치":
-            if _safe_crew_site(side,base["pos"]):
-                crew["goal"]=base["pos"]
-                crew["state"]="이동"
-            return
-    var radius:=supply_radius()
-    var march_required:=radius*0.8
-    var site:=Vector2.INF
+func _supply_demand(side: int) -> Array[Dictionary]:
+    var demand: Array[Dictionary] = []
+    var radius := supply_radius()
     for unit in units:
-        if unit["side"]!=side or unit["troops"]<=0 or unit["routed"] or unit["reserve"]: continue
-        if unit["action"] in ["패주","후퇴","전술 철수","보급 복귀","탄약 보충","재집결","전술 재집결","거리 유지"] or unit["mission"]=="철수": continue
-        var point: Vector2=unit["pos"]
-        var marched:=point.distance_to(unit.get("supply_mark",point))
-        if marched<march_required or _has_supply(side,point) or not _safe_crew_site(side,point): continue
-        site=point
-        march_required=marched
-    if site==Vector2.INF: return
-    crew["goal"]=site
-    crew["state"]="이동"
+        if unit["side"] != side or unit["troops"] <= 0 or unit["routed"] or unit["reserve"]: continue
+        if unit["mission"] == "철수" or unit["action"] in ["패주","후퇴","전술 철수","재집결","전술 재집결"]: continue
+        var point: Vector2 = unit["pos"]
+        var base := _nearest_base(side, point, true)
+        var marched := point.distance_to(unit.get("supply_mark", point))
+        var extended := marched >= radius * 0.65
+        if base.is_empty():
+            demand.append(unit)
+            continue
+        var gap := point.distance_to(base["pos"])
+        if gap > radius:
+            if extended or float(unit["out_supply"]) >= turn_duration(): demand.append(unit)
+        elif extended and gap > radius * 0.80:
+            var outward := Vector2(base["pos"]).direction_to(point)
+            if (Vector2(unit["goal"]) - point).dot(outward) >= 35.0: demand.append(unit)
+    return demand
+
+func _extend_supply(side: int) -> void:
+    var crew: Dictionary = supply_crews[side]
+    if crew["strength"] <= 0 or crew["state"] not in ["대기","이동"]: return
+    if crew["state"] == "이동" and not crew.get("extending", false): return
+    for base in bases:
+        if base["side"] == side and base["alive"] and base["state"] == "설치" and _safe_crew_site(side,base["pos"]):
+            crew["goal"] = base["pos"]
+            crew["state"] = "이동"
+            crew["extending"] = false
+            return
+    var demand := _supply_demand(side)
+    var radius := supply_radius()
+    if crew["state"] == "이동":
+        if _safe_crew_site(side,crew["goal"]):
+            for unit in demand:
+                if Vector2(unit["pos"]).distance_to(crew["goal"]) <= radius: return
+        crew["state"] = "대기"
+        crew["goal"] = crew["pos"]
+        crew["extending"] = false
+    var site := Vector2.INF
+    var best := -INF
+    for lead in demand:
+        var point: Vector2 = lead["pos"]
+        var source := _nearest_base(side,point,true)
+        var departure: Vector2 = source.get("pos", crew["pos"])
+        var back := point.direction_to(departure)
+        if back.is_zero_approx(): back = -Vector2(lead["facing"])
+        # First choice is the actual march. Where the ground or enemy rules it
+        # out, the crew can still cover that frontage from a nearby dry site.
+        var candidates := [point, point + back * radius * 0.40,
+            point + (back + back.orthogonal()) * radius * 0.32,
+            point + (back - back.orthogonal()) * radius * 0.32]
+        for candidate: Vector2 in candidates:
+            candidate = _field_point(candidate)
+            if not source.is_empty() and candidate.distance_to(departure) < radius * 0.58: continue
+            if not _safe_crew_site(side,candidate): continue
+            var score := 0.0
+            for ally in demand:
+                if candidate.distance_to(ally["pos"]) <= radius * 0.92: score += float(ally["troops"])
+            score -= point.distance_to(candidate) * 1.2 + Vector2(crew["pos"]).distance_to(candidate) * 0.15
+            if score > best:
+                best = score
+                site = candidate
+    if site != Vector2.INF:
+        crew["goal"] = site
+        crew["state"] = "이동"
+        crew["extending"] = true
+
+func _refill_position(pos: Vector2, depot: Dictionary) -> Vector2:
+    var center: Vector2 = depot["pos"]
+    if pos.distance_to(center) <= supply_radius(): return pos
+    var edge := center + center.direction_to(pos) * (supply_radius() - 14.0)
+    return edge if _buildable_ground(edge) else center
 
 func _safe_crew_site(side: int, point: Vector2) -> bool:
     if not _buildable_ground(point) or _nearby_corps(1-side,point,GUARD_RADIUS)>0: return false
@@ -668,10 +732,18 @@ func _update_supply_crew(crew: Dictionary, dt: float) -> void:
     var moved:=_structure_move(crew,pos,_field_point(pos.move_toward(waypoint,travel)))
     crew["pos"]=_land_motion(crew,pos,moved) if long_operation else moved
     if not (crew["pos"] as Vector2).is_equal_approx(site): return
-    if crew["state"]=="회피" or not _safe_crew_site(side,site):
+    var stale := false
+    if crew.get("extending",false):
+        stale = true
+        for unit in _supply_demand(side):
+            if site.distance_to(unit["pos"]) <= supply_radius():
+                stale = false
+                break
+    if crew["state"]=="회피" or stale or not _safe_crew_site(side,site):
         crew["state"]="대기"
         return
     crew["state"]="구축"
+    crew["extending"]=false
     for b in bases:
         if b["side"]==side and b["alive"] and b["state"]=="설치" and site.is_equal_approx(b["pos"]): return
     var post:=_base(side,site)
@@ -781,14 +853,14 @@ func _decide(unit: Dictionary) -> void:
         goal = pos + escape.normalized() * minf(110.0, 155.0 - enemy_distance)
         if str(unit["action"]) != "거리 유지":
             _log("%s 궁병이 근접 적을 피해 후방 기동" % str(unit["name"]))
-    elif str(unit["type"]) == "궁병" and float(unit["ammo"]) < 12.0 and enemy_distance > 115.0 and not depot.is_empty():
+    elif str(unit["type"]) == "궁병" and float(unit["ammo"]) < (52.0 if unit["action"] == "탄약 보충" else 12.0) and enemy_distance > 115.0 and not depot.is_empty():
         action = "탄약 보충"
         reason = "잔여 화살 부족: 보급기지로 이동"
-        goal = depot["pos"]
-    elif float(unit["rations"]) < 20.0 and enemy_distance > 125.0 and not depot.is_empty():
+        goal = _refill_position(pos, depot)
+    elif float(unit["rations"]) < (55.0 if unit["action"] == "보급 복귀" else 20.0) and enemy_distance > 125.0 and not depot.is_empty():
         action = "보급 복귀"
         reason = "식량 부족: 전투 지속력을 회복"
-        goal = depot["pos"]
+        goal = _refill_position(pos, depot)
     elif not nearest.is_empty() and ability >= 70.0 and enemy_distance < 85.0 and _flank_threat(unit, nearest):
         action = "측면 방어"
         reason = "측후면 위협을 확인하고 전열을 재정렬"
@@ -996,15 +1068,60 @@ func _decide(unit: Dictionary) -> void:
         wanted="종대"
     if str(unit["policy"]).ends_with(" 유지") and str(unit["policy"]).replace(" 유지","") in LARGE_FORMATIONS and action != "패주":
         wanted = str(unit["policy"]).replace(" 유지", "")
-    # Cancel an obsolete re-formation order before it completes; otherwise
-    # a later AI decision can apply a formation the general no longer wants.
-    if wanted == str(unit["formation"]):
+    _order_formation(unit, wanted)
+
+func _order_formation(unit: Dictionary, wanted: String) -> void:
+    var current: String = unit["formation"]
+    var pending: String = unit["next_formation"]
+    if pending == wanted or (pending.is_empty() and current == wanted): return
+    if not six_armies and wanted == current:
         unit["next_formation"] = ""
         unit["form_remaining"] = 0.0
-    elif wanted != str(unit["next_formation"]):
-        unit["next_formation"] = wanted
-        unit["form_remaining"] = 2.1 + (100.0 - _effective_stat(unit, "leadership")) * 0.025
-        unit["form_duration"] = unit["form_remaining"]
+        return
+    var duration := 2.1 + (100.0 - _effective_stat(unit, "leadership")) * 0.025
+    if six_armies:
+        var count := clampi(ceili(float(unit["troops"]) / 180.0), 1, 24)
+        var origins := _occupied_files(unit, count)
+        var targets := FormationDrill.match_files(origins, FormationDrill.pattern(wanted, count))
+        var longest := 0.0
+        for i in range(count): longest = maxf(longest, origins[i].distance_to(targets[i]))
+        unit["drill"] = {"shape":wanted, "origins":origins, "targets":targets}
+        duration = maxf(0.4, duration * clampf(longest / 2.1, 0.32, 1.5))
+    unit["next_formation"] = wanted
+    unit["form_remaining"] = duration
+    unit["form_duration"] = duration
+
+func _occupied_files(unit: Dictionary, count: int) -> Array[Vector2]:
+    var current: String = unit["formation"]
+    var wanted: String = unit["next_formation"]
+    var drill: Dictionary = unit.get("drill", {})
+    var settled: Dictionary = unit.get("dressed_files", {})
+    var origins := FormationDrill.pattern(current, count)
+    if settled.get("shape", "") == current:
+        var files: Array[Vector2] = settled["files"]
+        if files.size() != count:
+            var surviving: Array[Vector2] = origins.duplicate()
+            for i in range(mini(files.size(), count)): surviving[i] = files[i]
+            files = FormationDrill.match_files(surviving, origins)
+            settled["files"] = files
+        origins = files
+    if wanted.is_empty(): return origins
+    if drill.get("shape", "") != wanted or drill["targets"].size() != count:
+        # A casualty can remove a file mid-order. Reassign from the surviving
+        # positions with the remaining time, preserving the occupied ground.
+        if drill.get("shape", "") == wanted:
+            var existing := _sample_drill(unit, drill)
+            origins = origins.duplicate()
+            for i in range(mini(existing.size(), count)):
+                origins[i] = existing[i]
+            unit["form_duration"] = maxf(0.001, unit["form_remaining"])
+        drill = {"shape":wanted, "origins":origins, "targets":FormationDrill.match_files(origins, FormationDrill.pattern(wanted,count))}
+        unit["drill"] = drill
+    return _sample_drill(unit, drill)
+
+func _sample_drill(unit: Dictionary, drill: Dictionary) -> Array[Vector2]:
+    var progress := 1.0 - float(unit["form_remaining"]) / maxf(0.001, unit["form_duration"])
+    return FormationDrill.sample(drill["origins"], drill["targets"], progress)
 
 
 # A visible target's facing determines the offset, so the cavalry really travels
@@ -1034,10 +1151,16 @@ func _formation_transition(unit: Dictionary, dt: float) -> void:
         return
     unit["form_remaining"] = float(unit["form_remaining"]) - dt
     if float(unit["form_remaining"]) <= 0.0:
+        if six_armies:
+            var count := clampi(ceili(float(unit["troops"]) / 180.0), 1, 24)
+            _occupied_files(unit, count)
+            unit["dressed_files"] = {"shape":unit["next_formation"], "files":unit["drill"]["targets"]}
+            unit.erase("drill")
+        if unit["formation"] != unit["next_formation"]:
+            unit["reforms_completed"] += 1
         unit["formation"] = str(unit["next_formation"])
         unit["next_formation"] = ""
         unit["form_remaining"] = 0.0
-        unit["reforms_completed"] = int(unit["reforms_completed"]) + 1
 
 func _movement_rate(unit: Dictionary, enemy: Dictionary) -> float:
     var pos: Vector2=unit["pos"]
@@ -1376,14 +1499,7 @@ func formation_slots(unit: Dictionary) -> Array[Vector2]:
     var count: int = clampi(int(round(float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"])) * 12.0)), 0, 12)
     if six_armies:
         var size: int = clampi(ceili(float(unit["troops"])/180.0),1,24)
-        var points: Array[Vector2] = army_slots(unit,size,12.0)
-        if str(unit["next_formation"]) != "" and not points.is_empty():
-            var next: Array[Vector2] = army_slots(unit,size,12.0,str(unit["next_formation"]))
-            var t: float = smoothstep(0.0,1.0,1.0-float(unit["form_remaining"])/maxf(0.1,float(unit.get("form_duration",3.0))))
-            for i in range(points.size()):
-                points[i]=points[i].lerp(next[i],t)
-                if long_operation: points[i]=_dry_formation_slot(unit["pos"],points[i])
-        return points
+        return army_slots(unit,size,12.0)
     var center: Vector2 = unit["pos"]
     for k in range(count):
         var file: int = k % files
@@ -3548,32 +3664,11 @@ func army_slots(unit: Dictionary,count: int,spacing: float,shape_override: Strin
     if front.length_squared()<0.01: front=Vector2.RIGHT if int(unit["side"])==0 else Vector2.LEFT
     front=front.normalized()
     var side: Vector2=front.orthogonal()
-    var local: Array[Vector2]=[]
-    var shape: String=str(unit["formation"]) if shape_override.is_empty() else shape_override
-    var width: int=mini(count,8)
-    if shape=="종대": width=mini(count,4)
-    elif shape=="방진": width=ceili(sqrt(float(count)))
-    elif shape in ["어린진","봉시진"]: width=7
-    elif shape=="학익진": width=mini(count,10)
-    elif shape=="안행진": width=mini(count,9)
-    var row: int=0
-    while local.size()<count:
-        var row_width: int=width
-        if shape=="어린진": row_width=mini(7,3+row*2)
-        elif shape=="봉시진": row_width=mini(7,1+row*2)
-        row_width=mini(row_width,count-local.size())
-        for i in range(row_width):
-            var lateral: float=float(i)-float(row_width-1)*0.5
-            var depth: float=-float(row)
-            if shape=="학익진": depth+=absf(lateral)*0.65
-            elif shape=="안행진": depth+=lateral*0.45
-            local.append(Vector2(depth,lateral))
-        row+=1
-    var center:=Vector2.ZERO
-    for p in local: center+=p
-    center/=float(local.size())
+    var size := clampi(ceili(float(unit["troops"])/180.0),1,24)
+    var shape: String = unit["formation"] if shape_override.is_empty() else shape_override
+    var local := _occupied_files(unit, count) if shape_override.is_empty() and count == size else FormationDrill.pattern(shape, count)
     for p in local:
-        var q: Vector2=(p-center)*spacing
+        var q := p * spacing
         var pos:Vector2=(unit["pos"] as Vector2)+front*q.x+side*q.y
         points.append(_dry_formation_slot(unit["pos"],pos) if long_operation else pos)
     return points

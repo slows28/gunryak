@@ -135,6 +135,7 @@ var battle_samples: Dictionary = {}
 var recent_losses: Dictionary = {}
 var sample_time: float = -100.0
 var previous_centers: Dictionary = {}
+var previous_files: Dictionary = {}
 var plan_actions: Array[Button] = []
 var map_layer: Control
 var map_clip: Control
@@ -722,6 +723,7 @@ func _start() -> void:
     fallen_marks.clear()
     loss_carry.clear()
     previous_centers.clear()
+    previous_files.clear()
     contact_cache.clear()
     formation_render_cache.clear()
     contact_cache_step=-1
@@ -823,6 +825,7 @@ func _reset() -> void:
     fallen_marks.clear()
     loss_carry.clear()
     previous_centers.clear()
+    previous_files.clear()
     contact_cache.clear()
     formation_render_cache.clear()
     contact_cache_step=-1
@@ -885,7 +888,11 @@ func _process(delta: float) -> void:
         step_buffer += minf(delta, 0.15) * game_speed / sim.operation_scale()
         var ticks: int = 0
         while step_buffer >= 0.1 and ticks < 10:
-            for u in sim.units: previous_centers[int(u["id"])]=u["pos"]
+            previous_files.clear()
+            for u in sim.units:
+                previous_centers[int(u["id"])] = u["pos"]
+                if sim.six_armies and u["troops"] > 0 and not str(u["next_formation"]).is_empty():
+                    previous_files[u["id"]] = sim.formation_slots(u)
             sim.step(0.1)
             _update_contact_fronts(0.1)
             step_buffer -= 0.1
@@ -942,7 +949,24 @@ func _refresh_hud() -> void:
     var enemy_text: String = "정찰 제한" if fog_enabled and not sim.finished else _number_text(sim.total_troops(1))
     friendly_strength.text=_number_text(sim.total_troops(0))
     enemy_strength.text=enemy_text
-    status_label.text="전령    이동 %d    도착 %d    차단 %d" % [sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
+    var courier_totals := "전령 이동 %d · 도착 %d · 차단 %d" % [sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
+    status_label.text = courier_totals
+    if sim.started:
+        var covered := 0
+        var alive := 0
+        for corps in sim.units:
+            if corps["side"] != 0 or corps["troops"] <= 0: continue
+            alive += 1
+            if sim._has_supply(0, corps["pos"]): covered += 1
+        var activity := sim.crew_caption(0)
+        var raid_seconds := 0
+        for base in sim.bases:
+            if base["side"] != 0 or base["raid_rate"] <= 0: continue
+            var left := sim.raid_seconds_left(base)
+            if raid_seconds == 0 or left < raid_seconds: raid_seconds = left
+        if raid_seconds > 0: activity = "기지 급습 · %d초" % raid_seconds
+        status_label.text = "보급권 %d/%d  ·  %s" % [covered,alive,activity]
+        if sim.couriers.size() > 0: status_label.text += "  ·  전령 %d" % sim.couriers.size()
     var captured: bool=sim.commander_captured(0)
     if captured:
         status_label.text="전령 파견 중단   ·   보급부대 "+str(sim.supply_crews[0]["state"])
@@ -952,7 +976,7 @@ func _refresh_hud() -> void:
     if captured: status_label.tooltip_text=sim.command_status(0)
     elif own_guards == 0 and sim.started and not sim.finished:
         status_label.tooltip_text += " · 호위 없음: 적 접근 시 포획 위험"
-    status_label.tooltip_text+="\n보급부대 · %s · 잔존 전력 %d%%" % [sim.supply_crews[0]["state"],roundi(sim.supply_crews[0]["strength"])]
+    status_label.tooltip_text+="\n"+courier_totals+"\n보급부대 · %s · 잔존 전력 %d%%" % [sim.supply_crews[0]["state"],roundi(sim.supply_crews[0]["strength"])]
     if not sim.convoy.is_empty():
         var transport: Dictionary = sim.convoy_status()
         status_label.tooltip_text += "\n수레 %s · 진행 %d%% · 내구도 %d%% · 호위 %d개" % [str(transport["state"]),roundi(float(transport["progress"])*100.0),roundi(sim.convoy["hp"]),int(transport["guards"])]
@@ -1600,10 +1624,10 @@ func _draw_raid_timers() -> void:
         for offset in [Vector2(0,-54),Vector2(0,54),Vector2(70,0),Vector2(-70,0)]:
             if _map_plate(sim.supply_caption(base),p+offset/camera_zoom,COL_RED,14).has_area(): break
 
-func _draw_field_site(kind: int,p: Vector2,scale_factor: float) -> void:
+func _draw_field_site(kind: int,p: Vector2,scale_factor: float,tint: Color=Color.WHITE) -> void:
     # Visual footprint aligned with the old marker; no new collision geometry.
     var area: Rect2=Rect2(p-Vector2(61,91)*scale_factor,Vector2(122,122)*scale_factor)
-    map_layer.draw_texture_rect_region(FIELD_SITES,area,Rect2(kind*384,0,384,384))
+    map_layer.draw_texture_rect_region(FIELD_SITES,area,Rect2(kind*384,0,384,384),tint)
 
 func _draw_map(_canvas: Control) -> void:
     map_layer.draw_set_transform(MAP_SIZE * 0.5 - camera_center * camera_zoom, 0.0, Vector2.ONE * camera_zoom)
@@ -1672,7 +1696,13 @@ func _draw_map(_canvas: Control) -> void:
             var rim: Color=Color("#9ce4c8") if side==0 else COL_RED
             map_layer.draw_arc(p,sim.supply_radius(),0,TAU,88,Color(Color("#283c33"),0.40),2.6/camera_zoom,true)
             map_layer.draw_arc(p,sim.supply_radius(),0,TAU,88,Color(rim,0.58),1.15/camera_zoom,true)
-        _draw_field_site(2,p,0.96)
+        var building: bool = base["state"] == "설치"
+        _draw_field_site(2,p,0.96,Color(0.86,0.80,0.65,0.65) if building else Color.WHITE)
+        if building:
+            var bar := Rect2(p + Vector2(-22,15)/camera_zoom, Vector2(44,4)/camera_zoom)
+            map_layer.draw_rect(bar,Color("#372c22"))
+            bar.size.x *= clampf(1.0 - float(base["build_timer"])/sim.BASE_BUILD_SECONDS,0.0,1.0)
+            map_layer.draw_rect(bar,COL_GOLD)
         map_layer.draw_circle(p+Vector2(15,-10),4.0,accent)
         if detailed_map and base["raid_rate"]==0: _map_plate(sim.supply_caption(base),p+Vector2(0,32),accent,11)
     for commander in sim.commanders:
@@ -1913,7 +1943,7 @@ func _draw_depth_scene(soldiers:Array[Dictionary],trees:Array[Dictionary],visibl
         else:
             var item:Dictionary=soldiers[si]
             _draw_soldier(item["point"],item["unit"],item["accent"],int(item["index"]),
-                item["target"],float(item["bow_age"]),bool(item["shadow"]),item["reaction"])
+                item["target"],float(item["bow_age"]),bool(item["shadow"]),item["reaction"],item["file_step"])
             si+=1
 
 func _update_contact_fronts(dt: float) -> void:
@@ -2098,12 +2128,19 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             volley_offset=(volley["from"] as Vector2)-(unit["pos"] as Vector2)
         var center: Vector2=unit["pos"]
         var march_offset:=_render_offset(id,center)
+        var file_steps: Array[Vector2] = []
+        var prior: Array = previous_files.get(id, [])
+        if prior.size() == core:
+            var advance: Vector2 = center - previous_centers[id]
+            for file in range(core): file_steps.append(slots[file] - Vector2(prior[file]) - advance)
+        var blend := 1.0 - clampf(step_buffer / 0.1, 0.0, 1.0)
         var scatter: float=(100.0-float(unit["cohesion"]))*0.045
         if bool(unit["routed"]): scatter+=6.5
         var incoming: Array = impacts.get(id, [])
         var last_attack_age: float=render_clock-float(unit.get("last_visual",-100.0))
         for index in range(draw_count):
-            var point: Vector2=display_slots[index]+march_offset
+            var file_step := Vector2.ZERO if file_steps.is_empty() else file_steps[index % core]
+            var point: Vector2=display_slots[index]+march_offset-file_step*blend
             if scatter>0.0:
                 point+=Vector2(sin(float(index)*7.3),cos(float(index)*5.7))*scatter
             var local_target: Vector2=Vector2.INF
@@ -2128,7 +2165,7 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             if point!=display_slots[index] and sim.in_open_water(point): point=display_slots[index]
             point=point.clamp(Vector2.ZERO,sim.field_size)
             batch.append({"point":point,"unit":unit,"accent":accent,"index":index,"target":local_target,
-                "bow_age":bow_age,"shadow":index<core,"reaction":FrontView.hit_reaction(point, index, incoming)})
+                "bow_age":bow_age,"shadow":index<core,"reaction":FrontView.hit_reaction(point, index, incoming),"file_step":file_step})
     batch.sort_custom(func(a:Dictionary,b:Dictionary)->bool: return (a["point"] as Vector2).y<(b["point"] as Vector2).y)
     return batch
 
@@ -2510,6 +2547,7 @@ func _change_scenario(index: int) -> void:
         fallen_marks.clear()
         loss_carry.clear()
         previous_centers.clear()
+        previous_files.clear()
         contact_cache.clear()
         formation_render_cache.clear()
         contact_cache_step=-1
@@ -2827,7 +2865,7 @@ func _stride_phase(unit: Dictionary, index: int) -> float:
 func _soldier_motion_region(base: Rect2,pose: int) -> Rect2:
     return Rect2(base.position+Vector2(pose*288,0),base.size)
 
-func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, target: Vector2, bow_age: float, draw_shadow: bool, reaction: Vector2) -> void:
+func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, target: Vector2, bow_age: float, draw_shadow: bool, reaction: Vector2, file_step: Vector2) -> void:
     var direction: Vector2 = unit["facing"]
     if target!=Vector2.INF and not bool(unit["routed"]) and p.distance_squared_to(target)>0.1:
         direction=(target-p).normalized()
@@ -2840,6 +2878,13 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     var visual_contact: bool=target!=Vector2.INF
     var delay: float=float(index%5)*0.026
     var pose: int = _soldier_pose(unit,index,render_clock-delay,visual_contact)
+    var dressing: bool = file_step.length_squared() > 0.035 and not visual_contact and sim.started and not sim.finished
+    var file_phase := render_clock * 16.0 + float(index) * 2.39996
+    if dressing:
+        moving = true
+        var travel: Vector2 = unit["walking_step"] + file_step
+        if not travel.is_zero_approx(): direction = travel.normalized()
+        pose = 0 if sin(file_phase) >= 0.0 else 1
     var aiming: FrontView.BowPhase=FrontView.bow_phase(bow_age)
     var tilt: float=0.0
     if aiming!=FrontView.BowPhase.IDLE:
@@ -2859,7 +2904,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
                 tilt=lerpf(0.06,0.19,smoothstep(FrontView.VOLLEY_RELEASE+0.075,FrontView.VOLLEY_RECOVERY,bow_age))
     var ground := p
     if moving:
-        var stride := sin(_stride_phase(unit, index))
+        var stride := sin(file_phase if dressing else _stride_phase(unit, index))
         var gallop := smoothstep(8.0, 80.0, unit["charge"]) if kind == 2 else 0.0
         p.y -= absf(stride) * (0.65 + gallop * 1.7) * SOLDIER_SCALE
         tilt += stride * 0.028 + gallop * 0.12

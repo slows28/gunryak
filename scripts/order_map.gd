@@ -670,7 +670,7 @@ func _draw()->void:
         if post_mode=="보급기지" and post_cursor!=Vector2.INF and base==sim.bases[0]:
             if not sim.post_placement_issue(post_mode,post_cursor).is_empty(): continue
             center=post_cursor
-        if base["state"]!="설치": _draw_supply_radius(center)
+        _draw_supply_radius(center,base["state"] != "가동" or (post_mode=="보급기지" and base==sim.bases[0]))
     for u in sim.units:
         if float(u["troops"])<=0: continue
         if not game.call("_visible_unit",u): continue
@@ -740,7 +740,15 @@ func _draw()->void:
         var at:=_point(crew["pos"])
         var ink:=BLUE if crew["side"]==0 else RED
         if crew["state"]=="이동" and crew["side"]==0:
-            draw_dashed_line(at,_point(crew["goal"]),Color(ink,0.7),1.6,5.0)
+            var route: Array[Vector2] = sim.committed_route_preview(crew)
+            var previous := at
+            for waypoint in route:
+                var point := _point(waypoint)
+                if previous.distance_squared_to(point) > 1.0: draw_dashed_line(previous,point,Color(ink,0.7),1.6,5.0)
+                previous = point
+            if crew.get("extending",false):
+                _draw_supply_radius(crew["goal"],true)
+                draw_rect(Rect2(previous-Vector2(5,5),Vector2(10,10)),Color("#746138"),false,1.8)
         draw_colored_polygon(PackedVector2Array([at+Vector2(0,-5),at+Vector2(6,0),at+Vector2(0,5),at+Vector2(-6,0)]),ink)
         _post_label("보급부대 · "+str(crew["state"]),at+Vector2(0,16),-1)
     if not sim.commander_captured(0):
@@ -784,12 +792,12 @@ func _draw()->void:
     _dashed(legend+Vector2(88,0),legend+Vector2(116,0),Color("#73537c"))
     _ink("협동",legend+Vector2(122,4),12,INK)
 
-func _draw_supply_radius(center: Vector2) -> void:
+func _draw_supply_radius(center: Vector2, planned: bool=false) -> void:
     var previous:=_point(center+Vector2.RIGHT*sim.supply_radius())
     for step in range(1,65):
         var next:=_point(center+Vector2.from_angle(TAU*step/64.0)*sim.supply_radius())
         if MAP.has_point(previous) and MAP.has_point(next):
-            draw_line(previous,next,Color("#387065"),1.5,true)
+            if not planned or (step % 4) < 2: draw_line(previous,next,Color("#387065"),1.5,true)
         previous=next
 
 func _post_label(caption: String, point: Vector2, side: int) -> void:

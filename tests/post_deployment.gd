@@ -52,6 +52,7 @@ func _initialize() -> void:
     sim._supply_logic(0.1)
     check(archer["rations"]>40 and archer["ammo"]>40 and first["rations"]==archer["rations"],"all armies inside one radius replenish simultaneously")
     _check_network()
+    _check_supply_front()
     _check_crew_losses()
     _check_interrupted_work()
     _check_cavalry_intercept()
@@ -141,6 +142,45 @@ func _check_network() -> void:
         s._supply_logic(0.1)
         if s.bases.back()["side"]==1: break
     check(s.bases.back()["side"]==1 and s.bases.back()["pos"]==red["pos"],"opposing march builds westward by the same rule")
+
+func _check_supply_front() -> void:
+    var s := WarSim.new()
+    s.set_long_operation(true)
+    s.set_scenario(WarSim.TRAINING_SCENARIO)
+    var origin := Vector2(420,750)
+    var foot := s.find_unit(0)
+    var bow := s.find_unit(1)
+    var foe := s.find_unit(3)
+    for u in s.units:
+        if u["id"] not in [0,1,3]: u["troops"] = 0
+    s.bases[0]["pos"] = origin
+    foot["pos"] = origin
+    bow["pos"] = origin
+    s.start()
+    var edge := origin + Vector2.RIGHT * s.supply_radius() * 0.87
+    foot["pos"] = edge
+    foot["goal"] = edge + Vector2(130,0)
+    s._extend_supply(0)
+    var crew: Dictionary = s.supply_crews[0]
+    check(s._has_supply(0,edge) and crew["state"] == "이동", "crew departs as a marching corps approaches the edge of its current coverage")
+    foot["pos"] = origin
+    foot["goal"] = origin
+    s._extend_supply(0)
+    check(crew["state"] == "대기" and crew["goal"] == crew["pos"], "crew drops an obsolete unsited camp when the column returns")
+    var front := origin + Vector2(355,0)
+    foot["pos"] = front
+    bow["pos"] = front + Vector2(-20,24)
+    foe["pos"] = front + Vector2(36,8)
+    s._extend_supply(0)
+    var site: Vector2 = crew["goal"]
+    check(crew["state"] == "이동" and s._safe_crew_site(0,site) and site.distance_to(front) < s.supply_radius(), "a threatened frontage is supplied from a safe nearby site")
+    var refill := s._refill_position(front,s.bases[0])
+    check(s._has_supply(0,refill) and refill.distance_to(origin) > s.supply_radius()*0.8 and s._refill_position(refill,s.bases[0]) == refill,
+        "a low-ration army stops as soon as it reaches reliable coverage")
+    for tick in range(185):
+        s.battle_time += 0.1
+        s._supply_logic(0.1)
+    check(s.bases.size() == 3 and s._has_supply(0,foot["pos"]) and s._has_supply(0,bow["pos"]), "one operational depot covers both advancing corps without a manual order")
 
 func _check_crew_losses() -> void:
     var s:=WarSim.new()
