@@ -274,11 +274,13 @@ func _refresh_draft_roster() -> void:
         roster.set_item_text(row,"%s%s  %s명" % [mark,unit["name"],_troop_text(int(unit["troops"]))])
 
 func _update_destination()->void:
-    destination_label.text=_destination_text(destination) if has_destination else "지도에서 목표를 선택"
     _refresh_draft_roster()
     march_diagram={}
-    if has_destination and ACTIONS[action_choice.selected]!="철수":
-        march_diagram=sim.LinkedMarch.preview(sim,sim.find_unit(selected_id),_selected_partner(),destination)
+    if ACTIONS[action_choice.selected]!="철수":
+        var unit: Dictionary=sim.find_unit(selected_id)
+        var projected: Vector2=destination if has_destination else unit["goal"]
+        march_diagram=sim.LinkedMarch.preview(sim,unit,_selected_partner(),projected)
+    destination_label.text=_destination_text(destination) if has_destination else "지도에서 목표를 선택"
     march_preview.text=march_diagram.get("caption","")
     map_hint.text="지도에서 목적지 지정\n군단 말을 끌어도 됩니다." if march_diagram.is_empty() else "행군 대형\n%s 속도 기준" % march_diagram["limiter"]
     _refresh_route_summary()
@@ -307,6 +309,11 @@ func _grid_ref(point: Vector2) -> String:
 func _route_points(unit: Dictionary, target: Vector2) -> PackedVector2Array:
     var route:=PackedVector2Array([unit["pos"]])
     var crossing: float=sim.map_order_crossing(int(unit["id"]),target)
+    if unit["id"]==selected_id and target==destination and not march_diagram.is_empty():
+        crossing=march_diagram["bridge"]
+    elif crossing>=0.0:
+        var shared: float=sim.march_plans.get(unit["id"],{}).get("bridge",-1.0)
+        if shared>=0.0: crossing=shared
     if crossing>=0.0: route.append(Vector2(sim.river_x(crossing),crossing))
     route.append(target)
     return route
@@ -732,7 +739,7 @@ func _sync_actions()->void:
 func _destination_text(p:Vector2)->String:
     var terrain:String=sim.terrain_at(p)
     var detail: String="이동 속도 %d%%" % int(sim.terrain_movement_percent(selected_id,p))
-    var crossing: float=sim.map_order_crossing(selected_id,p)
+    var crossing: float=march_diagram.get("bridge",sim.map_order_crossing(selected_id,p))
     if terrain=="하천" and sim.long_operation:
         detail="목표 지정 불가"
     elif crossing>=0.0:

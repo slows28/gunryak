@@ -913,7 +913,13 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var actual_move: Vector2 = Vector2.ZERO
     if pos.distance_to(goal) > (0.001 if not march.is_empty() else 2.0):
         if long_operation:
-            goal = _committed_bridge_route(unit,pos,goal)
+            if goal==march.get("deck_target",Vector2.INF):
+                # Approach the deck on its own bank, then stop at the ordered point.
+                if absf(pos.y-goal.y)>10.0 and not on_river_channel(pos):
+                    var approach_side: int=1 if pos.x>=river_x(pos.y) else -1
+                    goal=Vector2(river_x(goal.y)+approach_side*64.0,goal.y)
+            else:
+                goal = _committed_bridge_route(unit,pos,goal)
         elif wide_field and (enemy.is_empty() or pos.distance_to(enemy["pos"]) > 180.0):
             goal = _crossing_route(pos,goal)
         if not structures.is_empty() and (str(unit["type"]) == "기병" or bool(unit["routed"])):

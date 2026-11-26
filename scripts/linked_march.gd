@@ -85,16 +85,41 @@ static func _slots(group: Array[Dictionary]) -> Dictionary:
             slots[line[i]]={"offset":offset,"role":role}
     return slots
 
+static func _deck_slots(group: Array, guide: Dictionary) -> Dictionary:
+    var slots: Dictionary={}
+    var rank: int=0
+    for unit in group:
+        if unit["id"]==guide["id"]:
+            slots[unit["id"]]={"offset":Vector2.ZERO,"role":"교량 선두"}
+        else:
+            rank+=1
+            slots[unit["id"]]={"offset":Vector2(-85.0*rank,0),"role":"종대 %d열" % (rank+1)}
+    return slots
+
+static func _shared_crossing(sim, group: Array, guide: Dictionary, target: Vector2, prior: Dictionary) -> float:
+    if not sim.long_operation or sim.terrain_at(target) in ["교량","하천"]: return -1.0
+    var bank: int=1 if target.x>=sim.river_x(target.y) else -1
+    var committed: float=prior.get("bridge",-1.0) if prior.get("bank",0)==bank else -1.0
+    var approaching: Dictionary={}
+    for unit in group:
+        var p: Vector2=unit["pos"]
+        var distance: float=(p.x-sim.river_x(p.y))*bank
+        if committed>=0.0 and distance<60.0: return committed
+        if distance<0.0 and (approaching.is_empty() or unit["id"]==guide["id"]): approaching=unit
+    return -1.0 if approaching.is_empty() else sim.map_order_crossing(approaching["id"],target)
+
 static func preview(sim, selected: Dictionary, partner_id: int, destination: Vector2) -> Dictionary:
     for group: Array in _companies(sim,selected["id"],partner_id):
         if not group.has(selected): continue
-        var slots:=_slots(group)
+        var deck: bool=sim.long_operation and sim.terrain_at(destination)=="교량"
+        var slots:=_deck_slots(group,selected) if deck else _slots(group)
         var heading:=Vector2(selected["pos"]).direction_to(destination)
         if heading.is_zero_approx(): heading=selected["facing"]
-        var crossing: float=sim.map_order_crossing(selected["id"],destination)
+        var crossing:=_shared_crossing(sim,group,selected,destination,sim.march_plans.get(selected["id"],{}))
         if crossing>=0:
             var entry:=Vector2(sim.river_x(crossing),crossing)
             heading=Vector2(selected["pos"]).direction_to(entry)
+        if deck: heading=Vector2.RIGHT if selected["pos"].x<=sim.river_x(destination.y) else Vector2.LEFT
         var limiter: String=""
         var pace: float=INF
         var captions:=PackedStringArray()
@@ -106,7 +131,7 @@ static func preview(sim, selected: Dictionary, partner_id: int, destination: Vec
             var role: String=slots[unit["id"]]["role"]
             var caption: String="%s %s" % [unit["type"],role]
             if caption not in captions: captions.append(caption)
-        return {"group":group,"slots":slots,"forward":heading,"limiter":limiter,"caption":" · ".join(captions)}
+        return {"group":group,"slots":slots,"forward":heading,"bridge":crossing,"limiter":limiter,"caption":" · ".join(captions)}
     return {}
 
 static func _plan_group(sim, group: Array[Dictionary], previous: Dictionary, dt: float, plans: Dictionary) -> void:
@@ -126,19 +151,12 @@ static func _plan_group(sim, group: Array[Dictionary], previous: Dictionary, dt:
             pace=rate
             slowest=unit
     var prior: Dictionary=previous.get(guide["id"],{})
-    var bridge: float=-1.0
-    var crossing: bool=false
     var bank: int=1 if target.x>=sim.river_x(target.y) else -1
-    if sim.long_operation:
-        for unit in group:
-            var p: Vector2=unit["pos"]
-            var bank_distance: float=(p.x-sim.river_x(p.y))*bank
-            if bank_distance>=0:
-                if bank_distance<60.0 and float(prior.get("bridge",-1))>=0.0: bridge=prior["bridge"]
-                continue
-            if float(prior.get("bridge",-1))>=0 and prior.get("bank",0)==bank: bridge=prior["bridge"]
-            else: bridge=sim.map_order_crossing(unit["id"],target)
-            break
+    var bridge:=_shared_crossing(sim,group,guide,target,prior)
+    var deck: bool=sim.long_operation and sim.terrain_at(target)=="교량"
+    var crossing: bool=false
+    if deck:
+        bank=prior["bank"] if prior.get("deck_target",Vector2.INF)==target else (1 if origin.x<=sim.river_x(origin.y) else -1)
     if bridge>=0.0:
         var entry:=Vector2(sim.river_x(bridge)-bank*155.0,bridge)
         crossing=origin.distance_to(entry)<135.0 or (origin.x-sim.river_x(origin.y))*bank>=0 or (prior.get("phase","")=="도하" and prior.get("bank",0)==bank)
@@ -146,31 +164,35 @@ static func _plan_group(sim, group: Array[Dictionary], previous: Dictionary, dt:
     var forward: Vector2=prior.get("forward",guide["facing"])
     if origin.distance_to(target)>6.0: forward=origin.direction_to(target)
     if forward.is_zero_approx(): forward=Vector2.RIGHT if guide["side"]==0 else Vector2.LEFT
-    if crossing: forward=Vector2(bank,0)
+    if crossing or deck: forward=Vector2(bank,0)
     var right:=Vector2(-forward.y,forward.x)
-    var slots:=_slots(group)
+    var slots:=_deck_slots(group,guide) if deck else _slots(group)
     var waiting: bool=false
     for unit in group:
         var slot: Dictionary=slots[unit["id"]]
         var local: Vector2=slot["offset"]-slots[guide["id"]]["offset"]
         var point: Vector2=sim._field_point(origin+forward*local.x+right*local.y)
-        if crossing:
+        if deck:
+            point=sim._field_point(target+forward*local.x)
+            if Vector2(unit["pos"]).distance_to(point)>6: waiting=true
+        elif crossing:
             # Spread the rally points beyond the exit so later corps can clear the deck.
             point=Vector2(sim.river_x(bridge)+bank*(185.0+slot["offset"].x),bridge+slot["offset"].y)
         else:
             # A flank slot beside the river must stay on the guide's bank.
-            var guide_bank: float=signf(origin.x-sim.river_x(origin.y))
-            if sim.long_operation and (point.x-sim.river_x(point.y))*guide_bank<34.0:
+            var guide_bank: int=1 if origin.x>=sim.river_x(origin.y) else -1
+            if sim.long_operation and unit["id"]!=guide["id"] and not sim.near_crossing(point.y) and (point.x-sim.river_x(point.y))*guide_bank<34.0:
                 point.x=sim.river_x(point.y)+guide_bank*34.0
             if Vector2(unit["pos"]).distance_to(point)>42.0: waiting=true
         slot["point"]=point
     var shift:=Vector2.ZERO
-    if not waiting and not crossing: shift=origin.move_toward(target,pace*dt)-origin
+    if not waiting and not crossing and not deck: shift=origin.move_toward(target,pace*dt)-origin
     for unit in group:
         var id: int=unit["id"]
         var slot: Dictionary=slots[id]
         var phase: String="도하" if crossing else ("대형 집결" if waiting else "연계 행군")
         if not waiting and not crossing and origin.distance_to(target)<=2.0: phase="대형 유지"
+        if deck: phase="교량 집결" if waiting else "대형 유지"
         var peer: Dictionary=guide if id!=guide["id"] else (group[1] if group[0]["id"]==id else group[0])
         plans[id]={"goal":sim._field_point(slot["point"]+shift),"forward":forward,"pace":pace,
-            "role":slot["role"],"phase":phase,"slowest":slowest["name"],"peer":peer["id"],"bridge":bridge,"bank":bank}
+            "role":slot["role"],"phase":phase,"slowest":slowest["name"],"peer":peer["id"],"bridge":bridge,"bank":bank,"deck_target":target if deck else Vector2.INF}
