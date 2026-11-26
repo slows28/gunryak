@@ -432,7 +432,7 @@ func _supply_logic(dt: float) -> void:
             if base["build_timer"]<0.00001:
                 base["build_timer"]=0.0
                 base["state"]="가동"
-                _log(("%s 보급기지 완공 · 자동 보급 시작") % _camp_side(base["side"]))
+                _log(_camp_side(base["side"])+" 보급기지 완공 · 자동 보급 시작")
     if started and battle_time>=next_supply_survey:
         next_supply_survey=battle_time+1.0
         for side in range(2): _extend_supply(side)
@@ -448,9 +448,10 @@ func _supply_logic(dt: float) -> void:
             unit["rations"]=maxf(0.0,unit["rations"]-dt*(0.32 if long_operation else (0.44 if wide_field else 0.65)))
             unit["out_supply"]+=dt
             if unit["out_supply"]>=TURN_SECONDS*3.0: unit["morale"]=maxf(0.0,unit["morale"]-dt*0.15)
-        var home: Dictionary=bases[unit["side"]]
-        if home["alive"] and (unit["pos"] as Vector2).distance_to(home["pos"])<75:
-            unit["supply_guard_time"]+=dt
+        for base in bases:
+            if base["side"]==unit["side"] and base["alive"] and (unit["pos"] as Vector2).distance_squared_to(base["pos"])<75.0*75.0:
+                unit["supply_guard_time"]+=dt
+                break
 
 func _camp_side(side: int) -> String:
     return "아군" if side==0 else "적군"
@@ -773,7 +774,7 @@ func _decide(unit: Dictionary) -> void:
                 goal = (parent["pos"] as Vector2)+flank-front*34.0
             action = "분견 지원"
             reason = "본대 측면 엄호 및 합류"
-    if six_armies and scenario_id != 3 and str(unit["mission"]) == "본진 방어" and action not in ["패주","후퇴","재집결","휴식","탄약 보충","보급 복귀","측면 방어"]:
+    if six_armies and scenario_id != 3 and bases[side]["alive"] and str(unit["mission"]) == "본진 방어" and action not in ["패주","후퇴","재집결","휴식","탄약 보충","보급 복귀","측면 방어"]:
         var base_pos: Vector2 = bases[side]["pos"]
         if enemy_distance > 110.0 or (not nearest.is_empty() and (nearest["pos"] as Vector2).distance_to(base_pos) > 210.0):
             action = "보급 호위"

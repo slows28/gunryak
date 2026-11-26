@@ -1004,7 +1004,7 @@ func _refresh_commander_desk() -> void:
         readiness_label.text+=" · 군량 %d" % int(unit["rations"])
     elif str(unit["type"])=="궁병" and int(unit["ammo"])<35:
         readiness_label.text+=" · 화살 %d" % int(unit["ammo"])
-    if sim.started: readiness_label.text+=" · "+("보급 중" if unit["supplied"] else "권역 밖")
+    if sim.started: readiness_label.text+=" · "+("보급 중" if sim._has_supply(0,unit["pos"]) else "권역 밖")
     details_label.tooltip_text="%s · %s\n사기 %d · 응집 %d · 피로 %d\n군량 %d · 화살 %d" % [
         str(unit["name"]),str(unit["type"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"])]
     if sim.six_armies:
@@ -1504,6 +1504,15 @@ func _draw_control_marker(p: Vector2,color: Color,active: bool) -> void:
     if active:
         map_layer.draw_circle(p,2.8*k,color)
 
+func _draw_raid_timers() -> void:
+    for base in sim.bases:
+        if not base["alive"] or base["raid_rate"]==0: continue
+        if base["side"]==1 and fog_enabled and not sim.finished and not sim.player_can_see(base["pos"]): continue
+        var p: Vector2=base["pos"]
+        map_layer.draw_arc(p,36,-PI/2,-PI/2+TAU*base["raid_work"]/sim.RAID_SECONDS,40,COL_RED,3.0/camera_zoom,true)
+        for offset in [Vector2(0,-54),Vector2(0,54),Vector2(70,0),Vector2(-70,0)]:
+            if _map_plate(sim.supply_caption(base),p+offset/camera_zoom,COL_RED,14).has_area(): break
+
 func _draw_field_site(kind: int,p: Vector2,scale_factor: float) -> void:
     # Visual footprint aligned with the old marker; no new collision geometry.
     var area: Rect2=Rect2(p-Vector2(61,91)*scale_factor,Vector2(122,122)*scale_factor)
@@ -1575,9 +1584,7 @@ func _draw_map(_canvas: Control) -> void:
             map_layer.draw_arc(p,sim.supply_radius(),0,TAU,88,Color(rim,0.58),1.15/camera_zoom,true)
         _draw_field_site(2,p,0.96)
         map_layer.draw_circle(p+Vector2(15,-10),4.0,accent)
-        if base["raid_rate"]>0:
-            map_layer.draw_arc(p,36,-PI/2,-PI/2+TAU*base["raid_work"]/sim.RAID_SECONDS,40,COL_RED,3.0/camera_zoom,true)
-        _map_plate(sim.supply_caption(base),p+Vector2(0,32),COL_RED if base["raid_rate"]>0 else accent,11)
+        if base["raid_rate"]==0: _map_plate(sim.supply_caption(base),p+Vector2(0,32),accent,11)
     for commander in sim.commanders:
         if fog_enabled and not sim.finished and int(commander["side"]) != 0 and not sim.player_can_see(commander["pos"]):
             continue
@@ -1702,6 +1709,7 @@ func _draw_map(_canvas: Control) -> void:
     if not observing_enemy: _draw_cooperation_links()
     _draw_combat_effects()
     _draw_loss_markers()
+    _draw_raid_timers()
     var label_areas: Array[Rect2] = map_label_areas
     var focus_id: int=observed_enemy_id if observing_enemy else selected_id
     visible_units.sort_custom(func(a: Dictionary,b: Dictionary) -> bool:
