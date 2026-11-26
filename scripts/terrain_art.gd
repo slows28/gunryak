@@ -161,6 +161,18 @@ static func battlefield(extent: Vector2, forests: Array[Rect2], hill: Rect2, sce
             var edge_v: float = minf(minf(float(x)/bake,extent.x-float(x)/bake),minf(float(y)/bake,extent.y-float(y)/bake))
             ground = ground.darkened((1.0-smoothstep(0.0,55.0,edge_v))*0.23)
             image.set_pixel(x,y,ground)
+    if scenario==FieldGeometry.TRAINING_SCENARIO:
+        for basin: Rect2 in FieldGeometry.TRAINING_MARSHES:
+            var area:=Rect2i(basin).intersection(Rect2i(0,0,w,h))
+            for yy in range(area.position.y,area.end.y):
+                for xx in range(area.position.x,area.end.x):
+                    var edge: float=FieldGeometry.basin_radius(Vector2(xx,yy),basin)
+                    if edge>=1.0: continue
+                    var reed: float=noise.get_noise_2d(xx,yy*1.8)
+                    var water: float=smoothstep(-0.28,0.32,reed+0.16*sin(xx*0.05+yy*0.16))
+                    var pigment:=Color("#6c7850").lerp(Color("#74958c"),water)
+                    var cover: float=(1.0-smoothstep(0.68,1.0,edge))*0.82
+                    image.set_pixel(xx,yy,image.get_pixel(xx,yy).lerp(pigment,cover))
     var rng := RandomNumberGenerator.new()
     rng.seed = 2148+scenario*37
     # Cached grass tufts and pebbles, kept off roads, waterways and forest interiors.

@@ -1,6 +1,13 @@
 extends RefCounted
 ## Shared terrain geometry. A road must actually reach the existing crossing.
 ## Simulation, battlefield raster, and command map sample this same function.
+const TRAINING_SCENARIO := 5
+# Wide-field coordinates. Elliptical basins sit clear of the roads and river.
+const TRAINING_MARSHES := [Rect2(650,576,338,168),Rect2(1630,1452,318,148)]
+
+static func basin_radius(point: Vector2, basin: Rect2) -> float:
+    return ((point-basin.get_center())/(basin.size*0.5)).length()
+
 static func river_x(y:float)->float:
     return 1120.0+sin(y/225.0)*100.0+sin(y/89.0)*34.0
 

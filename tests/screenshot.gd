@@ -70,7 +70,7 @@ func _capture() -> void:
     orders.call("_select",0)
     orders.call("_select",1)
     var crossing: float=game.sim.map_order_crossing(1,east)
-    if orders.destination!=east or orders.action_choice.selected!=2 or crossing<0.0 or not orders.destination_label.text.contains("예상"):
+    if orders.destination!=east or orders.action_choice.selected!=2 or crossing<0.0 or not orders.destination_label.text.contains("예상") or not orders.route_summary.text.contains(game.call("_bridge_name",crossing)):
         push_error("VISUAL_CAPTURE_FAIL: commander draft or bridge projection missing")
         quit(1)
         return
@@ -733,8 +733,60 @@ func _capture() -> void:
     if not await _capture_field_report():
         quit(1)
         return
+    if not await _capture_training_field():
+        quit(1)
+        return
     print("GUNRYAK_VISUAL_CAPTURE_PASSED")
     quit(0)
+
+func _capture_training_field() -> bool:
+    game.queue_free()
+    await process_frame
+    game=MAIN_SCENE.instantiate()
+    root.add_child(game)
+    game.set_process(false)
+    var entry: Button
+    for child in game.title_screen.get_children():
+        if child is Button and child.text=="지형 시험장": entry=child
+    if entry==null:
+        push_error("VISUAL_CAPTURE_FAIL: training field missing from title")
+        return false
+    entry.pressed.emit()
+    var sheet: Control=game.order_view
+    if not sheet.visible or not sheet.survey.visible or sheet.survey_sites.size()!=13:
+        push_error("VISUAL_CAPTURE_FAIL: training field is missing survey landmarks")
+        return false
+    sheet.destination=sheet.survey_sites["점령 거점"]
+    sheet.has_destination=true
+    sheet.call("_choose_action",2)
+    var drafts: Dictionary=sheet.drafts.duplicate(true)
+    var index: int=sheet.survey_sites.keys().find("습지")+1
+    sheet.survey.select(index)
+    sheet.survey.item_selected.emit(index)
+    if sheet.drafts!=drafts or not sheet.survey_detail.text.contains("66%") or sheet.apply.disabled:
+        push_error("VISUAL_CAPTURE_FAIL: surveying the marsh changed the order or showed incorrect cost")
+        return false
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("training_orders.png"): return false
+    sheet.apply.pressed.emit()
+    sheet.launch.pressed.emit()
+    if not game.sim.started or sheet.visible:
+        push_error("VISUAL_CAPTURE_FAIL: unable to launch the training operation")
+        return false
+    game.camera_center=sheet.survey_sites["습지"]
+    game.camera_zoom=1.05
+    game.call("_clamp_camera")
+    game.map_layer.queue_redraw()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("training_marsh.png"): return false
+    game.call("_reset_camera")
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("training_overview.png"): return false
+    print("TRAINING_FIELD_VISUAL_PASS")
+    return true
 
 func _capture_combat_drill() -> bool:
     # Run two real engagements at a known location. Time and damage come from

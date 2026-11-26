@@ -13,7 +13,15 @@ const RAIL=Color("#1c2732")
 const SHEET_TEXT=Color("#282720")
 const SHEET_MUTED=Color("#66543d")
 const ART=preload("res://assets/art/fieldcraft.svg")
-const PARCHMENT=preload("res://assets/art/war_parchment.svg")
+const Materials=preload("res://scripts/command_materials.gd")
+const FieldGeometry=preload("res://scripts/field_geometry.gd")
+const INK_RELIEF=preload("res://assets/art/ink_relief.webp")
+var lacquer := Materials.plaque()
+var route_summary: Label
+var survey: OptionButton
+var survey_detail: Label
+var survey_sites: Dictionary={}
+var survey_key: String=""
 const COMMAND_SKIN=preload("res://assets/art/command_skin.svg")
 var game: Control
 var sim
@@ -41,7 +49,6 @@ var dragging: bool=false
 var draft_dirty: bool=false
 var drafts: Dictionary={}
 var in_battle: bool=false
-var background: ImageTexture
 
 func configure(owner_game: Control,used_font: Font) -> void:
     game=owner_game
@@ -57,7 +64,7 @@ func configure(owner_game: Control,used_font: Font) -> void:
     _label("아군 군단",Vector2(1082,86),Vector2(160,29),20,Color("#f3ecdc"))
     roster=ItemList.new()
     roster.position=Vector2(1077,126)
-    roster.size=Vector2(178,335)
+    roster.size=Vector2(178,285)
     roster.add_theme_font_size_override("font_size",14)
     roster.add_theme_constant_override("v_separation",8)
     roster.fixed_icon_size=Vector2i(34,34)
@@ -65,11 +72,19 @@ func configure(owner_game: Control,used_font: Font) -> void:
     roster.item_selected.connect(func(index: int): _select(int(roster.get_item_metadata(index))))
     placement=CheckButton.new()
     placement.text="초기 배치"
-    placement.position=Vector2(1079,476)
+    placement.position=Vector2(1079,420)
     placement.tooltip_text="아군 배치 구역 안에서 군단의 출발점 이동"
     add_child(placement)
-    _label("지도에서 목적지 지정\n군단 말을 끌어도 됩니다.",Vector2(1082,522),Vector2(167,56),13,Color("#cdd8d9"))
-    _label("명령 편집",Vector2(35,88),Vector2(276,30),21,SHEET_TEXT)
+    _label("지도에서 목적지 지정\n군단 말을 끌어도 됩니다.",Vector2(1082,460),Vector2(170,50),13,Color("#cdd8d9"))
+    _label("행군로",Vector2(1082,519),Vector2(164,24),16,GOLD)
+    route_summary=_label("",Vector2(1082,548),Vector2(171,60),13,Color("#f4e6c9"))
+    route_summary.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    survey=_choice(Vector2(1080,613),Vector2(173,31),[])
+    survey.tooltip_text="지점을 표시하고 선택한 군단의 통행 조건을 확인"
+    survey.item_selected.connect(_survey_site)
+    survey_detail=_label("",Vector2(1082,648),Vector2(170,49),13,Color("#e2d1a6"))
+    survey_detail.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    _label("군령서",Vector2(35,88),Vector2(276,30),21,SHEET_TEXT)
     info=_label("",Vector2(111,126),Vector2(202,85),14,SHEET_TEXT)
     info.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     _label("목적지",Vector2(35,221),Vector2(276,23),15,SHEET_MUTED)
@@ -170,6 +185,15 @@ func open(mid_battle:bool=false)->void:
     feedback.text="부대 말을 끌거나 지도에 목적지를 찍고 행동 및 연계 대상을 지정하십시오."
     if mid_battle: feedback.text="전투 중 명령은 6턴부터 전령으로 전달됩니다. 확정 전까지 기존 작전 유지."
     if not mid_battle: drafts.clear()
+    survey_sites=sim.training_sites()
+    survey.clear()
+    survey_key=""
+    if not survey_sites.is_empty():
+        survey.add_item("지형 답사")
+        for site in survey_sites: survey.add_item(site)
+        survey.select(0)
+    survey.visible=not survey_sites.is_empty()
+    survey_detail.visible=survey.visible
     drag_id=-1
     drag_origin=Vector2.ZERO
     dragging=false
@@ -194,7 +218,14 @@ func _select(id:int)->void:
     partner_choice.add_item("자동 / 없음")
     partner_choice.set_item_metadata(0,-1)
     partner_choice.select(0)
+    var dispatch: Dictionary=sim.map_dispatches.get(id,{})
+    var incoming: bool=in_battle and dispatch.get("status","")=="이동 중"
     var assigned:int=int(u.get("assigned_link",-1))
+    if incoming:
+        for letter in sim.couriers:
+            if int(letter["unit_id"])==id and letter.get("map_dispatch",false):
+                assigned=int(letter.get("partner",-1))
+                break
     for other in sim.command_ids(0):
         if other==id: continue
         var friend:Dictionary=sim.find_unit(other)
@@ -204,6 +235,10 @@ func _select(id:int)->void:
         if other==assigned: partner_choice.select(partner_choice.item_count-1)
     has_destination=bool(u.get("has_destination",false))
     destination=u.get("order_destination",u["pos"]) if has_destination else u["pos"]
+    if incoming:
+        has_destination=true
+        destination=dispatch["destination"]
+        action_choice.select(maxi(0,ACTIONS.find(str(dispatch["mission"]))))
     var draft: Dictionary = drafts.get(id,{})
     draft_dirty=not draft.is_empty()
     if draft_dirty:
@@ -237,6 +272,8 @@ func _refresh_draft_roster() -> void:
 func _update_destination()->void:
     destination_label.text=_destination_text(destination) if has_destination else "지도에서 목표를 선택"
     _refresh_draft_roster()
+    _refresh_route_summary()
+    _refresh_survey()
     var problem: String = "지도에서 목적지를 먼저 선택하십시오."
     if has_destination:
         problem=sim.map_order_issue(selected_id,ACTIONS[action_choice.selected],destination,_selected_partner())
@@ -253,6 +290,50 @@ func _update_destination()->void:
         progress_label.text="군단 선택 → 목적지 지정 → 지시 확정"
     if in_battle or draft_dirty:
         feedback.text=problem if not problem.is_empty() else ("도착 전까지 현재 지시를 유지합니다." if in_battle else "지시를 확정하거나 다른 군단의 계획을 작성할 수 있습니다.")
+
+func _grid_ref(point: Vector2) -> String:
+    var relative: Vector2=point/sim.field_size
+    return String.chr(65+clampi(floori(relative.x*8),0,7))+str(1+clampi(floori(relative.y*6),0,5))
+
+func _route_points(unit: Dictionary, target: Vector2) -> PackedVector2Array:
+    var route:=PackedVector2Array([unit["pos"]])
+    var crossing: float=sim.map_order_crossing(int(unit["id"]),target)
+    if crossing>=0.0: route.append(Vector2(sim.river_x(crossing),crossing))
+    route.append(target)
+    return route
+
+func _refresh_route_summary() -> void:
+    var u: Dictionary=sim.find_unit(selected_id)
+    if u.is_empty() or not has_destination:
+        route_summary.text="목적지를 지정하면 예상 경로를 표시합니다."
+        return
+    if sim.in_open_water(destination):
+        route_summary.text=_grid_ref(destination)+"  ·  하천\n교량이나 육지를 선택하십시오."
+        return
+    var route:=_route_points(u,destination)
+    var steps:=PackedStringArray([_grid_ref(route[0])])
+    if route.size()==3: steps.append(game.call("_bridge_name",route[1].y))
+    steps.append(_grid_ref(destination))
+    var distance: float=0.0
+    for i in range(1,route.size()): distance+=route[i-1].distance_to(route[i])
+    route_summary.text=" → ".join(steps)+"\n예상 거리  "+str(roundi(distance))+" 지도 단위"
+
+func _survey_site(index: int) -> void:
+    survey_key=survey.get_item_text(index) if index>0 else ""
+    _refresh_survey()
+    queue_redraw()
+
+func _refresh_survey() -> void:
+    if survey_key.is_empty():
+        survey_detail.text=""
+        return
+    var point: Vector2=survey_sites[survey_key]
+    var note: String="이동 %d%%" % sim.terrain_movement_percent(selected_id,point)
+    if sim.in_open_water(point): note="도하 불가 · 교량 이용"
+    elif survey_key in ["성문","목책"]:
+        var structure: Dictionary=sim.structures[0 if survey_key=="성문" else 1]
+        note="적 시설 · 통행 제한" if float(structure["hp"])>0.0 else "파괴 · 통행 가능"
+    survey_detail.text="%s  %s\n%s" % [_grid_ref(point),survey_key,note]
 
 func _apply()->void:
     if not has_destination:
@@ -334,17 +415,22 @@ func _gui_input(event:InputEvent)->void:
         accept_event()
 
 func _draw()->void:
-    draw_rect(Rect2(0,0,1280,800),DESK)
-    draw_rect(Rect2(0,0,1280,56),Color("#202c38"))
+    draw_texture_rect(Materials.WALNUT,Rect2(0,0,1280,800),false,Color("#d7cabc"))
+    draw_style_box(lacquer,Rect2(0,0,1280,59))
     draw_rect(Rect2(0,0,6,56),Color("#cf674e"))
-    draw_rect(Rect2(16,76,312,628),SHEET)
+    draw_rect(Rect2(21,82,312,628),Color(0.07,0.05,0.03,0.65))
+    draw_texture_rect(Materials.PAPER,Rect2(16,76,312,628),false)
+    draw_rect(Rect2(23,83,298,614),Color("#ae926b"),false,1)
+    draw_line(Vector2(35,118),Vector2(311,118),Color("#a68e68"))
     draw_rect(Rect2(16,76,312,4),Color("#a43d2e"))
     draw_line(Vector2(35,220),Vector2(311,220),Color("#c9b99d"))
     draw_line(Vector2(35,613),Vector2(311,613),Color("#c9b99d"))
-    draw_rect(Rect2(1068,76,196,628),RAIL)
-    draw_rect(Rect2(0,714,1280,86),RAIL)
+    draw_style_box(lacquer,Rect2(1068,76,196,628))
+    draw_line(Vector2(1081,515),Vector2(1252,515),Color("#8d7953"))
+    draw_style_box(lacquer,Rect2(6,716,1268,78))
     if sim==null: return
-    draw_texture_rect(PARCHMENT,MAP,false)
+    draw_rect(Rect2(MAP.position+Vector2(3,5),MAP.size),Color(0.08,0.05,0.025,0.65))
+    draw_texture_rect(Materials.SILK,MAP,false)
     draw_rect(MAP.grow(1),Color("#998568"),false,1.0)
     for mark in range(1,8):
         var x: float=MAP.position.x+MAP.size.x*mark/8.0
@@ -352,11 +438,23 @@ func _draw()->void:
     for mark in range(1,6):
         var y: float=MAP.position.y+MAP.size.y*mark/6.0
         draw_line(Vector2(MAP.position.x,y),Vector2(MAP.end.x,y),Color(0.32,0.22,0.10,0.11))
-    var rng:=RandomNumberGenerator.new()
-    rng.seed=41+sim.scenario_id
-    for i in range(260):
-        var p:Vector2=MAP.position+Vector2(rng.randf()*MAP.size.x,rng.randf()*MAP.size.y)
-        draw_line(p,p+Vector2(rng.randf_range(1,5),rng.randf_range(-1,1)),Color(0.30,0.22,0.10,rng.randf_range(0.025,0.11)),1)
+    for column in range(8):
+        _ink(String.chr(65+column),MAP.position+Vector2((column+0.5)*MAP.size.x/8.0-4,20),11,INK)
+    for row in range(6):
+        _ink(str(row+1),MAP.position+Vector2(10,(row+0.5)*MAP.size.y/6.0),11,INK)
+    if sim.scenario_id==FieldGeometry.TRAINING_SCENARIO:
+        for basin: Rect2 in FieldGeometry.TRAINING_MARSHES:
+            var rim:=PackedVector2Array()
+            var center:=_point(basin.get_center())
+            var radius:=_point(basin.end)-center
+            for i in range(41): rim.append(center+Vector2.from_angle(i*TAU/40.0)*radius)
+            draw_colored_polygon(rim.slice(0,40),Color(0.28,0.43,0.35,0.30))
+            draw_polyline(rim,Color("#798666"),1.0,true)
+            for i in range(-2,3):
+                var y: float=i*0.28
+                var dx: float=sqrt(1.0-y*y)*radius.x*0.62
+                draw_line(center+Vector2(-dx,y*radius.y),center+Vector2(dx,y*radius.y-1),Color(0.30,0.44,0.40,0.45),1,true)
+            _ink("습지",center+Vector2(-12,5),12,INK)
     for lane in range(3):
         var line:=PackedVector2Array()
         for x in range(0,int(sim.field_size.x)+1,35): line.append(_point(Vector2(x,sim.road_y(float(x),lane))))
@@ -385,17 +483,8 @@ func _draw()->void:
     for forest in sim.forests:
         var area:Rect2=forest
         var center:Vector2=_point(area.get_center())
-        var radius:Vector2=area.size/sim.field_size*MAP.size*0.54
-        var outline:=PackedVector2Array()
-        for j in range(18):
-            var angle:float=TAU*float(j)/18.0
-            var rough:float=0.76+rng.randf()*0.24
-            outline.append(center+Vector2(cos(angle)*radius.x,sin(angle)*radius.y)*rough)
-        draw_colored_polygon(outline,Color(0.34,0.38,0.20,0.15))
-        for i in range(8):
-            var p:Vector2=_point(area.position+Vector2(rng.randf()*area.size.x,rng.randf()*area.size.y))
-            var h:float=rng.randf_range(29,55)
-            _art(1,Rect2(p-Vector2(h*0.5,h*0.65),Vector2(h,h)),Color(1,1,1,0.92))
+        var extent: Vector2=area.size/sim.field_size*MAP.size
+        draw_texture_rect_region(INK_RELIEF,Rect2(center-extent*0.53,extent*1.06),Rect2(384,0,384,212))
     var hill:Rect2=sim.hill
     for ring in range(6):
         var contour:=PackedVector2Array()
@@ -406,7 +495,8 @@ func _draw()->void:
             contour.append(hcenter+Vector2(cos(angle)*hsize.x,sin(angle)*hsize.y)*(0.86+0.13*sin(angle*3.0)))
         draw_polyline(contour,Color(0.42,0.32,0.19,0.26),1.0,true)
     var hc:Vector2=_point(hill.get_center())
-    _art(0,Rect2(hc-Vector2(90,92),Vector2(180,142)),Color(1,1,1,0.96))
+    var ridge_extent: Vector2=hill.size/sim.field_size*MAP.size*1.32
+    draw_texture_rect_region(INK_RELIEF,Rect2(hc-ridge_extent*0.52,ridge_extent),Rect2(0,0,384,212))
     _ink("고지",hc+Vector2(39,-32),11,INK)
     draw_rect(Rect2(MAP.position,Vector2(MAP.size.x*0.30,MAP.size.y)),Color(0.20,0.35,0.45,0.05))
     # Cartographic objective symbols do not imply a castle on open ground.
@@ -445,7 +535,9 @@ func _draw()->void:
         if not game.call("_visible_unit",u): continue
         var p:Vector2=_point(u["pos"])
         if int(u["side"])==0 and bool(u.get("has_destination",false)) and int(u["id"])!=selected_id:
-            _arrow(p,_point(u["order_destination"]),Color(BLUE,0.52),1.5)
+            var route:=_route_points(u,u["order_destination"])
+            for i in range(1,route.size()):
+                _arrow(_point(route[i-1]),_point(route[i]),Color(BLUE,0.62),1.5)
         if int(u["side"])==0:
             var partner:Dictionary=sim.find_unit(int(u.get("assigned_link",-1)))
             if not partner.is_empty() and int(u["id"])!=selected_id: _dashed(p,_point(partner["pos"]),Color(0.40,0.31,0.49,0.42))
@@ -456,12 +548,12 @@ func _draw()->void:
     if has_destination:
         var u:Dictionary=sim.find_unit(selected_id)
         var target: Vector2=_point(destination)
-        var ink: Color=RED if sim.long_operation and sim.in_open_water(destination) else Color("#95651e")
+        var ink: Color=RED if sim.long_operation and sim.in_open_water(destination) else Color("#98452f")
         if not u.is_empty():
             var origin:Vector2=_point(u["pos"])
-            var crossing: float=sim.map_order_crossing(selected_id,destination)
-            if crossing>=0.0:
-                var bridge:=_point(Vector2(sim.river_x(crossing),crossing))
+            var route:=_route_points(u,destination)
+            if route.size()==3:
+                var bridge:=_point(route[1])
                 draw_polyline(PackedVector2Array([origin,bridge,target]),Color("#f0dca9"),6.0,true)
                 draw_line(origin,bridge,ink,2.8,true)
                 _arrow(bridge,target,ink,2.8)
@@ -473,6 +565,15 @@ func _draw()->void:
                 _arrow(origin,target,ink,2.8)
         draw_circle(target,12,ink,false,2,true)
         draw_circle(target,3,ink)
+        var dispatch: Dictionary=sim.map_dispatches.get(selected_id,{})
+        var in_transit: bool=in_battle and dispatch.get("status","")=="이동 중" and destination.is_equal_approx(dispatch.get("destination",Vector2.INF))
+        var stamp: String="초안" if draft_dirty else ("전달 중" if in_transit else "지시")
+        var label_pos:=target+Vector2(14,-10)
+        label_pos=label_pos.clamp(MAP.position+Vector2(5,5),MAP.end-Vector2(53,24))
+        var stamp_area:=Rect2(label_pos,Vector2(49 if stamp=="전달 중" else 34,19))
+        draw_rect(stamp_area,Color("#f0dfbc"))
+        draw_rect(stamp_area,ink,false,1.3)
+        _ink(stamp,label_pos+Vector2(4,14),12,ink)
     for u in sim.units:
         if float(u["troops"])<=0: continue
         if not game.call("_visible_unit",u): continue
@@ -480,6 +581,11 @@ func _draw()->void:
     if dragging and drag_id>=0 and MAP.has_point(drag_position):
         var u:Dictionary=sim.find_unit(drag_id)
         if not u.is_empty(): _piece(u,drag_position,true)
+    if survey_sites.has(survey_key):
+        var mark:=_point(survey_sites[survey_key])
+        draw_arc(mark,14,0,TAU,36,Color("#f3dfac"),4,true)
+        draw_arc(mark,14,0,TAU,36,BLUE,1.8,true)
+        _plate(survey_key,mark+Vector2(0,-23),12,Color("#f4dcaa"))
     var compass:Vector2=MAP.end-Vector2(39,MAP.size.y-46)
     draw_arc(compass,20,0,TAU,40,Color("#6f5736"),1.4,true)
     draw_colored_polygon(PackedVector2Array([compass+Vector2(0,-17),compass+Vector2(5,7),compass,compass+Vector2(-5,7)]),INK)
@@ -487,7 +593,7 @@ func _draw()->void:
     var scale_origin:Vector2=MAP.end-Vector2(142,20)
     draw_line(scale_origin,scale_origin+Vector2(94,0),INK,1.4)
     for dx in [0,47,94]: draw_line(scale_origin+Vector2(dx,-4),scale_origin+Vector2(dx,4),INK,1.2)
-    _ink("거리 눈금",scale_origin+Vector2(21,-8),10,INK)
+    _ink("%d 지도 단위" % roundi(94.0*sim.field_size.x/MAP.size.x),scale_origin+Vector2(10,-8),10,INK)
     _ink("북로",_point(Vector2(sim.field_size.x*0.65,sim.road_y(sim.field_size.x*0.65,0)) )+Vector2(0,-12),12,INK)
     _ink("남로",_point(Vector2(sim.field_size.x*0.65,sim.road_y(sim.field_size.x*0.65,2)) )+Vector2(0,-12),12,INK)
     var u:Dictionary=sim.find_unit(selected_id)
@@ -497,7 +603,11 @@ func _draw()->void:
             draw_texture_rect(portrait,Rect2(35,124,64,75),false)
         else:
             _art(3,Rect2(35,124,64,75))
-    _plate("━ 작전 경로   ·   ┄ 협동 대상",MAP.position+Vector2(130,MAP.size.y-21),12,Color("#dbc58d"))
+    var legend:=MAP.position+Vector2(26,MAP.size.y-22)
+    _arrow(legend,legend+Vector2(25,0),Color("#98452f"),2)
+    _ink("행군로",legend+Vector2(32,4),12,INK)
+    _dashed(legend+Vector2(88,0),legend+Vector2(116,0),Color("#73537c"))
+    _ink("협동",legend+Vector2(122,4),12,INK)
 
 func _ink(t:String,p:Vector2,fs:int,c:Color)->void:
     if font!=null: draw_string(font,p,t,HORIZONTAL_ALIGNMENT_LEFT,-1,fs,c)

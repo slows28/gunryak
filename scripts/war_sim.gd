@@ -51,6 +51,7 @@ var situation_serial: int = 0
 var tactical_delivered: int = 0
 var tactical_refused: int = 0
 var last_situation_scan: float = -5.0
+const TRAINING_SCENARIO = FieldGeometry.TRAINING_SCENARIO
 var scenario_id: int = 0
 var scenario_title: String = "북남 요충지"
 var scenario_goal: String = "두 요충지를 동시에 점령하고 유지"
@@ -1034,6 +1035,9 @@ func terrain_at(p: Vector2) -> String:
     for lane in range(3):
         if absf(p.y-road_y(p.x,lane)) <= (16.0 if wide_field else 10.0):
             return "도로"
+    if scenario_id==TRAINING_SCENARIO:
+        for basin: Rect2 in FieldGeometry.TRAINING_MARSHES:
+            if basin.has_point(p) and FieldGeometry.basin_radius(p,basin)<1.0: return "습지"
     return "평지"
 
 func on_river_channel(p: Vector2) -> bool:
@@ -1048,6 +1052,7 @@ func terrain_movement_percent(id: int, position: Vector2) -> int:
 
 func _terrain_movement_multiplier(unit: Dictionary, p: Vector2) -> float:
     match terrain_at(p):
+        "습지": return 0.48 if str(unit["type"])=="기병" else 0.66
         "교량": return 1.08
         "하천": return 0.34 if str(unit["type"]) == "기병" else 0.48
         "도로":
@@ -1490,7 +1495,7 @@ func _objective_winner() -> int:
         return -1
     if scenario_id in [2,3]:
         return -1
-    if scenario_id == 4:
+    if scenario_id in [4,TRAINING_SCENARIO]:
         if not structures.is_empty() and float(structures[0]["hp"]) <= 0.0 and int(outposts[0]["owner"]) == 0 and float(outposts[0]["hold"]) >= (30.0 if long_operation else 12.0):
             return 0
         return -1
@@ -1534,8 +1539,8 @@ func _check_victory() -> void:
             _finish("군량 수레 호위 성공 — 아군 승리")
             return
     var winner: int = _objective_winner()
-    if winner == 0 and scenario_id == 4:
-        _finish("천수 돌파 성공 — 아군 승리")
+    if winner == 0 and scenario_id in [4,TRAINING_SCENARIO]:
+        _finish("시험장 거점 확보 — 아군 승리" if scenario_id==TRAINING_SCENARIO else "천수 돌파 성공 — 아군 승리")
         return
     if winner >= 0:
         _finish(("양측 요충지 확보 — 아군 승리" if winner == 0 else "적 요충지 장악 — 패배") if scenario_id == 0 else ("중앙 고지 확보 — 아군 승리" if winner == 0 else "적 중앙 고지 장악 — 패배"))
@@ -1565,7 +1570,7 @@ func _check_victory() -> void:
         _finish("아군 보급기지 상실 — 패배")
     if not finished and scenario_id == 2 and battle_time >= scenario_limit:
         _finish("보급기지 방어 성공 — 아군 승리")
-    if not finished and battle_time >= scenario_limit and scenario_id in [3,4]:
+    if not finished and battle_time >= scenario_limit and scenario_id in [3,4,TRAINING_SCENARIO]:
         _finish("작전 제한 시간 초과 — 패배")
     if not finished and battle_time >= scenario_limit and six_armies and scenario_id == 0:
         var control: Array[int] = [0,0]
@@ -1652,7 +1657,7 @@ func _assigned_outpost(unit: Dictionary) -> Dictionary:
         return {}
     if six_armies and scenario_id == 0 and mission == "중앙 진격" and outposts.size() >= 3:
         return outposts[2]
-    if scenario_id in [1,4] and mission == "중앙 진격":
+    if scenario_id in [1,4,TRAINING_SCENARIO] and mission == "중앙 진격":
         return outposts[0]
     if mission == "북측 확보":
         return outposts[0]
@@ -2049,7 +2054,8 @@ func _general_exposure(unit: Dictionary, damage: float, flank: bool, shock: floa
 func set_scenario(index: int) -> bool:
     if started and not finished:
         return false
-    scenario_id = clampi(index, 0, 4)
+    scenario_id = clampi(index, 0, TRAINING_SCENARIO)
+    if scenario_id==TRAINING_SCENARIO: wide_field=true
     reset()
     return true
 
@@ -2107,6 +2113,25 @@ func _configure_scenario() -> void:
         outposts[0]["pos"] = Vector2(705,282)
         for unit in units:
             if str(unit["type"]) == "보병": unit["mission"] = "중앙 진격"
+    elif scenario_id==TRAINING_SCENARIO:
+        scenario_title="지형 시험장"
+        scenario_goal="연습 성문을 열고 동쪽 거점 확보"
+        hill=Rect2(460,129,150,90)
+        forests=[Rect2(175,48,98,90),Rect2(485,345,130,110)]
+        outposts[0]["name"]="동쪽 훈련 거점"
+        outposts[0]["pos"]=Vector2(709,282)
+        outposts[1]["name"]="습지 관측소"
+        outposts[1]["pos"]=Vector2(337,238)
+
+# The survey uses actual map locations, including the current supply base.
+func training_sites() -> Dictionary:
+    if scenario_id!=TRAINING_SCENARIO: return {}
+    return {"평지":Vector2(360,615),"도로":Vector2(520,road_y(520,1)),
+        "숲":forests[0].get_center(),"고지":hill.get_center(),"습지":FieldGeometry.TRAINING_MARSHES[0].get_center(),
+        "하천":Vector2(river_x(612),612),"북측 교량":Vector2(river_x(390),390),
+        "중앙 교량":Vector2(river_x(850),850),"남측 교량":Vector2(river_x(1300),1300),
+        "성문":(structures[0]["rect"] as Rect2).get_center(),"목책":(structures[1]["rect"] as Rect2).get_center(),
+        "보급기지":bases[0]["pos"],"점령 거점":outposts[0]["pos"]}
 
 func transfer_troops(receiver_id: int, donor_id: int, amount: int) -> bool:
     if started or amount <= 0 or receiver_id == donor_id:
@@ -2277,8 +2302,8 @@ func _record_presentation() -> void:
 
 # M8: destructible field fortifications in the supply-defense scenario.
 func _configure_structures() -> void:
-    if scenario_id == 4:
-        structures.append({"name":"천수 성문","side":1,"rect":Rect2(640,245,22,76),"hp":105.0,"max_hp":105.0,"kind":"성문"})
+    if scenario_id in [4,TRAINING_SCENARIO]:
+        structures.append({"name":"연습 성문" if scenario_id==TRAINING_SCENARIO else "천수 성문","side":1,"rect":Rect2(640,245,22,76),"hp":105.0,"max_hp":105.0,"kind":"성문"})
         structures.append({"name":"북측 목책","side":1,"rect":Rect2(640,110,14,135),"hp":75.0,"max_hp":75.0,"kind":"목책"})
         structures.append({"name":"남측 목책","side":1,"rect":Rect2(640,321,14,135),"hp":75.0,"max_hp":75.0,"kind":"목책"})
         return
@@ -2706,12 +2731,21 @@ func _expand_layout() -> void:
         4:
             # Siege: screened approach, more exposed ground immediately at the gate.
             forests.append_array([Rect2(560,170,310,250),Rect2(600,1210,300,230),Rect2(1420,210,270,240),Rect2(1470,1260,270,220)])
+        TRAINING_SCENARIO:
+            forests.append_array([Rect2(440,1070,175,200),Rect2(1750,135,240,180)])
     var hill_size: Vector2 = hill.size*1.8
     hill = Rect2(layout_point(hill.get_center())-hill_size*0.5,hill_size)
     for structure in structures:
         var old: Rect2 = structure["rect"]
         structure["rect"] = Rect2(layout_point(old.position),Vector2(old.size.x,old.size.y*3.0))
-    scenario_limit = [360.0,330.0,300.0,390.0,360.0][scenario_id]
+    if scenario_id==TRAINING_SCENARIO:
+        var gate: Rect2=structures[0]["rect"]
+        var align_y: float=road_y(gate.get_center().x,1)-gate.get_center().y
+        for structure in structures:
+            var rect: Rect2=structure["rect"]
+            rect.position.y+=align_y
+            structure["rect"]=rect
+    scenario_limit = [360.0,330.0,300.0,390.0,360.0,360.0][scenario_id]
     if six_armies and scenario_id == 0:
         outposts.append({"name":"중앙 동쪽 접근로","pos":Vector2(1370,850),"owner":-1,"challenger":-1,"progress":0.0,"hold":0.0})
         scenario_goal = "6턴 이후 세 거점 중 두 곳을 8초 확보"
@@ -2729,6 +2763,7 @@ func _expand_layout() -> void:
             2: scenario_goal="25분 동안 아군 보급기지 사수"
             3: scenario_goal="28분 이내 군량 수레를 동쪽 도착점까지 호위"
             4: scenario_goal="18분 이후 성문 파괴 및 중앙 거점 2분 확보"
+            TRAINING_SCENARIO: scenario_goal="18분 이후 연습 성문 파괴 및 동쪽 거점 2분 확보"
 
 # Wide-field corps are split into actual autonomous detachments, never extra
 # fictional soldiers. Main commanders remain IDs 0–5; reserves follow.

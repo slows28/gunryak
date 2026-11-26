@@ -1,6 +1,7 @@
 extends Control
 ## 2D tactical screen. Simulation is entirely separate in war_sim.gd.
 const WarSim = preload("res://scripts/war_sim.gd")
+const Materials = preload("res://scripts/command_materials.gd")
 const BattleHud = preload("res://scripts/battle_hud.gd")
 const BattleAudio = preload("res://scripts/battle_audio.gd")
 const FrontView=preload("res://scripts/front_view.gd")
@@ -41,6 +42,7 @@ const COL_RED: Color = Color("#f19985")
 const COL_GOLD: Color = Color("#efc878")
 
 var sim = WarSim.new()
+var desk_plaque := Materials.plaque(Color("#cfdecf"))
 var korean_font: SystemFont
 var selected_id: int = 0
 var detailed_map: bool = false
@@ -278,10 +280,9 @@ func _install_korean_font() -> void:
     ui_theme.set_stylebox("embedded_unfocused_border","Window",window_frame)
     for variation in [&"CorpsCard",&"SectorCard"]:
         ui_theme.set_type_variation(variation,&"Button")
-        ui_theme.set_stylebox("normal",variation,_ui_box(Color("#20332f"),Color("#41504a")))
-        ui_theme.set_stylebox("hover",variation,_ui_box(Color("#30433d"),Color("#a99a76")))
-        var selected_bg:=Color("#e8dbb8") if variation==&"CorpsCard" else Color("#354641")
-        var selected_card:=_ui_box(selected_bg,Color("#dfbe80"))
+        ui_theme.set_stylebox("normal",variation,desk_plaque)
+        ui_theme.set_stylebox("hover",variation,Materials.plaque(Color(1.25,1.3,1.17)))
+        var selected_card: StyleBox=Materials.plaque(Color("#f4eedc"),true) if variation==&"CorpsCard" else Materials.plaque(Color(1.55,1.4,1.05))
         ui_theme.set_stylebox("pressed",variation,selected_card)
         ui_theme.set_stylebox("hover_pressed",variation,selected_card)
     theme = ui_theme
@@ -1445,9 +1446,9 @@ func _map_select(mouse_pos: Vector2) -> void:
 
 func _draw() -> void:
     draw_rect(Rect2(0,0,1280,800),COL_BG)
-    draw_rect(Rect2(0,0,1280,56),Color("#1d302f"))
+    draw_style_box(desk_plaque,Rect2(0,0,1280,56))
     draw_rect(Rect2(0,56,954,68),Color("#182725"))
-    draw_rect(Rect2(0,694,1280,106),Color("#182420"))
+    draw_texture_rect(Materials.WALNUT,Rect2(0,694,1280,106),false,Color("#8e978c"))
     draw_line(Vector2(369,8),Vector2(369,44),Color("#59615a"))
     draw_line(Vector2(953,8),Vector2(953,44),Color("#59615a"))
     draw_rect(Rect2(0,0,6,56),Color("#cf674e"))
@@ -1457,7 +1458,7 @@ func _draw() -> void:
     if elapsed>0.0: draw_rect(Rect2(383,51,555*elapsed,2),COL_GOLD)
     draw_rect(Rect2(MAP_TOP_LEFT,MAP_SIZE),Color("#19232d"))
     draw_rect(Rect2(MAP_TOP_LEFT,MAP_SIZE).grow(1),COL_LINE,false)
-    draw_rect(Rect2(961,61,303,632),COL_PANEL)
+    draw_style_box(desk_plaque,Rect2(961,61,303,632))
     var hero_top: float=333.0 if observing_enemy else 143.0
     draw_rect(Rect2(970,hero_top,286,85),Color("#263747"))
     draw_rect(Rect2(970,hero_top,3,85),COL_RED if observing_enemy else COL_BLUE)
@@ -2192,7 +2193,7 @@ func _build_planning_dialog() -> void:
     plan_status = Label.new()
     plan_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     root.add_child(plan_status)
-    plan_scenario = _plan_option(root,"전장 시나리오",["북남 요충지","중앙 고지 쟁탈","보급로 사수","군량 수레 호위","천수 돌파전"])
+    plan_scenario = _plan_option(root,"전장 시나리오",["북남 요충지","중앙 고지 쟁탈","보급로 사수","군량 수레 호위","천수 돌파전","지형 시험장"])
     plan_scenario.item_selected.connect(_change_scenario)
     plan_donor = _plan_option(root,"다른 장수 / 병력 제공 부대",["왕평 부대","마속 부대","위연 부대"])
     var troop_row := HBoxContainer.new()
@@ -2318,6 +2319,7 @@ func _change_scenario(index: int) -> void:
         _ensure_friendly_selection()
         _select_unit()
         planning_dialog.hide()
+        if order_view.visible: order_view.open(false)
         queue_redraw()
 
 func _transfer_in() -> void:
@@ -2493,6 +2495,8 @@ func _open_briefing() -> void:
         tactic = "보급기지 주변에 방어선을 정하고 기병을 기동 예비대로 운용하십시오."
     elif sim.scenario_id == 3:
         tactic = "수레 125 거리 내에 호위군을 유지하고 접근하는 적을 차단하십시오."
+    elif sim.scenario_id==WarSim.TRAINING_SCENARIO:
+        tactic="군령서의 지형 답사로 각 지점을 확인하고 세 교량과 습지의 이동 조건을 비교하십시오."
     elif sim.scenario_id == 4:
         tactic = "보병으로 성문을 파괴하고 중앙 거점을 확보하십시오."
     var story: String = ""
@@ -3025,7 +3029,8 @@ func _build_title_screen() -> void:
     sub.reparent(title_screen,false)
     _title_button("새 북벌 캠페인",Vector2(88,288),Vector2(428,56),_begin_campaign,true)
     _title_button("캠페인 이어하기",Vector2(88,355),Vector2(428,50),_continue_campaign)
-    _title_button("단독 전투",Vector2(88,416),Vector2(428,50),_leave_title)
+    _title_button("단독 전투",Vector2(88,416),Vector2(208,50),_leave_title)
+    _title_button("지형 시험장",Vector2(308,416),Vector2(208,50),_leave_title.bind(WarSim.TRAINING_SCENARIO))
     _title_button("전장 브리핑",Vector2(88,517),Vector2(208,43),_title_brief)
     _title_button("도움말 / 조작",Vector2(308,517),Vector2(208,43),_open_demo_help)
     _title_button("음향 전환",Vector2(88,571),Vector2(208,43),_toggle_sound)
@@ -3050,11 +3055,11 @@ func _show_title() -> void:
     title_screen.show()
     move_child(title_screen,get_child_count()-1)
 
-func _leave_title() -> void:
+func _leave_title(scenario: int=0) -> void:
     campaign_active = false
     if is_instance_valid(strategy_view): strategy_view.hide()
     sim.reset()
-    sim.set_scenario(0)
+    sim.set_scenario(scenario)
     _reset()
     title_screen.hide()
     _open_order_map()
