@@ -40,14 +40,15 @@ func _place(unit: Dictionary, point: Vector2, kind: String, formation: String="�
 func _contact_footwork() -> void:
     var sim := _field()
     var foot := _place(sim.find_unit(0), Vector2(720,750), "보병")
-    var enemy := _place(sim.find_unit(3), Vector2(765,750), "보병")
+    var enemy := _place(sim.find_unit(3), Vector2(793,750), "보병")
     foot["action"] = "공격 지속"
     foot["goal"] = enemy["pos"]
     foot["contact_target_id"] = enemy["id"]
     foot["mission"] = "공격"
     foot["has_destination"] = true
     foot["order_destination"] = Vector2(793,750)
-    var approach := sim._destination_order(foot,enemy,"방어","",foot["pos"],73.0)
+    var distance: float = foot["pos"].distance_to(enemy["pos"])
+    var approach := sim._destination_order(foot,enemy,"방어","",foot["pos"],distance)
     _check(approach["action"] == "교전" and not foot["destination_reached"], "attack orders engage the observed blocker outside the arrival radius")
     var limit := sim._body_distance(foot,enemy)
     foot["pos"] = enemy["pos"] - Vector2.RIGHT * limit
