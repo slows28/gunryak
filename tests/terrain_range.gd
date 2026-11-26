@@ -91,6 +91,14 @@ func _initialize() -> void:
     archer["ammo"]=20.0
     sim._supply_logic(1.0)
     check(archer["supplied"] and archer["rations"]>30.0 and archer["ammo"]>20.0,"surveyed supply base replenishes both rations and arrows")
+    for unit in sim.units:
+        if unit["side"]==1: unit["routed"]=true
+    sim.find_unit(0)["pos"]=sim.commanders[1]["pos"]
+    sim._check_victory()
+    check(not sim.finished,"reaching the enemy commander leaves the terrain exercise running")
+    sim.battle_time=sim.scenario_limit
+    sim._check_victory()
+    check(sim.finished and sim.winning_side==1 and sim.result.contains("훈련 종료"),"unfinished exercise ends at its time limit")
     sim.set_scenario(0)
     check(sim.training_sites().is_empty() and sim.terrain_at(sites["습지"])!="습지","other scenarios have no training basins")
     print("GUNRYAK_TERRAIN_RANGE_PASS" if failures==0 else "GUNRYAK_TERRAIN_RANGE_FAIL")

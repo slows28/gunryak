@@ -1539,8 +1539,12 @@ func _check_victory() -> void:
             _finish("군량 수레 호위 성공 — 아군 승리")
             return
     var winner: int = _objective_winner()
-    if winner == 0 and scenario_id in [4,TRAINING_SCENARIO]:
-        _finish("시험장 거점 확보 — 아군 승리" if scenario_id==TRAINING_SCENARIO else "천수 돌파 성공 — 아군 승리")
+    if scenario_id==TRAINING_SCENARIO:
+        if winner==0: _finish("시험장 거점 확보 — 아군 승리")
+        elif battle_time>=scenario_limit: _finish("훈련 종료 — 제한 시간 내 거점 확보 실패 (패배)")
+        return
+    if winner == 0 and scenario_id == 4:
+        _finish("천수 돌파 성공 — 아군 승리")
         return
     if winner >= 0:
         _finish(("양측 요충지 확보 — 아군 승리" if winner == 0 else "적 요충지 장악 — 패배") if scenario_id == 0 else ("중앙 고지 확보 — 아군 승리" if winner == 0 else "적 중앙 고지 장악 — 패배"))
@@ -1570,7 +1574,7 @@ func _check_victory() -> void:
         _finish("아군 보급기지 상실 — 패배")
     if not finished and scenario_id == 2 and battle_time >= scenario_limit:
         _finish("보급기지 방어 성공 — 아군 승리")
-    if not finished and battle_time >= scenario_limit and scenario_id in [3,4,TRAINING_SCENARIO]:
+    if not finished and battle_time >= scenario_limit and scenario_id in [3,4]:
         _finish("작전 제한 시간 초과 — 패배")
     if not finished and battle_time >= scenario_limit and six_armies and scenario_id == 0:
         var control: Array[int] = [0,0]

@@ -510,6 +510,10 @@ func _draw()->void:
     draw_rect(Rect2(MAP.position,Vector2(MAP.size.x*0.30,MAP.size.y)),Color(0.20,0.35,0.45,0.05))
     # Reserve visible army counters before placing the names of nearby sites.
     var occupied: Array[Rect2]=[]
+    for structure in sim.structures:
+        if structure["hp"]>0:
+            var fort: Rect2=structure["rect"]
+            occupied.append(Rect2(_point(fort.position),_point(fort.end)-_point(fort.position)).grow(2))
     for unit in sim.units:
         if float(unit["troops"])>0.0 and game.call("_visible_unit",unit):
             var p: Vector2=_point(unit["pos"])
