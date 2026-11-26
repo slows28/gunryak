@@ -90,7 +90,7 @@ func _initialize() -> void:
     archer["pos"]=sites["보급기지"]
     archer["rations"]=30.0
     archer["ammo"]=20.0
-    sim._supply_logic(1.0)
+    for i in range(41): sim._supply_logic(0.1)
     check(archer["supplied"] and archer["rations"]>30.0 and archer["ammo"]>20.0,"surveyed supply base replenishes both rations and arrows")
     for unit in sim.units:
         if unit["side"]==1: unit["routed"]=true
@@ -111,13 +111,13 @@ func _initialize() -> void:
     quit(0 if failures==0 else 1)
 
 func _check_fields(sim) -> void:
-    var enemy_totals := [26400,26400,29240,26400,23200,23200]
+    var enemy_totals := [43700,43700,49160,43700,38100,38100]
     for scenario in range(6):
         sim.set_scenario(scenario)
-        var valid: bool = sim.total_troops(0)==23500 and sim.total_troops(1)==enemy_totals[scenario]
+        var valid: bool = sim.total_troops(0)==38000 and sim.total_troops(1)==enemy_totals[scenario]
         for unit in sim.units:
             valid = valid and unit["troops"]==unit["initial_troops"] and unit["troops"]<=WarSim.MAX_TROOPS
-        check(valid and sim.command_ids(1).size()==6, "starting musters for "+sim.scenario_title)
+        check(valid and sim.command_ids(1).size()==10, "starting musters for "+sim.scenario_title)
         var sites: Dictionary = sim.field_survey_sites()
         for kind in ["습지","갈대밭","고지","숲"]:
             check(sim.terrain_at(sites[kind])==kind,"survey "+sim.scenario_title+" "+kind)
@@ -131,7 +131,7 @@ func _check_fields(sim) -> void:
                 check(clear,"passable mapped boundary in "+sim.scenario_title+" "+kind)
     sim.reset()
     sim.set_scenario(0)
-    check(sim.total_troops(1)==26400,"returning from training reapplies the field muster exactly once")
+    check(sim.total_troops(1)==43700,"returning from training reapplies the field muster exactly once")
 
 func _check_reed_sight(sim) -> void:
     sim.set_scenario(WarSim.TRAINING_SCENARIO)

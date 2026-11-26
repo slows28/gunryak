@@ -23,14 +23,14 @@ func _initialize() -> void:
     check(sim.bases[0]["pos"]==depot and sim.commanders[0]["pos"]==advisor,"invalid placements preserve prior positions")
     sim.start()
     var base: Dictionary=sim.bases[0]
-    check(base["state"]=="설치" and not sim._has_supply(0,depot),"committed site builds at launch and withholds rations")
+    check(base["state"]=="설치" and sim._nearest_base(0,depot,true).is_empty(),"committed site builds at launch and withholds rations")
     check(not sim.place_post("보급기지",Vector2(488,770)) and not sim.place_post("본진",depot),"fixed depot and headquarters are locked on day one")
     sim.paused=true
     sim.step(0.1)
     check(base["build_timer"]==sim.BASE_BUILD_SECONDS,"construction follows the simulation clock")
     sim.paused=false
     for tick in range(31): sim.step(0.1)
-    check(base["state"]=="가동" and base["build_timer"]==0.0 and sim._has_supply(0,depot),"completed depot actually opens supply")
+    check(base["state"]=="가동" and base["build_timer"]==0.0 and sim._nearest_base(0,depot,true)==base,"completed depot actually opens supply")
     sim.battle_time=95.0
     sim._supply_logic(0.1)
     check(base["pos"]==depot and base["state"]=="가동","manual depot stays where the player built it")
@@ -38,16 +38,13 @@ func _initialize() -> void:
     sim.turn=6
     check(sim.request_order(0,"공격","현장 판단") and sim.couriers.back()["pos"]==advisor,"courier originates from relocated headquarters")
     _check_sites_and_migration()
-    for u in sim.units:
-        if u["side"]==0: u["pos"]=depot+Vector2.RIGHT*(sim.supply_radius()+10.0)
-    var first:=sim.find_unit(0)
     var archer:=sim.find_unit(1)
-    for u in [first,archer]:
-        u["pos"]=depot
-        u["rations"]=40.0
-    archer["ammo"]=40.0
-    sim._supply_logic(0.1)
-    check(archer["rations"]>40 and archer["ammo"]>40 and first["rations"]==archer["rations"],"all armies inside one radius replenish simultaneously")
+    archer["pos"]=depot+Vector2(770,0)
+    archer["shipment_from"]=-1
+    archer["rations"]=30.0
+    archer["ammo"]=30.0
+    for tick in range(400): sim._deliver_rations(archer,0.1)
+    check(archer.get("deliveries",0)>0 and archer["ammo"]>30,"distant archer receives real timed shipments without a supply radius")
     _check_night_and_replies()
     _check_network()
     _check_supply_front()
@@ -72,10 +69,10 @@ func _check_sites_and_migration() -> void:
     var unit:=s.find_unit(0)
     var troop_pos: Vector2=unit["pos"]
     var objectives:=s.outposts.size()
-    var supplied:=s._has_supply(0,second)
+    var supplied:=s._nearest_base(0,second,true)
     check(original==s.commanders[0]["pos"] and s._home_point(1)==s.commanders[1]["pos"],"both strategists begin in their respective headquarters")
     check(s.place_post("임시 거점",second) and not s.place_post("임시 거점",second+Vector2.ONE),"temporary site can be placed once on a clear plot")
-    check(s.temporary_sites.size()==1 and s.planning_sites().size()==objectives+1 and s.outposts.size()==objectives and s.bases.size()==2 and s._has_supply(0,second)==supplied,"planning marker neither scores nor supplies")
+    check(s.temporary_sites.size()==1 and s.planning_sites().size()==objectives+s.terrain_posts.size()+1 and s.outposts.size()==objectives and s.bases.size()==2 and s._nearest_base(0,second,true)==supplied,"planning marker neither scores nor supplies")
     check(s.place_post("본진",first) and s.place_post("본진",second) and s.next_hq_day==5 and unit["pos"]==troop_pos,"pregame moves are repeatable without moving troops or spending day five")
     s.start()
     for day in range(1,5):
@@ -122,7 +119,7 @@ func _check_network() -> void:
     s.start()
     s._extend_supply(0)
     check(s.bases.size()==2,"stationary launch does not spawn a depot")
-    var next:=origin+Vector2.DOWN*(s.supply_radius()+28.0)
+    var next:=origin+Vector2.DOWN*s.MARCH_LEG
     blue["pos"]=next
     blue["routed"]=true
     s._extend_supply(0)
@@ -132,21 +129,24 @@ func _check_network() -> void:
     var crew: Dictionary=s.supply_crews[0]
     check(s.bases.size()==2 and crew["state"]=="이동" and crew["pos"]==origin,"only the separate supply crew can start construction")
     s._supply_logic(0.1)
-    check(crew["pos"]!=origin and crew["pos"]!=next and not s._has_supply(0,next),"crew travels on the map before construction")
+    check(crew["pos"]!=origin and crew["pos"]!=next and s._nearest_base(0,next,true)==home,"crew travels on the map before construction")
     for tick in range(250):
         s._supply_logic(0.1)
         if s.bases.size()==3: break
     var post: Dictionary=s.bases.back()
     check(s.bases.size()==3 and post["pos"]==next and home["pos"]==origin,"southbound march creates another base without moving the original")
     s._extend_supply(0)
-    check(s.bases.size()==3 and not s._has_supply(0,next),"unfinished post does not supply or spawn duplicates")
+    check(s.bases.size()==3 and s._nearest_base(0,next,true)==home,"unfinished post does not supply or spawn duplicates")
     for tick in range(31): s._supply_logic(0.1)
-    check(s._has_supply(0,next) and s._has_supply(0,origin),"original and forward sources work independently")
+    check(s._nearest_base(0,next,true)==post and s._nearest_base(0,origin,true)==home,"original and forward sources work independently")
     blue["pos"]=origin.lerp(next,0.5)
+    blue["shipment_from"]=-1
     blue["rations"]=30.0
-    s._supply_logic(1.0)
-    check(is_equal_approx(blue["rations"],32.5),"overlapping radii grant one refill")
-    check(s._has_supply(0,origin+Vector2.LEFT*s.supply_radius()) and not s._has_supply(0,origin+Vector2.LEFT*(s.supply_radius()+0.01)),"coverage boundary is inclusive and finite")
+    var prior:=int(blue.get("deliveries",0))
+    s._deliver_rations(blue,0.1)
+    var delay: float=blue["delivery_left"]
+    s._deliver_rations(blue,delay+0.01)
+    check(blue["deliveries"]==prior+1 and blue["rations"]>30.0,"two operating depots send one shipment per corps at a time")
     red["pos"]=next
     s._extend_supply(1)
     check(s.bases.size()==3,"raider cannot found a camp on the enemy depot it is attacking")
@@ -158,7 +158,8 @@ func _check_network() -> void:
     blue["pos"]=next
     s._supply_logic(0.1)
     check(post["raid_work"]==0.0 and post["alive"],"arriving defender interrupts destruction")
-    blue["pos"]=origin
+    blue["pos"]=next+Vector2(135,0)
+    blue["morale"]=50.0
     s._supply_logic(0.5)
     red["pos"]=origin+Vector2(900,0)
     reserve["pos"]=red["pos"]
@@ -171,19 +172,21 @@ func _check_network() -> void:
     check(post["raid_work"]==0.0,"pause freezes raids")
     s.paused=false
     for tick in range(29): s._supply_logic(0.1)
-    check(post["alive"] and s._has_supply(0,next),"attacked camp supplies until the actual destruction tick")
+    check(post["alive"] and s._nearest_base(0,next,true)==post,"attacked camp supplies until the actual destruction tick")
     s._supply_logic(0.1)
-    check(not post["alive"] and not s._has_supply(0,next) and s._has_supply(0,origin),"only destroyed forward radius disappears")
+    check(not post["alive"] and s._nearest_base(0,next,true)==home and s._nearest_base(0,origin,true)==home,"only destroyed forward radius disappears")
+    check(blue["morale"]==25.0 and blue["morale_news"]=="보급기지 상실","completed raid shocks nearby friendly morale once")
     reserve["troops"]=0.0
     var red_origin: Vector2=s.bases[1]["pos"]
     red["supply_mark"]=red_origin
-    red["pos"]=red_origin+Vector2.LEFT*(s.supply_radius()+45)
+    red["pos"]=red_origin+Vector2.LEFT*s.MARCH_LEG
     s._extend_supply(1)
-    check(s.supply_crews[1]["goal"]==red["pos"] and s.bases.back()["side"]==0,"opposing crew receives its own destination")
+    var west: Vector2=s.supply_crews[1]["goal"]
+    check(west.x<=red_origin.x-s.MARCH_LEG*0.9 and s.bases.back()["side"]==0,"opposing crew receives its own destination")
     for tick in range(350):
         s._supply_logic(0.1)
         if s.bases.back()["side"]==1: break
-    check(s.bases.back()["side"]==1 and s.bases.back()["pos"]==red["pos"],"opposing march builds westward by the same rule")
+    check(s.bases.back()["side"]==1 and s.bases.back()["pos"]==west,"opposing march builds westward by the same rule")
 
 func _check_supply_front() -> void:
     var s := WarSim.new()
@@ -199,12 +202,15 @@ func _check_supply_front() -> void:
     foot["pos"] = origin
     bow["pos"] = origin
     s.start()
-    var edge := origin + Vector2.RIGHT * s.supply_radius() * 0.87
+    var edge := origin + Vector2.RIGHT * (s.MARCH_LEG-2)
     foot["pos"] = edge
     foot["goal"] = edge + Vector2(130,0)
     s._extend_supply(0)
     var crew: Dictionary = s.supply_crews[0]
-    check(s._has_supply(0,edge) and crew["state"] == "이동", "crew departs as a marching corps approaches the edge of its current coverage")
+    check(crew["state"]=="대기","a short march never orders another camp")
+    foot["pos"]=edge+Vector2(7,0)
+    s._extend_supply(0)
+    check(crew["state"]=="이동","a full march leg orders an actual crew departure")
     foot["pos"] = origin
     foot["goal"] = origin
     s._extend_supply(0)
@@ -215,14 +221,13 @@ func _check_supply_front() -> void:
     foe["pos"] = front + Vector2(36,8)
     s._extend_supply(0)
     var site: Vector2 = crew["goal"]
-    check(crew["state"] == "이동" and s._safe_crew_site(0,site) and site.distance_to(front) < s.supply_radius(), "a threatened frontage is supplied from a safe nearby site")
-    var refill := s._refill_position(front,s.bases[0])
-    check(s._has_supply(0,refill) and refill.distance_to(origin) > s.supply_radius()*0.8 and s._refill_position(refill,s.bases[0]) == refill,
-        "a low-ration army stops as soon as it reaches reliable coverage")
+    check(crew["state"] == "이동" and s._safe_crew_site(0,site) and site.distance_to(front)<s.MARCH_LEG, "a threatened frontage is supplied from a safe nearby site")
+    foot["morale"]=60.0
+    bow["morale"]=50.0
     for tick in range(185):
         s.battle_time += 0.1
         s._supply_logic(0.1)
-    check(s.bases.size() == 3 and s._has_supply(0,foot["pos"]) and s._has_supply(0,bow["pos"]), "one operational depot covers both advancing corps without a manual order")
+    check(s._nearest_base(0,front,true)["pos"]==site and foot["morale"]==74.0 and bow["morale"]==64.0, "one operational depot covers both advancing corps without a manual order")
 
 func _check_crew_losses() -> void:
     var s:=WarSim.new()
@@ -244,7 +249,7 @@ func _check_crew_losses() -> void:
     var marcher:=s.find_unit(0)
     marcher["pos"]=home+Vector2(0,430)
     s._extend_supply(0)
-    check(s.bases.size()==2 and s._has_supply(0,home),"destroyed builders cannot found camps and existing depots operate independently")
+    check(s.bases.size()==2 and not s._nearest_base(0,home,true).is_empty(),"destroyed builders cannot found camps and existing depots operate independently")
     var ready: float = crew["reassemble_at"]
     raider["pos"] = s.headquarters[0]["pos"]
     s.battle_time = ready - 0.1
@@ -327,6 +332,7 @@ func _check_crew_crossing() -> void:
     var crew: Dictionary=s.supply_crews[0]
     var from:=Vector2(s.river_x(510)-190,510)
     var to:=Vector2(s.river_x(540)+280,540)
+    s.bases[0]["pos"]=from
     crew["pos"]=from
     var marcher:=s.find_unit(0)
     marcher["pos"]=to
@@ -337,7 +343,7 @@ func _check_crew_crossing() -> void:
         s._update_supply_crew(crew,0.1)
         if s.in_open_water(crew["pos"]): entered_water=true
         if crew["state"]=="구축": break
-    check(not entered_water and crew["bridge_crossings"]==1 and crew["state"]=="구축" and s.bases.back()["pos"]==to,"crew reaches the far bank via a real bridge before building")
+    check(not entered_water and crew["bridge_crossings"]==1 and crew["state"]=="구축" and s.bases.back()["pos"]==crew["goal"],"crew reaches the far bank via a real bridge before building")
 
 func _check_interrupted_work() -> void:
     var s:=WarSim.new()

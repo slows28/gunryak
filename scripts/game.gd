@@ -113,6 +113,7 @@ var mind_dialog: AcceptDialog
 var mind_report: RichTextLabel
 var mind_button: Button
 var battle_feed: PanelContainer
+var corps_scroll: ScrollContainer
 var general_cards: Array[BattleHud.CorpsCard]=[]
 var map_label_areas: Array[Rect2]=[]
 var fallen_marks: Array[Dictionary]=[]
@@ -356,8 +357,8 @@ func _build_interface() -> void:
         button.mouse_default_cursor_shape=Control.CURSOR_POINTING_HAND
         objective_buttons.append(button)
     _label("지휘 본부",Vector2(970,69),Vector2(156,32),23,COL_TEXT)
-    friendly_tab=_button("아군 6",Vector2(970,108),Vector2(91,28),_show_friendly_roster)
-    enemy_tab=_button("적군 6",Vector2(1067,108),Vector2(91,28),_show_enemy_roster)
+    friendly_tab=_button("아군 10",Vector2(970,108),Vector2(91,28),_show_friendly_roster)
+    enemy_tab=_button("적군 10",Vector2(1067,108),Vector2(91,28),_show_enemy_roster)
     fog_button=_button("전체 시야",Vector2(1164,108),Vector2(92,28),func(): _toggle_fog(not fog_enabled))
     friendly_tab.toggle_mode=true
     enemy_tab.toggle_mode=true
@@ -426,13 +427,26 @@ func _build_interface() -> void:
     contact_button.tooltip_text="가장 최근에 관측한 교전으로 이동 · 다시 누르면 다른 교전 · C"
     _label("아군 군단",Vector2(17,674),Vector2(102,23),16,COL_GOLD)
     _build_battle_feed()
-    for i in range(6):
+    var next_corps:=_button("다음 군단 ›",Vector2(1153,672),Vector2(111,25),func():
+        corps_scroll.scroll_horizontal=0 if corps_scroll.scroll_horizontal>250 else int(corps_scroll.get_h_scroll_bar().max_value))
+    next_corps.add_theme_font_size_override("font_size",12)
+    corps_scroll=ScrollContainer.new()
+    corps_scroll.get_h_scroll_bar().value_changed.connect(func(offset: float):
+        next_corps.text="‹ 처음 군단" if offset>250 else "다음 군단 ›")
+    corps_scroll.position=Vector2(16,699)
+    corps_scroll.size=Vector2(1248,101)
+    corps_scroll.vertical_scroll_mode=ScrollContainer.SCROLL_MODE_DISABLED
+    corps_scroll.follow_focus=true
+    add_child(corps_scroll)
+    var strip:=HBoxContainer.new()
+    strip.add_theme_constant_override("separation",8)
+    corps_scroll.add_child(strip)
+    for i in range(WarSim.FIELD_CORPS):
         var card:=BattleHud.CorpsCard.new()
-        card.position=Vector2(16+i*209,700)
-        card.size=Vector2(201,94)
+        card.custom_minimum_size=Vector2(201,88)
         card.pressed.connect(_select_general_card.bind(i))
         card.report_requested.connect(_open_situations)
-        add_child(card)
+        strip.add_child(card)
         general_cards.append(card)
     _build_sector_board()
     situation_btn = _button("긴급 보고",Vector2(830,58),Vector2(120,45),_open_situations)
@@ -679,6 +693,7 @@ func _focus_combat() -> void:
     queue_redraw()
 
 func _on_unit_selected(index: int) -> void:
+    if index>=0 and index<general_cards.size(): corps_scroll.ensure_control_visible(general_cards[index])
     var ids: Array[int]=sim.command_ids(0)
     if index<0 or index>=ids.size(): return
     selected_id=ids[index]
@@ -966,7 +981,7 @@ func _refresh_hud() -> void:
         for corps in sim.units:
             if corps["side"] != 0 or corps["troops"] <= 0: continue
             alive += 1
-            if sim._has_supply(0, corps["pos"]): covered += 1
+            if corps["supplied"]: covered += 1
         var activity := sim.crew_caption(0)
         var raid_seconds := 0
         for base in sim.bases:
@@ -974,7 +989,7 @@ func _refresh_hud() -> void:
             var left := sim.raid_seconds_left(base)
             if raid_seconds == 0 or left < raid_seconds: raid_seconds = left
         if raid_seconds > 0: activity = "기지 급습 · %d초" % raid_seconds
-        status_label.text = "보급권 %d/%d  ·  %s" % [covered,alive,activity]
+        status_label.text = "배급 연결 %d/%d  ·  %s" % [covered,alive,activity]
         if sim.couriers.size() > 0: status_label.text += "  ·  전령 %d" % sim.couriers.size()
     var captured: bool=sim.commander_captured(0)
     if captured:
@@ -1081,7 +1096,8 @@ func _refresh_commander_desk() -> void:
         readiness_label.text+=" · 군량 %d" % int(unit["rations"])
     elif str(unit["type"])=="궁병" and int(unit["ammo"])<35:
         readiness_label.text+=" · 화살 %d" % int(unit["ammo"])
-    if sim.started: readiness_label.text+=" · "+("보급 중" if sim._has_supply(0,unit["pos"]) else "권역 밖")
+    readiness_label.tooltip_text=str(unit.get("morale_news",""))
+    if sim.started: readiness_label.text+=" · "+("다음 배급 %d초" % ceili(unit.get("delivery_left",0.0)*sim.operation_scale()) if unit["supplied"] else "배급 중단")
     details_label.tooltip_text="%s · %s\n사기 %d · 응집 %d · 피로 %d\n군량 %d · 화살 %d" % [
         str(unit["name"]),str(unit["type"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"])]
     if sim.six_armies:
@@ -1178,6 +1194,7 @@ func _latest_engagement_note(commander_id: int) -> String:
     return ""
 
 func _refresh_enemy_intel() -> void:
+    readiness_label.tooltip_text=""
     var enemy: Dictionary=sim.find_unit(observed_enemy_id)
     selected_label.text="관측할 적군 선택"
     details_label.text=""
@@ -1697,6 +1714,15 @@ func _draw_map(_canvas: Control) -> void:
             var progress: float = clampf(float(site["progress"]) / sim.capture_duration(), 0.0, 1.0)
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60, 4)), Color("#243138"))
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60.0 * progress, 4)), COL_BLUE if int(site["challenger"]) == 0 else COL_RED)
+    var field_view := Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom).grow(125.0)
+    if detailed_map:
+        for site in sim.terrain_posts:
+            var point: Vector2=site["pos"]
+            if not field_view.has_point(point): continue
+            var owner: int=site["owner"] if not fog_enabled or sim.player_can_see(point) else -1
+            var ink:=COL_BLUE if owner==0 else (COL_RED if owner==1 else COL_GOLD)
+            map_layer.draw_rect(Rect2(point-Vector2(4,4)/camera_zoom,Vector2(8,8)/camera_zoom),ink)
+            if camera_zoom>=1.1: _map_plate(site["name"],point+Vector2(0,-18)/camera_zoom,ink,11)
     for site in sim.temporary_sites:
         var p: Vector2 = site["pos"]
         var scale_px := 1.0/camera_zoom
@@ -1711,10 +1737,6 @@ func _draw_map(_canvas: Control) -> void:
         var p: Vector2 = _screen(base["pos"])
         var side: int = int(base["side"])
         var accent: Color = COL_BLUE if side == 0 else COL_RED
-        if base["state"]=="가동":
-            var rim: Color=Color("#9ce4c8") if side==0 else COL_RED
-            map_layer.draw_arc(p,sim.supply_radius(),0,TAU,88,Color(Color("#283c33"),0.40),2.6/camera_zoom,true)
-            map_layer.draw_arc(p,sim.supply_radius(),0,TAU,88,Color(rim,0.58),1.15/camera_zoom,true)
         var building: bool = base["state"] == "설치"
         _draw_field_site(2,p,0.96,Color(0.86,0.80,0.65,0.65) if building else Color.WHITE)
         if dark > 0.0 and base["state"] == "가동":
@@ -1854,7 +1876,6 @@ func _draw_map(_canvas: Control) -> void:
         if float(unit["troops"]) > 0.0 and _visible_unit(unit):
             visible_units.append(unit)
     visible_units.sort_custom(func(a: Dictionary,b: Dictionary) -> bool: return (a["pos"] as Vector2).y < (b["pos"] as Vector2).y)
-    var field_view := Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom).grow(125.0)
     _draw_fallen(field_view)
     _draw_march_dust(field_view)
     _draw_contact_scuffs(field_view)
@@ -4254,10 +4275,18 @@ func _field_art(tile:int,rect:Rect2,tint:Color=Color.WHITE)->void:
     var region:=Rect2(float(tile%4)*256.0,float(floori(float(tile)/4.0))*256.0,256,256)
     map_layer.draw_texture_rect_region(FIELDCRAFT,rect,region,tint)
 
+const FIELD_OFFICERS = preload("res://assets/art/field_officers.webp")
+const FIELD_OFFICER_NAMES = ["장포","진도","등지","오반","문빙","서황","학소","조진"]
+
 func _commander_icon(name:String,side:int)->AtlasTexture:
     var icon:=AtlasTexture.new()
     var id: int=PORTRAIT_NAMES.find(name)
-    if side==0 and id>=0 and id<6:
+    var added:=FIELD_OFFICER_NAMES.find(name)
+    if added>=0:
+        icon.atlas=FIELD_OFFICERS
+        icon.region=Rect2((added%4)*256,floori(float(added)/4.0)*256,256,256)
+        icon.filter_clip=true
+    elif side==0 and id>=0 and id<6:
         icon.atlas=SHU_COMMANDERS
         icon.region=Rect2((id%3)*256,floori(float(id)/3.0)*256,256,256)
         icon.filter_clip=true

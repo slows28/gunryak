@@ -269,8 +269,8 @@ func _run() -> void:
         sim.set_long_operation(true)
         sim.set_scenario(scenario)
         sim.tactical_enabled = true
-        check(sim.command_ids(0).size()==6 and sim.command_ids(1).size()==6 and sim.units.size()==12,"six distinct leaders scenario "+str(scenario))
-        check(sim.total_troops(0)==23500 and sim.reserve_limit[0]==1,"actual initial manpower and reserve cap")
+        check(sim.command_ids(0).size()==10 and sim.command_ids(1).size()==10 and sim.units.size()==20,"six distinct leaders scenario "+str(scenario))
+        check(sim.total_troops(0)==38000 and sim.reserve_limit[0]==1,"actual initial manpower and reserve cap")
         var within_range: bool = true
         for unit in sim.units:
             within_range = within_range and float(unit["troops"])>=3000.0 and float(unit["troops"])<=5000.0
@@ -281,7 +281,7 @@ func _run() -> void:
             sim.select_unit_mission(2,"측후방 기동","봉시진 유지")
             sim.select_unit_mission(7,"구원 지원","재량 위임")
         sim.start()
-        check(sim.units.size()==12,"no hidden duplicate formations")
+        check(sim.units.size()==20,"no hidden duplicate formations")
         var issued: bool = false
         var water_ticks:int=0
         for i in range(4250):
@@ -292,7 +292,7 @@ func _run() -> void:
             if sim.turn>=WarSim.COURIER_TURN and not issued:
                 issued=sim.request_order(8,"중앙 진격","재량 위임")
         check(sim.operation_limit()==(1680.0 if scenario==3 else 1500.0),"25-minute scenario budget / 28-minute escort")
-        check(sim.finished and sim.validate_state().is_empty() and sim.units.size()<=14,"battle valid, at most seven per faction")
+        check(sim.finished and sim.validate_state().is_empty() and sim.units.size()<=22,"ten field armies and at most one reserve per faction")
         var linked: float=0.0
         var counter: float=0.0
         var flanking: float=0.0
@@ -329,7 +329,7 @@ func _run() -> void:
     var model := Campaign.new()
     model.set_six_armies(true)
     model.save_path = "user://gunryak_six_test.json"
-    check(model.state["active"].size()==6 and model.state["roster"].size()==9,"six armies and spare officers")
+    check(model.state["active"].size()==10 and model.state["roster"].size()==13,"six armies and spare officers")
     check(model.replenish(2) and int(model.state["troops"][2])==3700,"500 soldiers replenished")
     check(model.set_formation(5,"학익진"),"strategic formation selection")
     check(model.recruit(6) and model.assign(5,6),"replacement commander recruitment")
@@ -364,19 +364,19 @@ func _run() -> void:
     var game: Control = Main.instantiate()
     root.add_child(game)
     await process_frame
-    check(game.general_cards.size()==6 and game.sim.command_ids(0).size()==6,"six commander cards map to six independent units")
+    check(game.general_cards.size()==10 and game.sim.command_ids(0).size()==10,"six commander cards map to six independent units")
     game.call("_on_unit_selected",5)
     check(game.selected_id==8,"last commander selection maps to correct unit ID")
     game.call("_on_unit_selected",-1)
     game.call("_on_unit_selected",99)
     check(game.selected_id==8,"invalid selection does not corrupt commander ID")
     game.call("_open_planning")
-    check(game.plan_donor.item_count==6,"planning lists every independent commander")
+    check(game.plan_donor.item_count==10,"planning lists every independent commander")
     game.planning_dialog.hide()
     game.call("_leave_title")
     check(game.order_view.visible and not game.sim.started,"independent planning map opens before battle")
     check(int(game.order_view.partner_choice.get_item_metadata(0))==-1,"no-partner selection retains explicit sentinel")
-    check(game.order_view.action_buttons.size()==8,"eight visible map actions")
+    check(game.order_view.action_buttons.size()==9,"eight positional actions and freedom of command")
     game.order_view.call("_choose_action",3)
     check(game.order_view.action_choice.selected==3 and game.order_view.action_buttons[3].button_pressed,"action tiles update the authoritative selection")
     game.order_view.draft_dirty=false
@@ -478,6 +478,6 @@ func _run() -> void:
     game.call("_refresh_hud")
     check(game.command_outcome.text.contains("관측 행동 긴급 지원"),"an actual response state is distinguishable from delivery")
     game.call("_begin_campaign")
-    check(game.strategy_view.slot_choice.item_count==6,"six strategic UI slots")
+    check(game.strategy_view.slot_choice.item_count==10,"six strategic UI slots")
     print("GUNRYAK_SIX_PASS" if failures==0 else "GUNRYAK_SIX_FAIL "+str(failures))
     game._quit_game(0 if failures==0 else 1)

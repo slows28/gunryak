@@ -17,7 +17,7 @@ func _capture() -> void:
     game = MAIN_SCENE.instantiate()
     root.add_child(game)
     await process_frame
-    if game.general_cards.size() != 6:
+    if game.general_cards.size() != 10:
         push_error("VISUAL_CAPTURE_FAIL: six independent commanders not present")
         quit(1)
         return
@@ -35,7 +35,7 @@ func _capture() -> void:
     game.call("_begin_campaign")
     await process_frame
     await RenderingServer.frame_post_draw
-    if game.strategy_view.slot_choice.item_count != 6:
+    if game.strategy_view.slot_choice.item_count != 10:
         push_error("VISUAL_CAPTURE_FAIL: campaign slots missing")
         quit(1)
         return
@@ -106,7 +106,7 @@ func _capture() -> void:
     print("ORDER_DRAFT_ROUTE_PASS")
     game.call("_start")
     var own_id: int=game.selected_id
-    if game.fog_enabled or game.enemy_list.item_count!=6:
+    if game.fog_enabled or game.enemy_list.item_count!=10:
         push_error("VISUAL_CAPTURE_FAIL: both sides must be visible in default demo")
         quit(1)
         return
@@ -209,7 +209,13 @@ func _capture() -> void:
     if not _save_frame("battle_journal.png"):
         quit(1)
         return
-    game.journal_list.item_activated.emit(0)
+    var camera_event:=-1
+    for row in range(game.journal_list.item_count):
+        if not game.journal_list.get_item_metadata(row).has("report_id"):
+            camera_event=row
+            break
+    if camera_event<0: quit(1); return
+    game.journal_list.item_activated.emit(camera_event)
     if game.journal_dialog.visible or game.camera_zoom!=1.4 or game.sim.battle_time!=journal_time:
         push_error("VISUAL_CAPTURE_FAIL: journal did not navigate without advancing time")
         quit(1)
@@ -258,7 +264,7 @@ func _capture() -> void:
             var u: Dictionary=game.sim.find_unit(id)
             var icon: AtlasTexture=game.call("_commander_icon",str(u["name"]),side)
             var key: String=icon.atlas.resource_path+":"+str(icon.region)
-            if (side==0 and icon.atlas!=officers) or (side==1 and icon.atlas not in [portraits,painted]) or regions.has(key):
+            if (side==0 and icon.atlas not in [officers,game.FIELD_OFFICERS]) or (side==1 and icon.atlas not in [portraits,painted,game.FIELD_OFFICERS]) or regions.has(key):
                 push_error("VISUAL_CAPTURE_FAIL: commander portrait reused or missing")
                 quit(1)
                 return
@@ -268,11 +274,11 @@ func _capture() -> void:
         push_error("VISUAL_CAPTURE_FAIL: general proposal not presented")
         quit(1)
         return
-    if game.general_cards.size()!=6:
+    if game.general_cards.size()!=10:
         push_error("VISUAL_CAPTURE_FAIL: persistent six commander cards missing")
         quit(1)
         return
-    for i in range(6):
+    for i in range(10):
         var card=game.general_cards[i]
         var officer_id: int=game.sim.command_ids(0)[i]
         var expected_troops: String=game.call("_number_text",roundi(game.sim.corps_report(officer_id)["troops"]))+"명"
@@ -283,18 +289,20 @@ func _capture() -> void:
     var field := Rect2(game.MAP_TOP_LEFT,game.MAP_SIZE)
     var screen := Rect2(0,0,1280,800)
     var occupied: Array[Rect2]=[]
+    var strip: Rect2=game.corps_scroll.get_global_rect()
+    if strip.intersects(field) or not screen.encloses(strip):
+        push_error("VISUAL_CAPTURE_FAIL: army strip covers battlefield")
+        quit(1)
+        return
     for card in game.general_cards:
-        var box: Rect2=card.get_rect()
-        if box.intersects(field) or not screen.encloses(box):
-            push_error("VISUAL_CAPTURE_FAIL: commander strip obstructs the battlefield or falls outside the screen")
-            quit(1)
-            return
+        var box: Rect2=card.get_global_rect()
         for prior_box in occupied:
-            if box.intersects(prior_box):
-                push_error("VISUAL_CAPTURE_FAIL: commander cards overlap")
-                quit(1)
-                return
+            if box.intersects(prior_box): quit(1); return
         occupied.append(box)
+    game.corps_scroll.ensure_control_visible(game.general_cards.back())
+    await process_frame
+    if not game.corps_scroll.get_global_rect().has_point(game.general_cards.back().get_global_rect().get_center()): quit(1); return
+    game.corps_scroll.scroll_horizontal=0
     game.sector_cards[2].pressed.emit()
     if not game.sector_cards[2].button_pressed or game.sector_selection!=2:
         push_error("VISUAL_CAPTURE_FAIL: south front focus did not respond")
@@ -714,7 +722,7 @@ func _capture() -> void:
     game.queue_redraw()
     await process_frame
     await RenderingServer.frame_post_draw
-    if game.outcome_cards.get_child_count() != 6:
+    if game.outcome_cards.get_child_count() != 10:
         push_error("VISUAL_CAPTURE_FAIL: six commander results missing")
         quit(1)
         return
@@ -878,6 +886,13 @@ func _capture_deployment() -> bool:
     sheet.apply.pressed.emit()
     if not (game.sim.find_unit(1)["order_destination"] as Vector2).is_equal_approx(blank): return false
     if not await _deployment_frame("anchor_orders.png"): return false
+    var last: int=game.sim.command_ids(0).back()
+    sheet._select(last)
+    sheet.action_buttons[8].pressed.emit()
+    if sheet.apply.disabled or sheet.has_destination: return false
+    sheet.apply.pressed.emit()
+    if game.sim.find_unit(last)["mission"]!="자유 재량" or game.sim.find_unit(last)["has_destination"]: return false
+    if not await _deployment_frame("ten_corps_free_role.png"): return false
     sheet.post_buttons["보급기지"].pressed.emit()
     _sheet_click(sheet,depot)
     sheet.post_buttons["본진"].pressed.emit()
@@ -894,7 +909,7 @@ func _capture_deployment() -> bool:
     for tick in range(32): game.sim.step(0.1)
     game._refresh_hud()
     if not await _deployment_frame("depot_active.png"): return false
-    if not game.sim._has_supply(0,depot): return false
+    if game.sim._nearest_base(0,depot,true).is_empty(): return false
     # The same marching order creates forward sites through real movement ticks.
     game.queue_free()
     await process_frame
@@ -929,7 +944,7 @@ func _capture_deployment() -> bool:
         if sim.bases.size()>2 and sim.bases[2]["state"]=="가동":
             forward=sim.bases[2]
             break
-    if not seen_moving or forward.is_empty() or forward["side"]!=0 or forward["pos"].y<=home.y+sim.supply_radius() or sim.bases[0]["pos"]!=home: return false
+    if not seen_moving or forward.is_empty() or forward["side"]!=0 or forward["pos"].y<home.y+sim.MARCH_LEG-1 or sim.bases[0]["pos"]!=home: return false
     var center: Vector2=forward["pos"]
     game.camera_center=home.lerp(center,0.65)
     game.camera_zoom=0.83
@@ -947,12 +962,12 @@ func _capture_deployment() -> bool:
     game.camera_zoom=1.35
     game._clamp_camera()
     game._refresh_hud()
-    if sim.raid_seconds_left(forward)<=0 or not sim._has_supply(0,center): return false
+    if sim.raid_seconds_left(forward)<=0 or sim._nearest_base(0,center,true)!=forward: return false
     for b in sim.bases:
         if b["side"]==1 and b["alive"] and center.distance_to(b["pos"])<=sim.GUARD_RADIUS: return false
     if not await _deployment_frame("supply_raid.png"): return false
     for tick in range(50): sim.step(0.1)
-    if forward["alive"] or sim._has_supply(0,center) or not sim._has_supply(0,home): return false
+    if forward["alive"] or sim._nearest_base(0,center,true)==forward or sim._nearest_base(0,home,true).is_empty(): return false
     enemy["pos"]=sim.commanders[0]["pos"]
     enemy["goal"]=enemy["pos"]
     sim.step(0.1)

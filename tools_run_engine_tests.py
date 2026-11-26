@@ -25,6 +25,7 @@ TESTS = [
     ("unit_combat", ["--headless", "--path", "{project}", "--script", "res://tests/combat_upgrades.gd"], "GUNRYAK_COMBAT_PASS"),
     ("tactics_playtest", ["--headless", "--path", "{project}", "--script", "res://tests/tactics_playtest.gd"], "GUNRYAK_TACTICS_PASS"),
     ("balance_matrix", ["--headless", "--path", "{project}", "--script", "res://tests/balance_matrix.gd"], "GUNRYAK_BALANCE_PASS"),
+    ("field_operations", ["--headless", "--path", "{project}", "--script", "res://tests/field_operations.gd"], "GUNRYAK_FIELD_OPERATIONS_PASS"),
     ("post_deployment", ["--headless", "--path", "{project}", "--script", "res://tests/post_deployment.gd"], "GUNRYAK_POST_DEPLOYMENT_PASS"),
     ("field_judgment", ["--headless", "--path", "{project}", "--script", "res://tests/field_judgment.gd"], "GUNRYAK_FIELD_JUDGMENT_PASS"),
     ("linked_march", ["--headless", "--path", "{project}", "--script", "res://tests/linked_march.gd"], "GUNRYAK_LINKED_MARCH_PASS"),

@@ -26,7 +26,7 @@ func _play() -> void:
         sim.rng.seed = seed_value
         var commands := sim.command_ids(0)
         var expected_duration := 1680 if scenario == 3 else 1500
-        if commands.size() != 6 or sim.command_ids(1).size() != 6 or sim.operation_limit() != expected_duration:
+        if commands.size() != 10 or sim.command_ids(1).size() != 10 or sim.operation_limit() != expected_duration:
             push_error("Unexpected army count or operation duration")
             quit(1)
             return

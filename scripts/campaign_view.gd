@@ -80,7 +80,7 @@ func _ready() -> void:
     _button("저장",Vector2(544,697),Vector2(105,44),_save)
     _button("타이틀",Vector2(659,697),Vector2(125,44),exit_to_title)
     _label("군단 편성",Vector2(869,113),Vector2(370,35),23)
-    slot_choice = _choice(Vector2(869,151),Vector2(114,35),["제1군","제2군","제3군","제4군","제5군","제6군"])
+    slot_choice = _choice(Vector2(869,151),Vector2(114,35),["제1군","제2군","제3군","제4군","제5군","제6군","제7군","제8군","제9군","제10군"])
     slot_choice.item_selected.connect(_choose_slot)
     type_choice = _choice(Vector2(991,151),Vector2(111,35),["보병","궁병","기병"])
     type_choice.item_selected.connect(_choose_type)
@@ -149,6 +149,7 @@ func refresh() -> void:
     attack.disabled = not campaign.available(selected_node) or int(state["food"]) < (55 if campaign.six_armies else 35)
     var lines: PackedStringArray = []
     for i in range(state["active"].size()):
+        if floori(i/5.0)!=floori(selected_slot/5.0): continue
         var idx: int = int(state["active"][i])
         lines.append("%s %s · %s · %s · %d명" % ["▶" if i == selected_slot else "  ",Campaign.OFFICERS[idx]["name"],state["types"][i],state["formations"][i] if campaign.six_armies else "횡대",state["troops"][i]])
     troops.text = "\n".join(lines)

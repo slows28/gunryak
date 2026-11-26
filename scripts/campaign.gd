@@ -10,6 +10,9 @@ const NODES = [
     {"name":"보급 회랑","pos":[510,410],"links":[2,5],"scenario":3,"story":"군량 수레를 전선까지 호위한다."},
     {"name":"천수","pos":[720,295],"links":[3,4],"scenario":4,"story":"적의 핵심 진지를 돌파하는 마지막 작전."}
 ]
+const EXTRA_SLOTS = [9,10,11,12]
+const NEW_CORPS = {"active":EXTRA_SLOTS,"troops":[3900,3700,3400,3500],
+    "formations":["방진","어린진","안행진","봉시진"],"types":["보병","보병","궁병","기병"]}
 const OFFICERS = [
     {"name":"왕평","personality":"신중","stats":[92,76,72,88,92],"specialty":"방진"},
     {"name":"마속","personality":"균형","stats":[52,47,89,55,58],"specialty":"정찰"},
@@ -19,7 +22,11 @@ const OFFICERS = [
     {"name":"장익","personality":"신중","stats":[82,72,73,78,90],"specialty":"방진"},
     {"name":"요화","personality":"신중","stats":[76,75,69,78,90],"specialty":"방진"},
     {"name":"마대","personality":"공격","stats":[77,83,65,77,85],"specialty":"돌격"},
-    {"name":"오의","personality":"균형","stats":[79,73,74,80,87],"specialty":"정찰"}
+    {"name":"오의","personality":"균형","stats":[79,73,74,80,87],"specialty":"정찰"},
+    {"name":"장포","personality":"공격","stats":[79,88,63,77,85],"specialty":"방진"},
+    {"name":"진도","personality":"신중","stats":[84,82,74,82,88],"specialty":"방진"},
+    {"name":"등지","personality":"균형","stats":[77,66,85,83,89],"specialty":"정찰"},
+    {"name":"오반","personality":"공격","stats":[78,83,66,77,82],"specialty":"돌격"}
 ]
 var state: Dictionary = {}
 var six_armies: bool = false
@@ -30,14 +37,15 @@ func _init() -> void:
 func reset() -> void:
     var people: Array = []
     for i in range(OFFICERS.size() if six_armies else 6):
-        people.append({"recruited":i<(6 if six_armies else 3),"hp":100,"dead":false,"xp":0})
+        people.append({"recruited":(i<6 or i in EXTRA_SLOTS) if six_armies else i<3,"hp":100,"dead":false,"xp":0})
     state = {"version":1,"turn":1,"gold":220,"food":260,"pool":180,"position":0,"owned":[0],"garrison":[0,100,108,115,102,125],"roster":people,"active":[0,1,2],"troops":[145,108,95],"types":["보병","궁병","기병"],"history":[],"victories":0,"defeats":0,"complete":false,"failed":false,"pending":-1,"difficulty":1}
     if six_armies:
-        state["version"] = 3
+        state["version"] = 4
         state["active"] = [0,1,2,3,4,5]
         state["troops"] = [4500,3500,3200,4000,3800,4500]
         state["formations"] = ["방진","안행진","봉시진","학익진","봉시진","방진"]
         state["types"] = ["보병","궁병","기병","궁병","기병","보병"]
+        for key in NEW_CORPS: state[key].append_array(NEW_CORPS[key])
         state["gold"] = 340
         state["food"] = 340
         state["pool"] = 10000
@@ -242,8 +250,16 @@ func load_save() -> bool:
     for key in state:
         if not data.has(key):
             return false
-    var slots: int = 6 if six_armies else 3
-    if int(data["version"]) != (3 if six_armies else 1) or data["roster"].size() != (9 if six_armies else 6) or data["active"].size() != slots or data["troops"].size() != slots or data["types"].size() != slots or data["garrison"].size() != 6 or int(data["pending"]) != -1:
+    if six_armies and data["version"]==3:
+        if not data["roster"] is Array or data["roster"].size()!=9: return false
+        for key in ["active","troops","types","formations"]:
+            if not data[key] is Array or data[key].size()!=6: return false
+        for key in NEW_CORPS: data[key].append_array(NEW_CORPS[key])
+        for id in EXTRA_SLOTS:
+            data["roster"].append({"recruited":true,"hp":100,"dead":false,"xp":0})
+        data["version"]=4
+    var slots: int = 10 if six_armies else 3
+    if int(data["version"]) != (4 if six_armies else 1) or data["roster"].size() != (OFFICERS.size() if six_armies else 6) or data["active"].size() != slots or data["troops"].size() != slots or data["types"].size() != slots or data["garrison"].size() != 6 or int(data["pending"]) != -1:
         return false
     for key in ["gold","food","pool","turn","victories","defeats","position","difficulty"]:
         if not (data[key] is int or data[key] is float):
@@ -269,7 +285,7 @@ func load_save() -> bool:
         if int(value) < 0 or int(value) > (5000 if six_armies else 220):
             return false
     if six_armies:
-        if not data["formations"] is Array or data["formations"].size()!=6: return false
+        if not data["formations"] is Array or data["formations"].size()!=slots: return false
         for shape in data["formations"]:
             if not shape in ["횡대","종대","방진","어린진","학익진","봉시진","안행진"]: return false
     data["pending"] = -1
