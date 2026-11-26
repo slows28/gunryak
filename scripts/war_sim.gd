@@ -535,7 +535,7 @@ func _nearest_base(side: int, point: Vector2, operational: bool=false) -> Dictio
 func _buildable_ground(point: Vector2) -> bool:
     if terrain_at(point) in ["하천","교량","습지"]: return false
     for structure in structures:
-        if structure["hp"]>0 and (structure["rect"] as Rect2).has_point(point): return false
+        if structure["hp"]>0 and (structure["rect"] as Rect2).grow(8.0).has_point(point): return false
     return true
 
 func _extend_supply(side: int) -> void:
@@ -673,7 +673,7 @@ func _can_see_base(unit: Dictionary, target_base: Dictionary) -> bool:
 func _decide(unit: Dictionary) -> void:
     if command_confused(unit["side"]) and not unit["routed"]:
         unit["action"]="지휘 혼란"
-        unit["reason"]="책사 피포 · 대열을 추스르며 현 위치에서 방어"
+        unit["reason"]="책사 생포 · 대열을 추스르며 현 위치에서 방어"
         unit["goal"]=unit["pos"]
         return
     var nearest: Dictionary = _nearest_visible_enemy(unit)
@@ -808,6 +808,7 @@ func _decide(unit: Dictionary) -> void:
     # then abandoned it at the very next ~2 s AI tick due to its cooldown.
     # The destination is the last OBSERVED base position, not omniscient tracking.
     var enemy_base:=_nearest_base(1-side,pos)
+    var enemy_crew: Dictionary=supply_crews[1-side]
     var raid_index: int=unit.get("raid_base",-1)
     if unit["raid_active"] and raid_index>=0 and raid_index<bases.size() and battle_time<unit["raid_until"]:
         enemy_base=bases[raid_index]
@@ -818,6 +819,10 @@ func _decide(unit: Dictionary) -> void:
         action = "기지 습격"
         reason = "보급기지 습격 지속: 마지막 관측 지점을 추적"
         goal = unit["raid_target"]
+    elif raid_allowed and unit["type"]=="기병" and enemy_distance>135.0 and enemy_crew["state"] in ["이동","회피"] and pos.distance_to(enemy_crew["pos"])<140.0 and not _in_forest(enemy_crew["pos"]) and (not long_operation or not _river_separates(pos,enemy_crew["pos"])):
+        action="보급부대 추격"
+        reason="노출된 적 수레를 발견해 추격"
+        goal=enemy_crew["pos"]
     elif raid_allowed and _can_see_base(unit, enemy_base) and battle_time - float(unit["last_raid"]) > 12.0:
         unit["raid_active"] = true
         unit["raid_base"]=bases.find(enemy_base)
@@ -1685,8 +1690,8 @@ func command_confused(side: int) -> bool:
 func command_status(side: int) -> String:
     if command_confused(side):
         var seconds:=ceili((float(commanders[side]["recover_at"])-battle_time)*operation_scale()-0.000001)
-        return "책사 피포 · 지휘 혼란 %d초" % seconds
-    return "책사 피포 · 장수 자율 지휘" if commander_captured(side) else ""
+        return "책사 생포 · 지휘 혼란 %d초" % seconds
+    return "책사 생포 · 장수 자율 지휘" if commander_captured(side) else ""
 
 func _update_command_recovery() -> void:
     for c in commanders:
@@ -1703,12 +1708,12 @@ func _check_command_capture() -> void:
         c["captured"]=true
         c["goal"]=c["pos"]
         c["recover_at"]=battle_time+turn_duration()
-        _log(_camp_side(side)+" 책사 피포 · 한 턴 동안 지휘 혼란")
+        _log(_camp_side(side)+" 책사 생포 · 한 턴 동안 지휘 혼란")
         for i in range(couriers.size()-1,-1,-1):
             var letter: Dictionary=couriers[i]
             if letter["side"]!=side: continue
-            _resolve_map_dispatch(letter,"책사 피포")
-            _response_delivery(letter,"책사 피포")
+            _resolve_map_dispatch(letter,"책사 생포")
+            _response_delivery(letter,"책사 생포")
             couriers.remove_at(i)
         for u in units:
             if u["side"]!=side: continue
@@ -3401,7 +3406,7 @@ const MAP_MISSIONS = ["지정 위치 이동","공격","지역 사수","전열 �
 
 func map_order_issue(id: int, mission: String, destination: Vector2, partner: int = -1) -> String:
     if finished: return "전투가 종료되었습니다."
-    if commander_captured(0): return "책사 피포 · 장수들이 자율 지휘합니다."
+    if commander_captured(0): return "책사 생포 · 장수들이 자율 지휘합니다."
     if mission not in MAP_MISSIONS: return "행동을 선택하십시오."
     if not Rect2(Vector2.ZERO,field_size).has_point(destination): return "전장 안의 목적지를 선택하십시오."
     if long_operation and in_open_water(destination): return "하천에는 지시할 수 없습니다. 교량이나 강둑을 선택하십시오."

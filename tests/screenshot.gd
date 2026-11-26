@@ -854,11 +854,11 @@ func _capture_deployment() -> bool:
     game.camera_center=marcher["pos"]
     game._clamp_camera()
     game._refresh_hud()
-    if sim.finished or not sim.command_confused(0) or not game.status_label.text.contains("혼란"): return false
+    if sim.finished or not sim.command_confused(0) or not game.phase_label.text.contains("혼란"): return false
     if not await _deployment_frame("captured_command.png"): return false
     for tick in range(150): sim.step(0.1)
     game._refresh_hud()
-    if sim.command_confused(0) or not game.status_label.text.contains("자율 지휘") or marcher["action"]=="지휘 혼란": return false
+    if sim.command_confused(0) or not game.phase_label.text.contains("자율 지휘") or marcher["action"]=="지휘 혼란": return false
     if not await _deployment_frame("independent_command.png"): return false
     print("SUPPLY_CREW_COMMAND_VISUAL_PASS")
     print("SUPPLY_RAID_VISUAL_PASS")

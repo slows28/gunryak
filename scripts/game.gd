@@ -157,6 +157,7 @@ var combat_audio_cursor: int=0
 var sound_enabled: bool = true
 var music_player: AudioStreamPlayer
 var tutorial_dialog: AcceptDialog
+var retreat_button: Button
 var retreat_dialog: ConfirmationDialog
 var situation_btn: Button
 var situation_dialog: AcceptDialog
@@ -388,7 +389,7 @@ func _build_interface() -> void:
     _button("브리핑",Vector2(970,609),Vector2(70,34),_open_briefing)
     _button("도움말",Vector2(1048,609),Vector2(70,34),_open_demo_help)
     _button("초기화",Vector2(970,651),Vector2(70,34),_reset)
-    _button("철수",Vector2(1048,651),Vector2(70,34),_ask_retreat)
+    retreat_button=_button("철수",Vector2(1048,651),Vector2(70,34),_ask_retreat)
     contact_button=_button("최근 교전",Vector2(316,632),Vector2(94,32),_focus_combat)
     contact_button.tooltip_text="가장 최근에 관측한 교전으로 이동 · 다시 누르면 다른 교전 · C"
     _label("아군 군단",Vector2(17,674),Vector2(102,23),16,COL_GOLD)
@@ -901,7 +902,7 @@ func _refresh_hud() -> void:
     status_label.text="전령    이동 %d    도착 %d    차단 %d" % [sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
     var captured: bool=sim.commander_captured(0)
     if captured:
-        status_label.text=sim.command_status(0)
+        status_label.text="전령 파견 중단   ·   보급부대 "+str(sim.supply_crews[0]["state"])
         if sim.started and not sim.finished: phase_label.text=sim.command_status(0)
     var own_guards: int = sim.commander_guard_count(0)
     status_label.tooltip_text = "책사 보호 반경 내 전투부대 %d개" % own_guards
@@ -939,6 +940,7 @@ func _refresh_hud() -> void:
     pause_btn.visible=sim.started
     live_order_button.disabled=sim.finished
     live_order_button.text="작전 지도 열기" if not sim.started else "작전 지도 · 전령 지시"
+    retreat_button.disabled=captured or sim.finished or not sim.started
     if captured: live_order_button.text="작전 지도 · 전황 보기"
     _refresh_commander_desk()
     if battle_feed.visible: _refresh_battle_feed()
@@ -963,7 +965,8 @@ func _refresh_hud() -> void:
         for base in sim.bases:
             if base["side"]==0 and base["raid_rate"]>0 and (urgent.is_empty() or sim.raid_seconds_left(base)<sim.raid_seconds_left(urgent)): urgent=base
         if not urgent.is_empty(): notice_label.text="아군 "+sim.supply_caption(urgent)
-        if captured: notice_label.text=sim.command_status(0)
+        if captured and urgent.is_empty():
+            notice_label.text="대열을 추스르는 동안 현 위치에서 방어합니다." if sim.command_confused(0) else "각 장수가 현장 판단으로 전투를 계속합니다."
         elif sim.command_confused(1): notice_label.text="적 "+sim.command_status(1)
     notice_label.tooltip_text=notice_label.text
 

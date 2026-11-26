@@ -53,7 +53,11 @@ func _initialize() -> void:
     check(archer["rations"]>40 and archer["ammo"]>40 and first["rations"]==archer["rations"],"all armies inside one radius replenish simultaneously")
     _check_network()
     _check_crew_losses()
+    _check_interrupted_work()
+    _check_cavalry_intercept()
     _check_capture()
+    _check_independent_victory()
+    _check_crew_crossing()
     sim.reset()
     check(sim.bases[0]["state"]=="가동" and not sim.commanders[0].has("home"),"new battle clears manually placed posts")
     if failures==0: print("GUNRYAK_POST_DEPLOYMENT_PASS")
@@ -199,3 +203,71 @@ func _check_capture() -> void:
     check(s.finished and s.winning_side==0 and "방어 성공" in s.result,"army whose strategist was captured wins by its scenario objective")
     s.reset()
     check(not s.commander_captured(0) and not s.command_confused(0),"new battle clears capture and confusion")
+
+func _check_independent_victory() -> void:
+    var s:=WarSim.new()
+    s.reserve_limit.assign([0,0])
+    var defender:=s.find_unit(0)
+    var attacker:=s.find_unit(3)
+    for unit in s.units:
+        if unit["id"] not in [0,3]: unit["troops"]=0.0
+    defender["pos"]=Vector2(164,495)
+    attacker["pos"]=s.commanders[0]["pos"]
+    attacker["troops"]=55.0
+    s.start()
+    for tick in range(1800):
+        s.step(0.1)
+        if s.finished: break
+    check(s.commander_captured(0) and defender["damage_dealt"]>0 and s.winning_side==0 and "전멸 또는 패주" in s.result,"surviving general fights and wins without any further orders")
+
+func _check_crew_crossing() -> void:
+    var s:=WarSim.new()
+    s.set_long_operation(true)
+    s.start()
+    var crew: Dictionary=s.supply_crews[0]
+    var from:=Vector2(s.river_x(510)-190,510)
+    var to:=Vector2(s.river_x(540)+280,540)
+    crew["pos"]=from
+    var marcher:=s.find_unit(0)
+    marcher["pos"]=to
+    marcher["supply_mark"]=from
+    s._extend_supply(0)
+    var entered_water:=false
+    for tick in range(1400):
+        s._update_supply_crew(crew,0.1)
+        if s.in_open_water(crew["pos"]): entered_water=true
+        if crew["state"]=="구축": break
+    check(not entered_water and crew["bridge_crossings"]==1 and crew["state"]=="구축" and s.bases.back()["pos"]==to,"crew reaches the far bank via a real bridge before building")
+
+func _check_interrupted_work() -> void:
+    var s:=WarSim.new()
+    s.set_long_operation(true)
+    var home:=Vector2(400,520)
+    s.place_post("보급기지",home)
+    s.start()
+    for u in s.units:
+        if u["side"]==0: u["pos"]=home+Vector2(0,310)
+    var enemy:=s.find_unit(3)
+    var crew: Dictionary=s.supply_crews[0]
+    s._supply_logic(0.5)
+    var remaining: float=s.bases[0]["build_timer"]
+    enemy["pos"]=home
+    s._supply_logic(0.1)
+    check(crew["state"]=="회피" and s.bases[0]["build_timer"]==remaining,"work stops immediately when an unescorted crew flees")
+    enemy["pos"]=s.bases[1]["pos"]
+    for tick in range(250):
+        s.battle_time+=0.1
+        s._supply_logic(0.1)
+        if s.bases[0]["state"]=="가동": break
+    check(s.bases[0]["state"]=="가동" and home.is_equal_approx(crew["pos"]),"returning builder completes the interrupted site")
+
+func _check_cavalry_intercept() -> void:
+    var s:=WarSim.new()
+    var crew: Dictionary=s.supply_crews[1]
+    var rider:=s.find_unit(2)
+    rider["pos"]=Vector2(220,120)
+    crew["pos"]=Vector2(317,120)
+    crew["goal"]=Vector2(340,120)
+    crew["state"]="이동"
+    s._decide(rider)
+    check(rider["action"]=="보급부대 추격" and rider["goal"]==crew["pos"],"cavalry spots an exposed moving crew and pursues its actual position")
