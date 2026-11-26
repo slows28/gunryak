@@ -755,7 +755,7 @@ func _capture() -> void:
         quit(1)
         return
     print("GUNRYAK_VISUAL_CAPTURE_PASSED")
-    quit(0)
+    game._quit_game()
 
 func _sheet_click(sheet: Control, point: Vector2) -> void:
     for pressed in [true,false]:

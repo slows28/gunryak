@@ -93,4 +93,4 @@ func _run() -> void:
     check(await _sample("restored",0.8)>0.00005,"unmuting restores the background music")
     AudioServer.remove_bus_effect(0,AudioServer.get_bus_effect_count(0)-1)
     if failures==0: print("GUNRYAK_AUDIO_PASS")
-    quit(1 if failures else 0)
+    game._quit_game(1 if failures else 0)

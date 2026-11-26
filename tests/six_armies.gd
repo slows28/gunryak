@@ -459,7 +459,5 @@ func _run() -> void:
     check(game.command_outcome.text.contains("관측 행동 긴급 지원"),"an actual response state is distinguishable from delivery")
     game.call("_begin_campaign")
     check(game.strategy_view.slot_choice.item_count==6,"six strategic UI slots")
-    game.queue_free()
-    await process_frame
     print("GUNRYAK_SIX_PASS" if failures==0 else "GUNRYAK_SIX_FAIL "+str(failures))
-    quit(0 if failures==0 else 1)
+    game._quit_game(0 if failures==0 else 1)

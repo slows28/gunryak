@@ -11,6 +11,7 @@ func _initialize() -> void:
     root.call_deferred("add_child", instance)
 
 func _process(_dt: float) -> bool:
+    if instance.shutting_down: return false
     frames += 1
     if frames == 4:
         if instance == null or not instance.is_inside_tree():
@@ -262,7 +263,7 @@ func _process(_dt: float) -> bool:
                     quit(1)
                 else:
                     print("GUNRYAK_SCENE_PASS: battle completed in %d simulated ticks: %s" % [ticks, result])
-                    quit(0)
+                    instance._quit_game()
                 return false
             if ticks >= LIMIT_TICKS:
                 push_error("GUNRYAK_SCENE_FAIL: battle did not finish before limit")

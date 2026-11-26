@@ -156,6 +156,7 @@ var combat_players: Array[AudioStreamPlayer] = []
 var combat_sounds: Dictionary = {}
 var combat_audio_cursor: int=0
 var sound_enabled: bool = true
+var shutting_down:=false
 var music_player: AudioStreamPlayer
 var tutorial_dialog: AcceptDialog
 var retreat_button: Button
@@ -219,6 +220,7 @@ class RenderLayer extends Control:
             painter.call(self)
 
 func _ready() -> void:
+    get_tree().auto_accept_quit=false
     sim.tactical_enabled = true
     sim.set_long_operation(true)
     campaign.set_six_armies(true)
@@ -3214,8 +3216,24 @@ func _title_brief() -> void:
     _leave_title()
     _open_briefing()
 
-func _quit_game() -> void:
-    get_tree().quit()
+func _notification(what: int) -> void:
+    if what==NOTIFICATION_WM_CLOSE_REQUEST and is_inside_tree(): _quit_game()
+
+func _quit_game(exit_code: int=0) -> void:
+    if shutting_down: return
+    shutting_down=true
+    set_process(false)
+    sound_enabled=false
+    var players: Array[AudioStreamPlayer]=combat_players.duplicate()
+    players.append(sound_player)
+    players.append(music_player)
+    for player in players:
+        if is_instance_valid(player):
+            player.stop()
+            player.stream=null
+    # The mixer releases the last playback on a later audio callback.
+    var tree:=get_tree()
+    tree.create_timer(0.25,true,false,true).timeout.connect(tree.quit.bind(exit_code))
 
 func _build_outcome_dialog() -> void:
     outcome_dialog = Control.new()
