@@ -32,6 +32,7 @@ func open_for(model) -> void:
     for caption in ["군단","군량 / 화살","위치","배급 순서"]:
         var header:=Label.new()
         header.text=caption
+        header.size_flags_horizontal=Control.SIZE_EXPAND_FILL
         header.add_theme_color_override("font_color",Color("#b9cbbc"))
         grid.add_child(header)
     for id in sim.command_ids(0):

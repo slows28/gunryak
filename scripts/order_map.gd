@@ -88,10 +88,11 @@ func configure(owner_game: Control,used_font: Font) -> void:
     for post: String in ["보급기지","책사"]:
         var button:=_button("기지 구축" if post=="보급기지" else "책사 배치",Vector2(1078 if post=="보급기지" else 1169,445),Vector2(86,33),_pick_post.bind(post))
         button.toggle_mode=true
+        if post=="책사": button.tooltip_text="책사의 출발 위치와 본진 복귀 지점 지정"
         button.add_theme_font_size_override("font_size",14)
         post_buttons[post]=button
     map_hint=_label("지도에서 목적지 지정\n군단 말을 끌어도 됩니다.",Vector2(1082,480),Vector2(170,33),12,Color("#cdd8d9"))
-    _label("행군로",Vector2(1082,519),Vector2(164,24),16,GOLD)
+    _label("행군로",Vector2(1082,525),Vector2(164,24),16,GOLD)
     route_summary=_label("",Vector2(1082,548),Vector2(171,60),13,Color("#f4e6c9"))
     route_summary.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     survey=_choice(Vector2(1080,613),Vector2(173,31),[])
@@ -197,6 +198,7 @@ func open(mid_battle:bool=false)->void:
         post_buttons[post].set_pressed_no_signal(false)
     post_buttons["보급기지"].text="배급 명부" if mid_battle else "기지 구축"
     post_buttons["보급기지"].toggle_mode=not mid_battle
+    post_buttons["보급기지"].tooltip_text="창고와 군단별 배급 순서 확인" if mid_battle else "직접 구축하면 기지 위치가 고정됩니다. 기본 위치를 그대로 사용할 수도 있습니다."
     post_buttons["책사"].visible=not mid_battle
     roster.clear()
     for id in sim.command_ids(0):
@@ -205,7 +207,7 @@ func open(mid_battle:bool=false)->void:
         roster.add_item("%s  %s명"%[u["name"],_troop_text(int(u["troops"]))],portrait)
         roster.set_item_tooltip(roster.item_count-1,str(u["type"])+" · "+str(u["mission"]))
         roster.set_item_metadata(roster.item_count-1,id)
-    feedback.text="부대 말을 끌거나 지도에 목적지를 찍고 행동 및 연계 대상을 지정하십시오."
+    feedback.text="군단 지시는 지도에 목적지를 찍어 작성하세요. 기지와 책사의 출발 위치는 오른쪽에서 지정합니다."
     if mid_battle: feedback.text="전투 중 명령은 6턴부터 전령으로 전달됩니다. 확정 전까지 기존 작전 유지."
     if not mid_battle: drafts.clear()
     survey_sites=sim.training_sites()
@@ -342,7 +344,11 @@ func _pick_post(post: String) -> void:
     if in_battle:
         if post=="보급기지": game.open_supply_ledger()
         return
-    _set_post_mode("" if post==post_mode else post)
+    if post==post_mode:
+        _set_post_mode("")
+        feedback.text="위치 지정을 취소했습니다."
+    else:
+        _set_post_mode(post)
 
 func _set_post_mode(mode: String) -> void:
     post_mode=mode
@@ -523,7 +529,7 @@ func _draw()->void:
     draw_line(Vector2(35,220),Vector2(311,220),Color("#c9b99d"))
     draw_line(Vector2(35,622),Vector2(311,622),Color("#c9b99d"))
     draw_style_box(lacquer,Rect2(1068,76,196,628))
-    draw_line(Vector2(1081,515),Vector2(1252,515),Color("#8d7953"))
+    draw_line(Vector2(1081,521),Vector2(1252,521),Color("#8d7953"))
     draw_style_box(lacquer,Rect2(6,716,1268,78))
     if not march_diagram.is_empty(): _draw_march_diagram()
     if sim==null: return
