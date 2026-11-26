@@ -830,3 +830,16 @@ Godot 4.7.2에서 저장소 엔진 러너의 검사 목록과 통과 표식을 �
 - `xvfb-run -a -s '-screen 0 1280x800x24' godot --audio-driver Dummy --rendering-driver opengl3 --path . --script res://tests/screenshot.gd`로 실제 화면 45장을 캡처했다. 일반 게임 창에서도 타이틀 → 지형 시험장 → 마속 군단 → 왕평과 연계 → 지시 확정 → 출전을 마우스와 키보드로 확인했다. [군령서](test_results/linked-march/release/player/confirmed.png) · [전투 화면](test_results/linked-march/release/player/linked_battle.png) · [그래픽 검사 로그](test_results/linked-march/release/visual.log)
 - 북남 요충지 04:00을 Linux Mesa 소프트웨어 렌더링에서 각각 단독 실행했다. 확대별 20프레임 예열 후 96프레임을 측정했다. 0.85배 중앙값 29.46→29.99ms, 90백분위 34.14→33.94ms였다. 1.8배는 각각 29.16→29.71ms, 31.22→32.03ms였고 첫 화면까지 12.62→13.16초였다. Windows 실창 및 하드웨어 GPU는 검증하지 않았다. 일부 Godot 검사 종료 시 기존 ObjectDB 경고가 남는다. 혼잡한 지형에서 주변 군단이 대열을 밀면 집결이 길어질 수 있어 후속 플레이 비교 대상으로 남긴다. [측정 로그](test_results/linked-march/release/render.log)
 - 현재 개발 경로는 `/workspace/gunryak-combat-upgrades`, 복원 번들은 `/workspace/gunryak-runtime/linked-march-development.bundle`이다. 클라우드 시작 지침 초안에 새 브랜치와 단독 회귀 명령을 저장했다.
+
+## 2026-11-26 · 피아 식별과 장수의 아군 보호 판단
+
+- 기준은 `430600e`, 실제 게임과 테스트를 검증한 코드는 `b62eff7`이다. 작업 브랜치 `work/demo-field-intent`는 원격 `ai/demo-visual-overhaul`의 `0871d67`과 기존 연계 행군 작업을 포함한다.
+- 보병·궁병·기병의 갑옷과 등판을 청강색·적갈색으로 구분했다. 줌을 당겼을 때 병사 아래에 실제 대형의 윤곽을 그린다. 경계는 전열이 눌리면 함께 변형되고 수풀에서 발견되지 않은 적에게는 나타나지 않는다.
+- 작전 지도에는 ‘함께 이동할 군단’과 ‘보호할 군단’이 따로 표시된다. 전장에서는 선택 군단의 연계 행군에 청색 이중 갈매기표, 보호받는 아군에 청록색 방패, 공격 목표에 주황색 화살촉이 붙는다. 하단 장수 카드와 지휘 본부에서 해당 행동과 판단 이유를 확인할 수 있다.
+- 양측 장수는 관측한 적과의 거리, 아군의 병종·사기·응집·최근 피격, 병력 우세와 적 대형의 상태를 비교한다. 공격 명령 중인 왕평이 마속을 보호하러 이동해 실제 차폐 조건을 만족하는 것, 같은 명령에서 안전해진 마속을 두고 무너진 적을 계속 공격해 피해를 주는 것을 확인했다. 궁병은 사거리와 잔탄이 허용하면 제자리에서 엄호한다. 접근하는 근접 부대에 대한 보호 로직이며, 이번 범위에 장거리 사격에 대응해 별도로 차폐하는 판단은 포함하지 않았다.
+- `git archive b62eff7`로 꺼낸 소스에서 `python3 tools_check_structure.py`, `python3 -u tools_run_engine_tests.py --godot /usr/local/bin/godot --project . --timeout 450`를 실행했다. 같은 소스에서 `xvfb-run -a -s '-screen 0 1280x800x24' godot --audio-driver Dummy --rendering-driver opengl3 --path . --script res://tests/screenshot.gd`로 전장을 렌더링했다. 초기 검사에서 대형 좌표를 조회하기만 해도 그리기 함수가 호출되는 오류를 발견해, 좌표 계산과 지도 그리기를 분리한 후 재검증했다.
+- 실제 창에서 마우스로 지형 시험장을 열고 마속을 골라 ‘아군 보호’, 대상 ‘왕평 군단’, 목적지를 확정하고 출전했다. [같은 시각 교전 전후 비교 및 행군·보호·공격 장면](docs/field-intent-comparison.jpg). 1280×800 원본은 `test_results/command-intent/after/`, 조작 기록은 `test_results/command-intent/release/final-player/`에 있다.
+- Godot 4.7.2의 엔진 검사 12개 전부 통과. 시뮬레이션 282건과 새 현장 판단 검사 14건이 포함된다. 별도 검사에서 엄호 사격의 탄약 소모와 강 건너 근접 위협 제외도 확인했다. 그래픽 검사가 저장한 47장은 모두 1280×800이고 최종 실행에 Godot 오류는 없었다. 종료 시 ObjectDB 객체 2개 경고는 변경 전 그래픽 검사에서도 관측됐다.
+- 다음 검토 대상은 여러 장수가 한 아군을 동시에 돕는 상황이다. 현재 각각 판단하므로, 실제 플레이에서 중복 지원이 잦으면 보호에 이미 도착한 군단을 고려하도록 조정할 수 있다.
+- 복원 번들은 `/workspace/gunryak-runtime/field-intent-development.bundle`이다. 원격 개발 브랜치로 만든 별도 복제본에서 번들 복원을 검증하고, 클라우드 시작 지침 초안에 브랜치와 새 검사 경로를 저장했다.
+- Mesa llvmpipe에서 작전 시각 04:00을 고정하고 줌별 96프레임을 측정했다. 프레임 시간 중앙값은 0.85배에서 28.18 → 30.49ms, 1.80배에서 29.05 → 27.71ms였다. 첫 준비 완료는 13.48 → 12.83초였다.
