@@ -1,5 +1,6 @@
 extends RefCounted
 # Demo campaign: all strategic effects are carried into actual battle setup.
+const GeneralMind = preload("res://scripts/general_mind.gd")
 const SAVE_PATH = "user://gunryak_demo_v1.json"
 const NODES = [
     {"name":"한중","pos":[100,300],"links":[1,2],"scenario":0,"story":"촉군의 출발지. 보급을 정비한다."},
@@ -170,6 +171,7 @@ func prepare(target: int, sim) -> bool:
             var key: String = ["leadership","martial","intelligence","judgment","loyalty"][j]
             u[key] = minf(100.0,float(officer["stats"][j])+level)
         u["specialty"] = officer["specialty"]
+        u["mind"] = GeneralMind.initial(u)
         u["rations"] = clampf(70.0+float(state["food"])*0.12,70.0,100.0)
     var scale: float = float(state["garrison"][target])/100.0 * [0.82,1.0,1.18][int(state["difficulty"])]
     for unit in sim.units:

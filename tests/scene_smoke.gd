@@ -133,6 +133,13 @@ func _process(_dt: float) -> bool:
             push_error("GUNRYAK_SCENE_FAIL: visual contact displacement incorrect")
             quit(1)
             return false
+        var front: Dictionary={"axis":Vector2.UP,"edge":Vector2(0,-18),"width":40.0,"reach":0.0,"strength":1.0,"pressure":0.5,"phase":0.0}
+        var dent: Vector2=view_model.contact_displacement(Vector2(0,-18),front)
+        var next_rank: Vector2=view_model.contact_displacement(Vector2(0,-2),front)
+        if dent.y<5.0 or next_rank.y>=dent.y or view_model.contact_displacement(Vector2(0,25),front)!=Vector2.ZERO or view_model.contact_displacement(Vector2(50,-18),front)!=Vector2.ZERO:
+            push_error("GUNRYAK_SCENE_FAIL: impact must compress the local ranks along the contact normal")
+            quit(1)
+            return false
         var old_speed: float=instance.game_speed
         var old_time: float=model.battle_time
         instance.call("_advance_highlight")

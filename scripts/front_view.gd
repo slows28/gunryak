@@ -92,6 +92,24 @@ static func advance_toward_contact(point: Vector2,target: Vector2,phase: float,k
     return point.move_toward(target,travel)
 
 
+# Fold the engaged files into a ragged contact line. Ranks behind the
+# contact feed forward, the leading rank buckles, and the shoulders spread.
+static func contact_displacement(local: Vector2, front: Dictionary) -> Vector2:
+    var axis: Vector2=front["axis"]
+    var tangent: Vector2=axis.orthogonal()
+    var relative: Vector2=local-front["edge"]
+    var depth: float=relative.dot(axis)
+    var across: float=relative.dot(tangent)
+    var width: float=front["width"]
+    var weight: float=smoothstep(-37.0,-6.0,depth)*(1.0-smoothstep(width*0.36,width,absf(across)))
+    if weight<=0.0: return Vector2.ZERO
+    var fold: float=sin(across*0.15+float(front["phase"]))
+    var indent: float=3.5+float(front["pressure"])*13.0
+    var axial: float=clampf(-depth*0.70+float(front["reach"])-indent+fold*6.0,-21.0,20.0)
+    var spill: float=(clampf(across/12.0,-1.0,1.0)*7.5+fold*3.5)
+    return (axis*axial+tangent*spill)*weight*float(front["strength"])
+
+
 # Only observed milestones are eligible for a player's next-highlight command.
 # This samples state, never changes it or skips fixed simulation steps.
 static func milestones(sim,limited: bool) -> Dictionary:

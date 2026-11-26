@@ -66,8 +66,10 @@ var command_outcome: Label
 var commander_observation: Label
 var combat_exchange: Label
 var combat_focus_pair:=Vector2i(-1,-1)
-var combat_anchor_step: int=-1
-var combat_anchors: Dictionary={}
+# Each ordered pair retains its own observed contact side during recovery.
+var contact_fronts: Dictionary={}
+var fronts_by_unit: Dictionary={}
+var deformed_slot_cache: Dictionary={}
 var enemy_intel: Label
 var mission_choice: OptionButton
 var policy_choice: OptionButton
@@ -812,6 +814,7 @@ func _process(delta: float) -> void:
         while step_buffer >= 0.1 and ticks < 10:
             for u in sim.units: previous_centers[int(u["id"])]=u["pos"]
             sim.step(0.1)
+            _update_contact_fronts(0.1)
             step_buffer -= 0.1
             ticks += 1
             if highlight_active: _poll_highlight()
@@ -1123,8 +1126,9 @@ func _collect_journal() -> void:
 
 func _clear_journal() -> void:
     combat_focus_pair=Vector2i(-1,-1)
-    combat_anchors.clear()
-    combat_anchor_step=-1
+    contact_fronts.clear()
+    fronts_by_unit.clear()
+    deformed_slot_cache.clear()
     journal_events.clear()
     journal_keys.clear()
     if is_instance_valid(journal_button): journal_button.text="상황 기록"
@@ -1711,11 +1715,78 @@ func _draw_depth_scene(soldiers:Array[Dictionary],trees:Array[Dictionary],visibl
                 item["target"],float(item["bow_age"]),bool(item["shadow"]))
             si+=1
 
+func _update_contact_fronts(dt: float) -> void:
+    var active: Dictionary={}
+    for hit in sim.combat_contacts.values():
+        if hit["kind"]=="화살": continue
+        var a: int=mini(hit["attacker_id"],hit["defender_id"])
+        var b: int=maxi(hit["attacker_id"],hit["defender_id"])
+        var key:=Vector2i(a,b)
+        if active.has(key): continue
+        var left: Dictionary=sim.find_unit(a)
+        var right: Dictionary=sim.find_unit(b)
+        if not _visible_unit(left) or not _visible_unit(right): continue
+        var axis: Vector2=(right["pos"] as Vector2)-(left["pos"] as Vector2)
+        if axis.length_squared()<0.01: axis=left["facing"]
+        axis=axis.normalized()
+        var anchors: Array[Vector2]=sim.visual_contact_pair(left,right)
+        var shift: Dictionary=sim.front_shifts.get(key,{})
+        var width: float=clampf(25.0+float(hit["contacts"])*2.0,28.0,59.0)
+        for side in range(2):
+            var unit: Dictionary=left if side==0 else right
+            var ordered:=Vector2i(a,b) if side==0 else Vector2i(b,a)
+            var normal: Vector2=axis if side==0 else -axis
+            var edge: Vector2=anchors[side]-Vector2(unit["pos"])
+            # Overlapping files may put the nearest pair behind the center.
+            edge+=normal*maxf(0.0,6.0-edge.dot(normal))
+            var front: Dictionary=contact_fronts.get(ordered,{})
+            var pressed: float=float(shift.get("pressure",0.0)) if shift.get("loser",-1)==ordered.x else 0.0
+            front["pressure"]=lerpf(float(front.get("pressure",pressed)),minf(1.0,pressed*2.0),minf(1.0,dt*4.0))
+            front["edge"]=Vector2(front.get("edge",edge)).lerp(edge,minf(1.0,dt*5.0))
+            front["axis"]=Vector2(front.get("axis",normal)).slerp(normal,minf(1.0,dt*6.0)).normalized()
+            # Close part of the measured gap so the buckling files meet the
+            # opposing line, including contact near the limit of melee reach.
+            front["reach"]=clampf((anchors[1]-anchors[0]).dot(axis)*0.5,0.0,10.0)
+            front["width"]=width
+            front["phase"]=float(a*7+b*3)*0.8
+            front["strength"]=move_toward(float(front.get("strength",0.0)),1.0,dt*2.6)
+            front["midpoint"]=anchors[0].lerp(anchors[1],0.5)
+            contact_fronts[ordered]=front
+            active[ordered]=true
+
+    fronts_by_unit.clear()
+    deformed_slot_cache.clear()
+    for key: Vector2i in contact_fronts.keys():
+        var front: Dictionary=contact_fronts[key]
+        if not active.has(key):
+            var other: Dictionary=sim.find_unit(key.y)
+            if other.is_empty() or not _visible_unit(other):
+                contact_fronts.erase(key)
+                continue
+            front["strength"]=move_toward(float(front["strength"]),0.0,dt*0.72)
+            if is_zero_approx(front["strength"]):
+                contact_fronts.erase(key)
+                continue
+        if not fronts_by_unit.has(key.x): fronts_by_unit[key.x]=[]
+        fronts_by_unit[key.x].append(front)
+
+func _contact_slots(unit: Dictionary, slots: Array[Vector2]) -> Array[Vector2]:
+    var id: int=unit["id"]
+    if not fronts_by_unit.has(id): return slots
+    var center: Vector2=unit["pos"]
+    var near_river: bool=sim.long_operation and absf(center.x-sim.river_x(center.y))<=150.0
+    var result: Array[Vector2]=[]
+    for slot in slots:
+        var offset:=Vector2.ZERO
+        for front: Dictionary in fronts_by_unit[id]:
+            offset+=FrontView.contact_displacement(slot-center,front)
+        var p: Vector2=(slot+offset.limit_length(23.0)).clamp(Vector2.ZERO,sim.field_size)
+        if near_river: p=sim._dry_formation_slot(center,p)
+        result.append(p)
+    return result
+
 func _draw_contact_fronts(visible_units: Array[Dictionary],field_view: Rect2) -> void:
     if not sim.started or sim.finished: return
-    if combat_anchor_step!=sim.step_count:
-        combat_anchor_step=sim.step_count
-        combat_anchors.clear()
     var known: Dictionary={}
     for u in visible_units: known[int(u["id"])]=u
     var drawn: Dictionary={}
@@ -1731,10 +1802,8 @@ func _draw_contact_fronts(visible_units: Array[Dictionary],field_view: Rect2) ->
         drawn[key]=true
         var midpoint: Vector2=(u["pos"] as Vector2).lerp(target["pos"],0.5)
         if not field_view.has_point(midpoint): continue
-        if not combat_anchors.has(key):
-            combat_anchors[key]=sim.visual_contact_pair(u,target)
-        var pair: Array[Vector2]=combat_anchors[key]
-        var center: Vector2=pair[0].lerp(pair[1],0.5)
+        if not contact_fronts.has(key): continue
+        var center: Vector2=contact_fronts[key]["midpoint"]
         var normal: Vector2=((target["pos"] as Vector2)-(u["pos"] as Vector2)).normalized()
         if normal.length_squared()<0.1: continue
         var lateral: Vector2=normal.orthogonal()
@@ -1785,6 +1854,11 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             formation_render_cache[id]=_visual_slots(unit)
         var slots: Array[Vector2]=formation_render_cache[id]
         if slots.is_empty(): continue
+        var display_slots: Array[Vector2]=slots
+        if fronts_by_unit.has(id):
+            if not deformed_slot_cache.has(id):
+                deformed_slot_cache[id]=_contact_slots(unit,slots)
+            display_slots=deformed_slot_cache[id]
         var core: int=mini(slots.size(),clampi(ceili(float(unit["troops"])/180.0),1,24)) if sim.six_armies else slots.size()
         var reach: float=173.0 if unit["type"]=="궁병" else 34.0
         var target_id: int=int(unit.get("contact_target_id",-1))
@@ -1822,7 +1896,7 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         if bool(unit["routed"]): scatter+=6.5
         var last_attack_age: float=render_clock-float(unit.get("last_visual",-100.0))
         for index in range(draw_count):
-            var point: Vector2=slots[index]+march_offset
+            var point: Vector2=display_slots[index]+march_offset
             if scatter>0.0:
                 point+=Vector2(sin(float(index)*7.3),cos(float(index)*5.7))*scatter
             var local_target: Vector2=Vector2.INF
@@ -1844,7 +1918,7 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
                     bow_age=release_age
                     local_target=shot_target
                     point+=volley_offset*(1.0-smoothstep(FrontView.VOLLEY_RELEASE,FrontView.VOLLEY_RECOVERY,bow_age))
-            if point!=slots[index] and sim.in_open_water(point): point=slots[index]
+            if point!=display_slots[index] and sim.in_open_water(point): point=display_slots[index]
             point=point.clamp(Vector2.ZERO,sim.field_size)
             batch.append({"point":point,"unit":unit,"accent":accent,"index":index,"target":local_target,
                 "bow_age":bow_age,"shadow":index<core})
@@ -1888,12 +1962,12 @@ func _draw_unit(unit: Dictionary) -> void:
         # Draw the actual formation footprint in overview, not a flag pile or a
         # scaled copy of slot positions that expands beyond its real area.
         var k:float=1.0/camera_zoom
-        var slots: Array[Vector2]=sim.formation_slots(unit)
+        var slots: Array[Vector2]=_contact_slots(unit,sim.formation_slots(unit))
         if slots.size()>=3:
             _draw_formation_footprint(slots,Color(accent,0.15),Color(accent,0.75),k)
         var spots: Array[Vector2]=slots
         if sim.six_armies:
-            spots=sim.representative_slots(unit,mini(_representative_soldier_count(unit),slots.size()*3))
+            spots=_contact_slots(unit,sim.representative_slots(unit,mini(_representative_soldier_count(unit),slots.size()*3)))
         for spot in spots:
             map_layer.draw_circle(spot,0.94*k,Color("#15201d"))
             map_layer.draw_circle(spot,0.62*k,accent)
@@ -1908,7 +1982,9 @@ func _draw_unit(unit: Dictionary) -> void:
     var show_footprint: bool=detailed_map and sim.six_armies and id==selected_id and side==0
     var drawn_slots: Array[Vector2]=[]
     if selected or show_footprint:
-        drawn_slots=formation_render_cache[id] if formation_render_cache.has(id) else _visual_slots(unit)
+        if deformed_slot_cache.has(id): drawn_slots=deformed_slot_cache[id]
+        elif formation_render_cache.has(id): drawn_slots=formation_render_cache[id]
+        else: drawn_slots=_contact_slots(unit,_visual_slots(unit))
     if show_footprint:
         _draw_formation_footprint(drawn_slots,Color(accent,0.045),Color(COL_GOLD,0.35),1.2)
     var flag_extent: Vector2 = Vector2(15,22) if unit.has("parent_id") else Vector2(23,32)

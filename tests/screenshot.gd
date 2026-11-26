@@ -714,6 +714,7 @@ func _capture_combat_drill() -> bool:
     target["pos"]=Vector2(1095,1010)
     target["troops"]=target["initial_troops"]
     game.sim._combat(0.1)
+    game.call("_update_contact_fronts",0.1)
     var attacks: Dictionary=game.sim.combat_contacts
     if not bool(attacks.get(2,{}).get("braced",false)) or attacks.get(1,{}).get("arrow_lanes",[]).size()<4:
         push_error("VISUAL_CAPTURE_FAIL: real drill did not generate a brace and multiple arrow lanes")
@@ -745,7 +746,52 @@ func _capture_combat_drill() -> bool:
     print("COMBAT_DRILL_PASS")
     if not _save_frame("combat_drill.png"):
         return false
-    return await _capture_bow_motion(archer,target)
+    if not await _capture_bow_motion(archer,target): return false
+    return await _capture_contact_shape(rider,square)
+
+func _capture_contact_shape(rider: Dictionary,square: Dictionary) -> bool:
+    game.camera_zoom=2.8
+    game.camera_center=(rider["pos"] as Vector2).lerp(square["pos"],0.5)
+    game.call("_clamp_camera")
+    game.call("_on_unit_selected",game.sim.command_ids(0).find(2))
+    var base: Array[Vector2]=game.call("_visual_slots",square)
+    for tick in range(4):
+        game.sim.battle_time+=0.1
+        game.sim._combat(0.1)
+        game.call("_update_contact_fronts",0.1)
+    if not game.fronts_by_unit.has(2) or not game.fronts_by_unit.has(3) or game.fronts_by_unit.has(1) or game.fronts_by_unit.has(4):
+        push_error("VISUAL_CAPTURE_FAIL: observed melee must fold both formations and spare distant archers")
+        return false
+    var folded: Array[Vector2]=game.call("_contact_slots",square,base)
+    var largest: float=0.0
+    var untouched: int=0
+    for i in range(base.size()):
+        largest=maxf(largest,base[i].distance_to(folded[i]))
+        if base[i].is_equal_approx(folded[i]): untouched+=1
+    if largest<5.0 or untouched==0:
+        push_error("VISUAL_CAPTURE_FAIL: contact must bend engaged files and leave distant files in formation")
+        return false
+    game.render_clock=game.sim.battle_time
+    game.map_layer.queue_redraw()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    if not _save_frame("formation_contact.png"): return false
+    rider["pos"]=Vector2(640,780)
+    game.sim._combat(0.1)
+    game.call("_update_contact_fronts",0.1)
+    var recovering: Array[Vector2]=game.call("_contact_slots",square,base)
+    var i: int=0
+    while base[i].is_equal_approx(folded[i]): i+=1
+    var remaining: float=recovering[i].distance_to(base[i])
+    if remaining<=0.0 or remaining>=folded[i].distance_to(base[i]):
+        push_error("VISUAL_CAPTURE_FAIL: disengagement must ease the bent ranks back")
+        return false
+    for tick in range(15): game.call("_update_contact_fronts",0.1)
+    if game.fronts_by_unit.has(3):
+        push_error("VISUAL_CAPTURE_FAIL: old contact still affects the formation after recovery")
+        return false
+    print("FORMATION_CONTACT_PASS max_shift=%.2f untouched=%d/%d" % [largest,untouched,base.size()])
+    return true
 
 func _capture_bow_motion(archer: Dictionary, target: Dictionary) -> bool:
     var release: float=FrontView.VOLLEY_RELEASE+FrontView.volley_lane_delay(1)
