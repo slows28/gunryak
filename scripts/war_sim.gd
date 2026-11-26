@@ -25,6 +25,7 @@ const LAST_TURN: int = 10
 const MAX_SECONDS: float = TURN_SECONDS * float(LAST_TURN)
 const BASE_BUILD_SECONDS: float = 3.0
 const RAID_SECONDS: float = 6.0
+const HQ_CAPTURE_SECONDS: float = 12.0
 const RAID_RADIUS: float = 46.0
 const GUARD_RADIUS: float = 76.0
 var next_supply_survey: float=0.0
@@ -40,9 +41,12 @@ const OUTPOST_HOLD_SECONDS: float = 8.0
 var units: Array[Dictionary] = []
 var supply_crews: Array[Dictionary] = []
 var bases: Array[Dictionary] = []
+var headquarters: Array[Dictionary] = []
 var commanders: Array[Dictionary] = []
 var couriers: Array[Dictionary] = []
 var events: Array[String] = []
+var field_notices: Array[Dictionary]=[]
+var notice_sequence:=0
 var outposts: Array[Dictionary] = []
 var scouts: Array[Dictionary] = []
 var intelligence: Array[Dictionary] = [{}, {}]
@@ -56,6 +60,7 @@ var command_points: int = 3
 var situation_reports: Array[Dictionary] = []
 var situation_keys: Dictionary = {}
 var incoming_reports: Array[Dictionary] = []
+var relief_riders: Array[Dictionary]=[]
 var situation_serial: int = 0
 var tactical_delivered: int = 0
 var tactical_refused: int = 0
@@ -122,6 +127,8 @@ func reset() -> void:
     march_plans.clear()
     march_sequence=0
     events.clear()
+    field_notices.clear()
+    notice_sequence=0
     outposts.clear()
     scouts.clear()
     intelligence = [{}, {}]
@@ -132,6 +139,7 @@ func reset() -> void:
     command_points = 3
     situation_reports.clear()
     incoming_reports.clear()
+    relief_riders.clear()
     situation_keys.clear()
     situation_serial = 0
     tactical_delivered = 0
@@ -185,7 +193,9 @@ func reset() -> void:
     _configure_structures()
     _expand_layout()
     supply_crews.clear()
+    headquarters.clear()
     for side in range(2):
+        headquarters.append({"side":side,"pos":_home_point(side),"occupation":0.0,"occupied":false})
         var origin: Vector2=bases[side]["pos"]
         supply_crews.append({"side":side,"pos":origin,"goal":origin,"state":"대기","strength":100.0,
             "id":-2-side,"type":"보병","bridge_y":-1.0,"bridge_bank":0,"bridge_crossings":0,"blocked_water_steps":0})
@@ -232,6 +242,16 @@ func _base(side: int, at: Vector2) -> Dictionary:
         "side":side, "pos":at, "state":"가동",
         "build_timer":0.0, "alive":true, "raid_work":0.0, "raid_rate":0, "raid_elapsed":0.0
     }
+
+func _field_notice(message: String, point: Vector2, unit_id: int=-1) -> void:
+    notice_sequence+=1
+    field_notices.append({"key":"news:%d" % notice_sequence,"label":message,"point":point,"time":operation_elapsed(),"unit_id":unit_id})
+    if field_notices.size()>80: field_notices.pop_front()
+    _log(message)
+
+func _site_notice(side: int, message: String, point: Vector2) -> void:
+    if side==0 or player_can_see(point): _field_notice(message,point)
+    else: _log(message)
 
 func _log(message: String) -> void:
     events.append("[%02d턴] %s" % [turn, message])
@@ -300,7 +320,7 @@ func reposition_commander(forward: bool) -> void:
     if finished or commander_captured(0):
         return
     commanders[0]["goal"] = layout_point(Vector2(270,346)) if forward else commanders[0].get("home",layout_point(Vector2(54,515)))
-    _log("책사 이동: %s" % ("전진 지휘" if forward else "본진 복귀"))
+    _log("책사 이동: %s" % ("전진 지휘" if forward else "책사 배치점 복귀"))
 
 func step(dt: float) -> void:
     if not started or finished or paused:
@@ -344,8 +364,10 @@ func step(dt: float) -> void:
     _update_battle_condition(dt)
     _combat(dt)
     _update_outposts(dt)
+    _update_headquarters(dt)
     if tactical_enabled:
         _move_reporting_messengers(dt)
+        _move_relief_riders(dt)
         _scan_situations()
     _check_victory()
     if battle_time>=mind_sample_at or finished:
@@ -386,7 +408,7 @@ func _update_couriers(dt: float) -> void:
             intercepted_orders += 1
             _resolve_map_dispatch(letter,"차단")
             _response_delivery(letter,"전령 차단")
-            _log("%s에게 가던 전령이 적에 의해 차단됨" % str(target["name"]))
+            _site_notice(letter["side"],"%s에게 가던 전령이 차단됨" % str(target["name"]),letter["pos"])
             couriers.remove_at(i)
             continue
         if (letter["pos"] as Vector2).distance_to(target_pos) < 16.0:
@@ -415,7 +437,7 @@ func _update_couriers(dt: float) -> void:
             target["ai_cooldown"] = 0.0
             GeneralMind.order(target,"수령: "+str(letter["mission"]),battle_time)
             _resolve_map_dispatch(letter,"도착")
-            _log("%s: 전령 도착 / 새 명령 '%s'" % [str(target["name"]), str(letter["mission"])])
+            _site_notice(letter["side"],"%s · 전령 도착 / %s" % [target["name"],letter["mission"]],target["pos"])
             couriers.remove_at(i)
 
 
@@ -454,7 +476,7 @@ func _supply_logic(dt: float) -> void:
                 base["build_timer"]=0.0
                 base["state"]="가동"
                 crew["state"]="대기"
-                _log(_camp_side(base["side"])+" 보급기지 완공 · 자동 보급 시작")
+                _site_notice(base["side"],_camp_side(base["side"])+" 보급기지 완공 · 자동 보급 시작",base["pos"])
     if started and battle_time>=next_supply_survey:
         next_supply_survey=battle_time+1.0
         for side in range(2): _extend_supply(side)
@@ -493,7 +515,7 @@ func _update_base_raid(base: Dictionary, dt: float) -> void:
     var raiders:=_nearby_corps(1-side,base["pos"],RAID_RADIUS)
     var rate:=mini(2,raiders)
     if rate>0 and _nearby_corps(side,base["pos"],GUARD_RADIUS)>0: rate=0
-    if base["raid_rate"]==0 and rate>0: _log(_camp_side(side)+" 보급기지 급습")
+    if base["raid_rate"]==0 and rate>0: _site_notice(side,_camp_side(side)+" 보급기지 급습",base["pos"])
     base["raid_rate"]=rate
     if rate==0:
         base["raid_work"]=0.0
@@ -508,7 +530,8 @@ func _update_base_raid(base: Dictionary, dt: float) -> void:
         base["raid_rate"]=0
         if supply_crews[side]["state"]=="구축" and (supply_crews[side]["pos"] as Vector2).is_equal_approx(base["pos"]):
             supply_crews[side]["state"]="대기"
-        _log(_camp_side(side)+" 보급기지 파괴")
+        if side==0 or player_can_see(base["pos"]):
+            _field_notice(_camp_side(side)+" 보급기지 상실 · 이곳의 보급 중단",base["pos"])
 
 func raid_seconds_left(base: Dictionary) -> int:
     if base["raid_rate"]<=0: return 0
@@ -600,7 +623,7 @@ func _update_supply_crew(crew: Dictionary, dt: float) -> void:
         crew["strength"]=maxf(0.0,crew["strength"]-dt*attackers*(4.0 if escorted else 25.0))
         if crew["strength"]<=0:
             crew["state"]="괴멸"
-            _log(_camp_side(side)+" 보급부대 괴멸")
+            _site_notice(side,_camp_side(side)+" 보급부대 괴멸",pos)
             for b in bases:
                 if b["side"]==side and b["alive"] and b["state"]=="설치":
                     b["alive"]=false
@@ -637,7 +660,7 @@ func _update_supply_crew(crew: Dictionary, dt: float) -> void:
     # Marches on separate wings keep their own departure points.
     for unit in units:
         if unit["side"]==side and site.distance_to(unit["pos"])<=radius: unit["supply_mark"]=unit["pos"]
-    _log(_camp_side(side)+" 보급부대가 보급기지 구축 시작")
+    _site_notice(side,_camp_side(side)+" 보급부대가 보급기지 구축 시작",site)
 
 func _nearest_enemy(unit: Dictionary) -> Dictionary:
     var nearest: Dictionary = {}
@@ -878,11 +901,11 @@ func _decide(unit: Dictionary) -> void:
                 goal = (parent["pos"] as Vector2)+flank-front*34.0
             action = "분견 지원"
             reason = "본대 측면 엄호 및 합류"
-    if six_armies and scenario_id != 3 and bases[side]["alive"] and str(unit["mission"]) == "본진 방어" and action not in ["패주","후퇴","재집결","휴식","탄약 보충","보급 복귀","측면 방어"]:
-        var base_pos: Vector2 = bases[side]["pos"]
+    if six_armies and scenario_id != 3 and str(unit["mission"]) == "본진 방어" and action not in ["패주","후퇴","재집결","휴식","탄약 보충","보급 복귀","측면 방어"]:
+        var base_pos: Vector2 = _home_point(side)
         if enemy_distance > 110.0 or (not nearest.is_empty() and (nearest["pos"] as Vector2).distance_to(base_pos) > 210.0):
-            action = "보급 호위"
-            reason = "군단 후방 및 군량 보호"
+            action = "본진 수비"
+            reason = "본진 점거 차단"
             goal = base_pos+Vector2(65.0 if side == 0 else -65.0,0)
     if six_armies and str(unit["type"]) == "궁병" and enemy_distance > 165.0 and action in ["진격","거점 점령","거점 방어","전열 지원","명령 수행"] and str(unit["mission"]) not in ["측후방 기동","구원 지원"]:
         var screen: Dictionary = _infantry_screen(unit)
@@ -918,6 +941,10 @@ func _decide(unit: Dictionary) -> void:
             action=choice["action"]
             reason=choice["reason"]
             goal=choice["goal"]
+    if scenario_id==2 and side==1 and enemy_distance>165.0 and not unit["routed"] and str(unit["mission"])=="중앙 진격" and action in ["진격","거점 점령","명령 수행"]:
+        action="본진 공략"
+        reason="적 본진 점거"
+        goal=_home_point(0)
     if action != str(unit["last_timeline_action"]):
         unit["last_timeline_action"] = action
         if int(unit["side"]) == 0 and timeline.size() < 1200:
@@ -1165,7 +1192,7 @@ func _resolve_frontline(dt: float) -> void:
             var prior_position: Vector2 = current_b if shift > 0.0 else current_a
             var displacement: Vector2 = (losing_unit["pos"] as Vector2)-prior_position
             if displacement.length_squared()>0.0001:
-                if tactical_enabled and losing_unit["side"]==0:
+                if tactical_enabled:
                     losing_unit["report_push"]=Vector2(losing_unit.get("report_push",Vector2.ZERO))+displacement
                     losing_unit["report_opponent"]=a["id"] if shift>0.0 else b["id"]
                 var left_id: int = int(a["id"])
@@ -1727,7 +1754,7 @@ func _update_command_recovery() -> void:
         c.erase("recover_at")
         for u in units:
             if u["side"]==c["side"]: u["ai_cooldown"]=0.0
-        _log(_camp_side(c["side"])+" 혼란 해소 · 장수 자율 지휘")
+        _site_notice(c["side"],_camp_side(c["side"])+" 혼란 해소 · 장수 자율 지휘",c["pos"])
 
 func _check_command_capture() -> void:
     for c in commanders:
@@ -1736,7 +1763,7 @@ func _check_command_capture() -> void:
         c["captured"]=true
         c["goal"]=c["pos"]
         c["recover_at"]=battle_time+turn_duration()
-        _log(_camp_side(side)+" 책사 생포 · 한 턴 동안 지휘 혼란")
+        _site_notice(side,_camp_side(side)+" 책사 생포 · 한 턴 동안 지휘 혼란",c["pos"])
         for i in range(couriers.size()-1,-1,-1):
             var letter: Dictionary=couriers[i]
             if letter["side"]!=side: continue
@@ -1757,9 +1784,34 @@ func _check_command_capture() -> void:
             u["ai_cooldown"]=0.0
             if u["troops"]>0 and not u["routed"]: _decide(u)
 
+# A headquarters is fixed for the whole operation, including after the strategist moves.
+func _update_headquarters(dt: float) -> void:
+    for home in headquarters:
+        if home["occupied"]: continue
+        var side: int=home["side"]
+        var attacked:=_nearby_corps(1-side,home["pos"],RAID_RADIUS)>0
+        var exposed:=attacked and _nearby_corps(side,home["pos"],GUARD_RADIUS)==0
+        var prior: float=home["occupation"]
+        home["occupation"]=minf(HQ_CAPTURE_SECONDS,prior+dt) if exposed else 0.0
+        home["occupied"]=home["occupation"]>=HQ_CAPTURE_SECONDS-0.00001
+        if side==0 and prior==0.0 and exposed:
+            _field_notice("아군 본진 피습 · 수비군 필요",home["pos"])
+        elif side==0 and prior>0.0 and not exposed:
+            _field_notice("아군 본진 점거 저지",home["pos"])
+
+func headquarters_state(side: int) -> String:
+    var home:=headquarters[side]
+    if home["occupied"]: return "함락"
+    if home["occupation"]>0: return "함락까지 %d초" % ceili((HQ_CAPTURE_SECONDS-home["occupation"])*operation_scale()-0.00001)
+    return "수비 중"
+
 func _check_victory() -> void:
     if finished:
         return
+    for side in range(2):
+        if headquarters[side]["occupied"]:
+            _finish("아군 본진 함락 — 패배" if side==0 else "적 본진 함락 — 아군 승리","%s 본진 · 적이 %d초 연속 점거" % [_camp_side(side),roundi(HQ_CAPTURE_SECONDS*operation_scale())])
+            return
     _check_command_capture()
     if scenario_id == 3 and not convoy.is_empty():
         if float(convoy["hp"]) <= 0.0:
@@ -1794,14 +1846,8 @@ func _check_victory() -> void:
     elif side_alive[1] == 0:
         if reinforcements_used[1] >= reserve_limit[1]:
             _finish("적 전투부대 전멸 또는 패주 — 승리","전투 가능 부대 · 아군 %d / 적군 %d" % side_alive)
-    if not finished and scenario_id == 2 and not bool(bases[0]["alive"]):
-        var home:=bases[0]
-        var evidence: String="방어 목표였던 첫 보급기지가 파괴됨"
-        if home.has("raiders_at_loss"):
-            evidence="첫 보급기지 · 급습 %d초 · 파괴 시 적 %d개 군단 / 아군 수비 0개" % [roundi(home["raid_elapsed"]*operation_scale()),home["raiders_at_loss"]]
-        _finish("아군 보급기지 상실 — 패배",evidence)
     if not finished and scenario_id == 2 and battle_time >= scenario_limit:
-        _finish("보급기지 방어 성공 — 아군 승리","첫 보급기지 생존 · 방어 시간 %d초" % roundi(operation_limit()))
+        _finish("본진 방어 성공 — 아군 승리","아군 본진 사수 · 방어 시간 %d초" % roundi(operation_limit()))
     if not finished and battle_time >= scenario_limit and scenario_id in [3,4]:
         _finish("작전 제한 시간 초과 — 패배",_siege_result_detail() if scenario_id==4 else "수레 이동 %d%% · 도착점까지 %d" % [floori(convoy_status()["progress"]*100.0),ceili(convoy_status()["remaining"])])
     if not finished and battle_time >= scenario_limit and six_armies and scenario_id == 0:
@@ -2323,8 +2369,8 @@ func _configure_scenario() -> void:
             if str(unit["type"]) == "보병":
                 unit["mission"] = "중앙 진격"
     elif scenario_id == 2:
-        scenario_title = "보급로 사수"
-        scenario_goal = "120초 동안 첫 보급기지 사수"
+        scenario_title = "본진 사수"
+        scenario_goal = "120초 동안 아군 본진 사수"
         scenario_limit = 120.0
         forests = [Rect2(205,95,160,110),Rect2(310,365,150,125)]
         hill = Rect2(510,215,110,95)
@@ -2513,8 +2559,11 @@ func _deliver_intel() -> void:
         var old: Dictionary = intelligence[side].get(id,{})
         if old.is_empty() or float(old["time"]) < float(report["time"]):
             intelligence[side][id] = report
-            if side == 0:
-                _log("정찰 보고 도착: 신뢰도 %d%%" % int(float(report["confidence"])*100.0))
+            if side==0:
+                var key: String="정찰:%d" % id
+                if battle_time-float(situation_keys.get(key,-100.0))>=30.0:
+                    situation_keys[key]=battle_time
+                    _field_notice("정찰 보고 · 적 위치 관측 / 신뢰도 %d%%" % roundi(report["confidence"]*100.0),report["pos"])
         pending_reports.remove_at(i)
 
 func player_can_see(position: Vector2, concealed: bool = false) -> bool:
@@ -2725,26 +2774,97 @@ func order_retreat() -> bool:
 func _move_reporting_messengers(dt: float) -> void:
     for i in range(incoming_reports.size()-1,-1,-1):
         var report:=incoming_reports[i]
-        if commander_captured(0):
+        if not report["urgent"] and commander_captured(report.get("side",0)):
             situation_reports.erase(report)
             incoming_reports.remove_at(i)
             continue
         if battle_time < report["written_at"]+2.0: continue
-        var rider: Dictionary=report["rider"]
-        var p: Vector2=rider["pos"]
-        var headquarters: Vector2=commanders[0]["pos"]
-        var waypoint:=headquarters
-        if long_operation: waypoint=_committed_bridge_route(rider,p,headquarters)
-        elif wide_field: waypoint=_crossing_route(p,headquarters)
-        var next:=p.move_toward(waypoint,150.0*dt)
-        rider["pos"]=_land_motion(rider,p,next) if long_operation else next
-        if not (rider["pos"] as Vector2).is_equal_approx(headquarters): continue
+        var side: int=report.get("side",0)
+        var destination: Vector2=headquarters[side]["pos"] if report["urgent"] else commanders[side]["pos"]
+        if not _advance_rider(report["rider"],destination,dt): continue
         report["arrive"]=battle_time
         report["expires"]=battle_time+26.0
         report["status"]="미대응"
         report.erase("rider")
         incoming_reports.remove_at(i)
-        _log("%s군 전령 도착 · %s" % [report["sender"],report["kind"]])
+        if side==0: _log("%s군 전령 도착 · %s" % [report["sender"],report["kind"]])
+
+func _field_rider(position: Vector2, side: int, id: int) -> Dictionary:
+    return {"id":id,"side":side,"pos":position,"bridge_y":-1.0,"bridge_bank":0,"bridge_crossings":0,"blocked_water_steps":0}
+
+func _advance_rider(rider: Dictionary, destination: Vector2, dt: float) -> bool:
+    var p: Vector2=rider["pos"]
+    var waypoint:=destination
+    if long_operation: waypoint=_committed_bridge_route(rider,p,destination)
+    elif wide_field: waypoint=_crossing_route(p,destination)
+    var next:=p.move_toward(waypoint,150.0*dt)
+    rider["pos"]=_land_motion(rider,p,next) if long_operation else next
+    return (rider["pos"] as Vector2).is_equal_approx(destination)
+
+func _send_relief_request(sender: Dictionary, report: Dictionary) -> void:
+    var nearest: Dictionary={}
+    var distance: float=480.0 if long_operation else 180.0
+    for ally in units:
+        if ally["side"]!=sender["side"] or ally["id"]==sender["id"] or ally.has("parent_id") or ally["troops"]<=0 or ally["reserve"] or ally["routed"]: continue
+        var d: float=(sender["pos"] as Vector2).distance_to(ally["pos"])
+        if d<distance:
+            distance=d
+            nearest=ally
+    sender["last_relief_request"]=battle_time
+    if nearest.is_empty():
+        report["relief_destination"]="인근에 연락 가능한 군단 없음"
+        return
+    report["relief_destination"]=str(nearest["name"])+"에게 별도 구원 전령 파견"
+    var rider:=_field_rider(sender["pos"],sender["side"],-11-report["id"]*3)
+    relief_riders.append({"rider":rider,"recipient":nearest["id"],"report":report,"returning":false})
+
+func _relief_decision(ally: Dictionary, sender: Dictionary) -> String:
+    if sender.is_empty() or sender["troops"]<=0: return "구원 대상 소멸"
+    if ally["surrounded"] or ally["routed"] or ally["morale"]<38 or ally["cohesion"]<35: return "자군 전열 재정비"
+    if sender.get("local_relief",false) and sender["tactical_until"]>battle_time and sender["tactical_target"]==ally["id"]: return "서로를 향한 중복 구원 방지"
+    if command_confused(ally["side"]): return "지휘 혼란으로 현 위치 방어"
+    if ally["tactical_until"]>battle_time or has_pending_courier(ally["id"]): return "기존 전령 지시 수행 중"
+    if ally["mission"]=="본진 방어" and (ally["obedience"]=="명령 엄수" or headquarters[ally["side"]]["occupation"]>0):
+        return "본진 수비를 우선"
+    var threat:=_nearest_visible_enemy(ally)
+    var engaged: bool=not threat.is_empty() and (ally["pos"] as Vector2).distance_to(threat["pos"])<130
+    if ally["personality"]=="신중" and (engaged or ally["rations"]<35 or ally["morale"]<65):
+        return "신중한 판단 · 자군 방어를 우선"
+    if engaged and ally["personality"]!="공격" and ally["troops"]<threat["troops"]: return "현재 교전에서 병력 열세"
+    return ""
+
+func _move_relief_riders(dt: float) -> void:
+    for i in range(relief_riders.size()-1,-1,-1):
+        var request:=relief_riders[i]
+        var report: Dictionary=request["report"]
+        var side: int=report["side"]
+        var ally:=find_unit(request["recipient"])
+        var returning: bool=request["returning"]
+        if not returning and (ally.is_empty() or ally["troops"]<=0):
+            request["returning"]=true
+            request["answer"]="수신 부대 상실"
+            continue
+        var dest: Vector2=headquarters[side]["pos"] if returning else ally["pos"]
+        if not _advance_rider(request["rider"],dest,dt): continue
+        if returning:
+            report["relief_answer"]=request["answer"]
+            if side==0: _field_notice(request["answer"],report["pos"],report["unit_id"])
+            relief_riders.remove_at(i)
+            continue
+        var sender:=find_unit(report["unit_id"])
+        var reason:=_relief_decision(ally,sender)
+        var text: String="%s → %s군 구원 " % [ally["name"],report["sender"]]
+        if reason.is_empty():
+            ally["tactical_order"]="지원"
+            ally["tactical_target"]=report["unit_id"]
+            ally["tactical_until"]=battle_time+24.0
+            ally["local_relief"]=true
+            ally["ai_cooldown"]=0.0
+            text+="수락 · "+str(ally["personality"])+" 성향, 기동 가능"
+        else: text+="거절 · "+reason
+        GeneralMind.order(ally,text,battle_time)
+        request["answer"]=text
+        request["returning"]=true
 
 func _scan_situations() -> void:
     if battle_time-last_situation_scan < 2.0:
@@ -2754,9 +2874,8 @@ func _scan_situations() -> void:
     for report in situation_reports:
         if report["status"] == "미대응" and battle_time >= float(report["expires"]):
             report["status"] = "시간 경과"
-    if commander_captured(0): return
     for unit in units:
-        if int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0 or bool(unit["reserve"]):
+        if float(unit["troops"]) <= 0.0 or bool(unit["reserve"]):
             continue
         var push: Vector2=unit.get("report_push",Vector2.ZERO)
         var foe:=find_unit(int(unit.get("report_opponent",-1)))
@@ -2788,21 +2907,26 @@ func _scan_situations() -> void:
         if kind == "" and proposal=="사수": kind="사수 건의"
         if kind == "":
             continue
+        var side: int=unit["side"]
+        var urgent:=kind in ["전열 붕괴 위험","포위 위험","전선 압박"]
+        if not urgent and (side==1 or commander_captured(side)): continue
         var key: String = "%d:%s" % [unit["id"],kind]
         if battle_time-float(situation_keys.get(key,-100.0)) < 30.0:
             continue
         situation_keys[key] = battle_time
         situation_serial += 1
         if kind=="전선 압박" and proposal.is_empty(): proposal="지원"
-        var rider: Dictionary={"id":-10-situation_serial,"side":0,"pos":unit["pos"],"bridge_y":-1.0,"bridge_bank":0,"bridge_crossings":0,"blocked_water_steps":0}
+        var rider:=_field_rider(unit["pos"],side,-10-situation_serial*3)
         var report: Dictionary={"id":situation_serial,"unit_id":unit["id"],"title":str(unit["name"])+" · "+kind+(" / "+proposal+" 건의" if not proposal.is_empty() else ""),
-            "kind":kind,"proposal":proposal,"pos":unit["pos"],"written_at":battle_time,"rider":rider,
+            "kind":kind,"urgent":urgent,"side":side,"proposal":proposal,"pos":unit["pos"],"written_at":battle_time,"rider":rider,
             "sender":str(unit["name"]),"troops":roundi(unit["troops"]),"push":push,"opponent":opponent,
             "losses":recent_losses,"sample_seconds":roundi(span*operation_scale()),"status":"대기","mission":unit["mission"],"action":unit["action"],"reason":unit["reason"],
             "morale":roundi(unit["morale"]),"cohesion":roundi(unit["cohesion"]),"rations":roundi(unit["rations"]),
             "ammo":roundi(unit["ammo"]),"general_hp":roundi(unit["general_hp"]),"pressure":float(unit["front_pressure"])}
-        situation_reports.append(report)
+        if side==0: situation_reports.append(report)
         incoming_reports.append(report)
+        if urgent and not unit.has("parent_id") and battle_time-float(unit.get("last_relief_request",-100.0))>=30.0:
+            _send_relief_request(unit,report)
         if situation_reports.size() > 80:
             for j in range(situation_reports.size()):
                 if str(situation_reports[j]["status"]) not in ["대기","미대응","전령 파견","명령 수령","실행 중"]:
@@ -2876,7 +3000,7 @@ func support_for_report(target: Dictionary) -> Dictionary:
     var best_score: float=-INF
     for ally in units:
         if int(ally["side"])!=0 or ally["id"]==target["id"] or bool(ally["routed"]) or float(ally["troops"])<24.0: continue
-        if has_pending_courier(int(ally["id"])): continue
+        if has_pending_courier(int(ally["id"])) or (ally.get("local_relief",false) and ally["tactical_until"]>battle_time): continue
         var score: float=float(ally["morale"])-(ally["pos"] as Vector2).distance_to(target["pos"])*0.1
         if score>best_score:
             best=ally
@@ -2947,6 +3071,7 @@ func _deliver_tactical(unit: Dictionary, letter: Dictionary) -> void:
         return
     tactical_delivered += 1
     GeneralMind.order(unit,"수령: 긴급 "+order,battle_time)
+    unit["local_relief"]=false
     unit["tactical_order"] = order
     unit["tactical_target"] = int(letter.get("support_id",-1))
     unit["tactical_anchor"] = unit["pos"]
@@ -2970,7 +3095,7 @@ func _tactical_decision(unit: Dictionary, enemy: Dictionary, action: String, rea
         if order == "지원":
             var ally: Dictionary = find_unit(int(unit["tactical_target"]))
             if not ally.is_empty() and float(ally["troops"]) > 0.0:
-                return {"action":"긴급 지원","reason":"전령 명령: "+str(ally["name"])+" 지원","goal":(ally["pos"] as Vector2)+Vector2(-32,0)}
+                return {"action":"긴급 지원","reason":("현지 구원 수락 · " if unit.get("local_relief",false) else "전령 명령: ")+str(ally["name"])+" 지원","goal":(ally["pos"] as Vector2)+Vector2(-32 if unit["side"]==0 else 32,0)}
     # Autonomous initiative: an aggressive low-loyalty commander may exploit
     # an observed weak enemy, while strict or cautious commanders retain orders.
     if enemy.is_empty() or distance > 180.0 or strength < (GeneralMind.initiative_threshold(unit) if long_operation else 1.30) or float(unit["morale"]) < 65.0 or str(unit["obedience"]) == "명령 엄수" or action in ["후퇴","패주","재집결","휴식","거리 유지","측면 방어","보급 호위","탄약 보충","보급 복귀"]:
@@ -3056,7 +3181,7 @@ func _expand_layout() -> void:
     if scenario_id == 1:
         scenario_goal = "6턴 이후 중앙 고지 30초 연속 확보"
     elif scenario_id == 2:
-        scenario_goal = "300초 동안 첫 보급기지 사수"
+        scenario_goal = "300초 동안 아군 본진 사수"
     reserve_next = [36.0,36.0]
     if long_operation:
         scenario_limit = 420.0 if scenario_id == 3 else LONG_LIMIT
@@ -3064,7 +3189,7 @@ func _expand_layout() -> void:
         match scenario_id:
             0: scenario_goal="18분 이후 세 거점 중 두 곳을 3분 연속 확보"
             1: scenario_goal="18분 이후 중앙 고지 3분 연속 확보"
-            2: scenario_goal="25분 동안 첫 보급기지 사수"
+            2: scenario_goal="25분 동안 아군 본진 사수"
             3: scenario_goal="28분 이내 군량 수레를 동쪽 도착점까지 호위"
             4: scenario_goal="18분 이후 성문 파괴 및 중앙 거점 2분 확보"
             TRAINING_SCENARIO: scenario_goal="18분 이후 연습 성문 파괴 및 동쪽 거점 2분 확보"

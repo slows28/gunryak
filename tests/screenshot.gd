@@ -1171,7 +1171,7 @@ func _capture_field_report() -> bool:
     game.call("_refresh_hud")
     var report: Dictionary=game.call("_prioritized_situations")[0]
     var reporter_index: int=game.sim.command_ids(0).find(int(report["unit_id"]))
-    if reporter_index<0 or not game.general_cards[reporter_index].report_link.visible or not game.dispatch_headline.visible or not game.dispatch_headline.text.contains(report["title"]):
+    if reporter_index<0 or not game.general_cards[reporter_index].report_link.visible or game.dispatch_headline.visible:
         push_error("VISUAL_CAPTURE_FAIL: current field dispatch is missing from the battlefield")
         return false
     # A second delivered report exercises per-commander selection even while another
@@ -1193,7 +1193,13 @@ func _capture_field_report() -> bool:
     await process_frame
     game.sim.situation_reports.erase(other)
     game.call("_refresh_hud")
-    game.dispatch_headline.pressed.emit()
+    game.journal_button.pressed.emit()
+    var journal_row: int=-1
+    for i in range(game.journal_list.item_count):
+        var item=game.journal_list.get_item_metadata(i)
+        if item is Dictionary and item.get("report_id",-1)==report["id"]: journal_row=i
+    if journal_row<0: return false
+    game.journal_list.item_activated.emit(journal_row)
     await process_frame
     await RenderingServer.frame_post_draw
     if game.order_view.visible or not game.sim.paused or game.selected_id!=int(report["unit_id"]) or not game.situation_pin.is_equal_approx(report["pos"]) or not game.situation_detail.text.contains(report["reason"]):
@@ -1300,14 +1306,36 @@ func _capture_objectives() -> bool:
     for tick in range(15): sim.step(0.1)
     game._refresh_hud()
     game.objective_buttons[0].pressed.emit()
-    if game.camera_center.distance_to(site)>1.0 or sim.paused or not sim.couriers.is_empty(): return false
-    if "파괴까지 18초" not in game.objective_buttons[0].text: return false
+    if game.objective_focus!=0 or game.objective_rows[0]["pos"]!=sim.headquarters[0]["pos"] or sim.paused: return false
+    game.camera_center=site
     if not await _deployment_frame("objective_depot_raid.png"): return false
     for tick in range(55): sim.step(0.1)
+    if sim.finished or sim.bases[0]["alive"]: return false
+    var hq: Vector2=sim.headquarters[0]["pos"]
+    for u in sim.units:
+        if u["side"]==0 and (u["pos"] as Vector2).distance_to(hq)<160.0:
+            u["pos"]=hq+Vector2(340,300)
+            u["goal"]=u["pos"]
+            u["ai_cooldown"]=999.0
+    raider["pos"]=hq
+    raider["goal"]=hq
+    raider["ai_cooldown"]=999.0
+    for tick in range(30): sim.step(0.1)
+    game._refresh_hud()
+    game.dispatch_headline.pressed.emit()
+    var view:=Rect2(game.camera_center-game.MAP_SIZE*0.5/game.camera_zoom,game.MAP_SIZE/game.camera_zoom)
+    if not game.dispatch_headline.visible or not view.has_point(hq) or "함락까지" not in game.objective_buttons[0].text: return false
+    if not await _deployment_frame("headquarters_under_attack.png"): return false
+    game.journal_button.pressed.emit()
+    await process_frame
+    if "보급기지 상실" not in str(game.journal_events): return false
+    if not await _deployment_frame("supply_loss_inbox.png"): return false
+    game.journal_dialog.hide()
+    for tick in range(100): sim.step(0.1)
     if not sim.finished or sim.winning_side!=1: return false
     game._refresh_hud()
     game._show_outcome()
-    if sim.result_detail not in game.outcome_text.text or "급습 24초" not in game.outcome_text.text: return false
+    if sim.result_detail not in game.outcome_text.text or "본진 함락" not in sim.result: return false
     await process_frame
     var panel: Control=game.outcome_heading.get_parent().get_parent()
     var last_row: Control=game.campaign_next.get_parent()
@@ -1316,10 +1344,11 @@ func _capture_objectives() -> bool:
     print("OBJECTIVE_FOCUS_VISUAL_PASS")
     return true
 
-# Standard northern operation, no injected damage, report, or enemy position.
+# Set a northern bridge defense order before departure. All contact and reports come from the battle.
 func _capture_messenger() -> bool:
     game._show_title()
     game._leave_title(0)
+    if not game.sim.issue_map_order(0,"지역 사수",Vector2(1240,385)): return false
     game._start()
     game.set_process(false)
     var sim=game.sim
@@ -1356,9 +1385,21 @@ func _capture_messenger() -> bool:
     await process_frame
     if game.situation_selected!=letter["id"] or not sim.paused or game.situation_pin!=letter["pos"]: return false
     if "왕평군 전령" not in game.situation_heading.text or letter["opponent"] not in game.situation_detail.text or "밀리고" not in game.situation_detail.text: return false
-    if "본부 도착" not in game.situation_stamp.text or "현재 아군" not in game.situation_current.text: return false
+    if "본진 도착" not in game.situation_stamp.text or "현재 아군" not in game.situation_current.text: return false
     if not await _deployment_frame("wang_messenger_account.png"): return false
     print("WANG_MESSENGER_VISUAL_PASS ",game.situation_stamp.text," ",game.situation_detail.text)
     game.situation_dialog.get_ok_button().pressed.emit()
     await process_frame
-    return not sim.paused and game.messenger_id!=letter["id"]
+    if sim.paused or game.messenger_id==letter["id"]: return false
+    for tick in range(450):
+        if letter.has("relief_answer"): break
+        sim.step(0.1)
+    if not letter.has("relief_answer"): return false
+    game._refresh_hud()
+    game.journal_button.pressed.emit()
+    await process_frame
+    if letter["relief_answer"] not in str(game.journal_events): return false
+    if not await _deployment_frame("relief_reply_inbox.png"): return false
+    print("RELIEF_RETURNED ",letter["relief_answer"])
+    game.journal_dialog.hide()
+    return true

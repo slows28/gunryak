@@ -134,18 +134,15 @@ static func milestones(sim,limited: bool) -> Dictionary:
         if owner>=0:
             found["site:"+str(site["name"])+":"+str(owner)]={"label":str(site["name"])+" · "+("아군 확보" if owner==0 else "적군 확보"),"point":site["pos"]}
     for report in sim.open_situations():
-        found["report:"+str(report["id"])]={"label":str(report["title"]),"point":report["pos"],"unit_id":int(report["unit_id"])}
+        found["report:"+str(report["id"])]={"report_id":report["id"],"time":report["arrive"]*sim.operation_scale(),"label":str(report["title"]),"point":report["pos"],"unit_id":int(report["unit_id"])}
     return found
 
 # Mission locations are public. Live enemy control and gate condition require observation.
 static func objective_targets(sim, limited: bool) -> Array[Dictionary]:
     var rows: Array[Dictionary]=[]
     if sim.scenario_id==2:
-        var home: Dictionary=sim.bases[0]
-        var state: String=str(home["state"])
-        if state=="설치": state="구축 %d초" % ceili(home["build_timer"]*sim.operation_scale())
-        if home["raid_rate"]>0: state="파괴까지 %d초" % sim.raid_seconds_left(home)
-        rows.append({"name":"첫 보급기지","pos":home["pos"],"state":state,"alert":home["raid_rate"]>0 or not home["alive"]})
+        var home: Dictionary=sim.headquarters[0]
+        rows.append({"name":"아군 본진","pos":home["pos"],"state":sim.headquarters_state(0),"alert":home["occupation"]>0})
         return rows
     if sim.scenario_id==3:
         var convoy: Dictionary=sim.convoy

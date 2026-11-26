@@ -29,6 +29,7 @@ var sim
 var font: Font
 var action_choice: OptionButton
 var action_buttons: Array[Button]=[]
+var label_areas: Array[Rect2]=[]
 var goal_label: Label
 var progress_label: Label
 var action_description: Label
@@ -91,7 +92,7 @@ func configure(owner_game: Control,used_font: Font) -> void:
     for post: String in ["보급기지","책사"]:
         var button:=_button("기지 구축" if post=="보급기지" else "책사 배치",Vector2(1078 if post=="보급기지" else 1169,445),Vector2(86,33),_pick_post.bind(post))
         button.toggle_mode=true
-        if post=="책사": button.tooltip_text="책사의 출발 위치와 본진 복귀 지점 지정"
+        if post=="책사": button.tooltip_text="책사의 출발 및 복귀 지점 지정"
         button.add_theme_font_size_override("font_size",14)
         post_buttons[post]=button
     map_hint=_label("지도에서 목적지 지정\n군단 말을 끌어도 됩니다.",Vector2(1082,480),Vector2(170,33),12,Color("#cdd8d9"))
@@ -525,6 +526,7 @@ func _gui_input(event:InputEvent)->void:
         accept_event()
 
 func _draw()->void:
+    label_areas.clear()
     draw_texture_rect(Materials.WALNUT,Rect2(0,0,1280,800),false,Color("#d7cabc"))
     draw_style_box(lacquer,Rect2(0,0,1280,59))
     draw_rect(Rect2(0,0,6,56),Color("#cf674e"))
@@ -654,6 +656,11 @@ func _draw()->void:
         var edge:=_point(Vector2(sim.field_size.x*0.5,0))
         draw_rect(Rect2(edge,MAP.end-edge),Color(0.18,0.13,0.10,0.16))
         draw_dashed_line(edge,Vector2(edge.x,MAP.end.y),INK,1.5,7.0)
+    for home in sim.headquarters:
+        var position_on_map:=_point(home["pos"])
+        var ink: Color=BLUE if home["side"]==0 else RED
+        draw_rect(Rect2(position_on_map-Vector2(6,6),Vector2(12,12)),ink)
+        _post_label("아군 본진" if home["side"]==0 else "적 본진",position_on_map,1)
     for base in sim.bases:
         if not base["alive"] or base["side"]!=0: continue
         var center: Vector2=base["pos"]
@@ -759,8 +766,8 @@ func _draw()->void:
     draw_line(scale_origin,scale_origin+Vector2(94,0),INK,1.4)
     for dx in [0,47,94]: draw_line(scale_origin+Vector2(dx,-4),scale_origin+Vector2(dx,4),INK,1.2)
     _ink("%d 지도 단위" % roundi(94.0*sim.field_size.x/MAP.size.x),scale_origin+Vector2(10,-8),10,INK)
-    _ink("북로",_point(Vector2(sim.field_size.x*0.65,sim.road_y(sim.field_size.x*0.65,0)) )+Vector2(0,-12),12,INK)
-    _ink("남로",_point(Vector2(sim.field_size.x*0.65,sim.road_y(sim.field_size.x*0.65,2)) )+Vector2(0,-12),12,INK)
+    _plate("북로",_point(Vector2(sim.field_size.x*0.65,sim.road_y(sim.field_size.x*0.65,0)) )+Vector2(0,-12),12,INK)
+    _plate("남로",_point(Vector2(sim.field_size.x*0.65,sim.road_y(sim.field_size.x*0.65,2)) )+Vector2(0,-12),12,INK)
     var u:Dictionary=sim.find_unit(selected_id)
     if not u.is_empty():
         var portrait:AtlasTexture=_portrait(str(u["name"]))
@@ -860,10 +867,19 @@ func _site_label(caption: String, location: Vector2, offset_y: int, size_px: int
 
 func _plate(t:String,p:Vector2,fs:int,c:Color)->void:
     var width:float=font.get_string_size(t,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+14.0
-    var rect:=Rect2(p-Vector2(width/2.0,9),Vector2(width,18))
-    draw_rect(rect,Color("#342b20"))
-    draw_rect(rect,Color("#b09561"),false,1.0)
-    _ink(t,p+Vector2(-width/2.0+7,5),fs,c)
+    for offset in [Vector2.ZERO,Vector2(0,-21),Vector2(0,21),Vector2(-width/2,-21),Vector2(width/2,21)]:
+        var center: Vector2=p+offset
+        var rect:=Rect2(center-Vector2(width/2.0,9),Vector2(width,18))
+        if not MAP.encloses(rect): continue
+        var free:=true
+        for prior in label_areas:
+            if prior.grow(2).intersects(rect): free=false
+        if not free: continue
+        label_areas.append(rect)
+        draw_rect(rect,Color("#342b20"))
+        draw_rect(rect,Color("#b09561"),false,1.0)
+        _ink(t,center+Vector2(-width/2.0+7,5),fs,c)
+        return
 
 func _choose_action(index:int)->void:
     action_choice.select(index)

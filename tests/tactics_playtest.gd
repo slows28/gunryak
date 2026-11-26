@@ -11,6 +11,7 @@ func _initialize() -> void:
     call_deferred("_run")
 func _run() -> void:
     _check_returning_rider()
+    _check_local_relief()
     var sim := WarSim.new()
     sim.tactical_enabled = true
     sim.start()
@@ -84,7 +85,7 @@ func _check_returning_rider() -> void:
     var origin:=Vector2(sim.river_x(520)+170,520)
     var post:=Vector2(sim.river_x(530)-220,530)
     unit["pos"]=origin
-    unit["morale"]=40.0
+    unit["rations"]=12.0
     sim.commanders[0]["pos"]=post
     sim.battle_time=4.0
     sim._scan_situations()
@@ -111,14 +112,51 @@ func _check_returning_rider() -> void:
         if report["status"]!="대기": break
     check(moved and not wet and rider["bridge_crossings"]==1,"reporting rider physically crosses at a bridge")
     check(rider["pos"]==sim.commanders[0]["pos"] and sim.open_situations().has(report),"letter reaches the strategist's new position")
-    check(report["sender"]=="왕평" and report["pos"]==origin and report["morale"]==40,"dispatch identity position and condition are immutable")
+    check(report["sender"]=="왕평" and report["pos"]==origin and report["rations"]==12,"dispatch identity position and condition are immutable")
     check(is_equal_approx(report["expires"]-report["arrive"],26.0),"response window starts on actual delivery")
     sim.reset()
     sim.start()
-    sim.find_unit(0)["morale"]=40.0
+    sim.find_unit(0)["rations"]=12.0
     sim._scan_situations()
     sim.commanders[0]["captured"]=true
     sim._move_reporting_messengers(0.1)
     sim.battle_time+=4.0
     sim._scan_situations()
     check(sim.incoming_reports.is_empty() and sim.situation_reports.is_empty(),"a captured strategist cannot receive or reveal an undelivered report")
+
+func _check_local_relief() -> void:
+    for style in ["신중","공격"]:
+        var sim:=WarSim.new()
+        sim.tactical_enabled=true
+        sim.set_long_operation(true)
+        sim.start()
+        for u in sim.units: u["pos"]=Vector2(2450,1440)
+        var sender:=sim.find_unit(0)
+        var ally:=sim.find_unit(1)
+        sender["pos"]=Vector2(425,510)
+        sender["surrounded"]=true
+        ally["pos"]=Vector2(550,510)
+        ally["personality"]=style
+        ally["morale"]=60.0
+        sim.commanders[0]["pos"]=Vector2(830,990)
+        sim.commanders[0]["captured"]=true
+        sim.battle_time=20.0
+        sim._scan_situations()
+        var report: Dictionary=sim.incoming_reports[0]
+        var hq_rider: Dictionary=report["rider"]
+        check(sim.relief_riders.size()==1 and sim.relief_riders[0]["recipient"]==ally["id"] and ally["tactical_order"]=="","distinct riders leave the threatened corps before any decision")
+        for tick in range(12):
+            sim.battle_time+=0.1
+            sim._move_relief_riders(0.1)
+        var accepted: bool=style=="공격"
+        check((ally["tactical_order"]=="지원")==accepted and not report.has("relief_answer"),"local decision at delivery depends on temperament and is not yet known at headquarters")
+        for tick in range(250):
+            sim.battle_time+=0.1
+            sim._move_relief_riders(0.1)
+            sim._move_reporting_messengers(0.1)
+        check(hq_rider["pos"]==sim.headquarters[0]["pos"] and report["status"]=="미대응","urgent message reaches the fixed headquarters even with a captured strategist")
+        check(("수락" if accepted else "거절") in report.get("relief_answer","") and not sim.field_notices.is_empty(),"headquarters gets the local commander's actual reply by messenger")
+        if accepted:
+            ally["tactical_until"]=sim.battle_time+5.0
+            var next:=sim._tactical_decision(ally,{},"대기","",ally["pos"],900,1.0)
+            check(next["action"]=="긴급 지원" and "현지 구원" in next["reason"],"accepted request produces an actual support action")

@@ -49,7 +49,7 @@ func _initialize() -> void:
     s.bases[0]["raid_rate"]=1
     s.bases[0]["raid_work"]=1.0
     var home:=Front.objective_targets(s,true)[0]
-    check(home["pos"]==s.bases[0]["pos"] and home["state"]=="파괴까지 20초" and home["alert"],"raid clock and focus refer to the chosen first depot")
+    check(home["pos"]==s._home_point(0) and home["pos"]!=s.bases[0]["pos"] and not home["alert"],"headquarters stays fixed when the player relocates the first depot")
     for u in s.units:
         u["pos"]=s.bases[0]["pos"]+Vector2(350,0)
     var raider:=s.find_unit(3)
@@ -64,8 +64,26 @@ func _initialize() -> void:
     s.find_unit(4)["pos"]=raider["pos"]
     s._update_base_raid(s.bases[0],2.0)
     s._check_victory()
-    check("급습 16초" in s.result_detail and "적 2개" in s.result_detail,"interrupted raids reset and the debrief reports actual time and final raiders")
-    check(s.finished and s.winning_side==1 and "첫 보급기지" in s.result_detail and other["alive"],"depot defense debrief identifies the lost primary depot")
+    check(is_equal_approx(s.bases[0]["raid_elapsed"]*s.operation_scale(),16.0) and s.bases[0]["raiders_at_loss"]==2,"depot raid still records actual time and raiders")
+    check(not s.finished and not s.bases[0]["alive"] and other["alive"],"losing the first depot only removes that supply radius")
+    check(not s.field_notices.is_empty(),"supply loss is available in the notification inbox")
+    raider["pos"]=home["pos"]
+    s._update_headquarters(6.0)
+    check(Front.objective_targets(s,true)[0]["state"]=="함락까지 24초","actual headquarters occupation countdown")
+    blue["pos"]=raider["pos"]
+    s._update_headquarters(0.1)
+    check(s.headquarters[0]["occupation"]==0.0,"a defender interrupts headquarters occupation")
+    blue["pos"]+=Vector2(350,0)
+    s._update_headquarters(s.HQ_CAPTURE_SECONDS)
+    s._check_victory()
+    check(s.finished and s.winning_side==1 and "본진 함락" in s.result and "48초" in s.result_detail,"only successful headquarters occupation ends defense")
+    s.reset()
+    s.set_scenario(1)
+    for u in s.units: u["pos"]=s.field_size*0.5
+    s.find_unit(0)["pos"]=s.headquarters[1]["pos"]
+    s._update_headquarters(s.HQ_CAPTURE_SECONDS)
+    s._check_victory()
+    check(s.finished and s.winning_side==0 and "적 본진 함락" in s.result,"enemy headquarters falls on the same terms in other operations")
     s.reset()
     s.set_scenario(3)
     var target:=Front.objective_targets(s,false)
