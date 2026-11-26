@@ -25,6 +25,7 @@ static func choose(sim, unit: Dictionary, enemy: Dictionary, action: String) -> 
     var p: Vector2=unit["pos"]
     var ep: Vector2=enemy["pos"]
     var distance:=p.distance_to(ep)
+    if archer and distance<110: return {}
     var opening:=0.0
     if distance<=(173.0 if archer else 155.0) and not enemy["routed"] and (archer or not sim._river_separates(p,ep)):
         var advantage: float=float(unit["troops"])/maxf(1.0,enemy["troops"])

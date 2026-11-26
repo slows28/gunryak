@@ -1685,6 +1685,7 @@ func _draw_map(_canvas: Control) -> void:
     _draw_contact_fronts(visible_units,field_view)
     if camera_zoom>=0.65:
         var soldiers: Array[Dictionary]=_visible_soldier_batch(visible_units,field_view)
+        if sim.six_armies: _draw_formation_ink(visible_units,field_view)
         _draw_depth_scene(soldiers,_visible_trees(),visible_units)
     for unit in visible_units:
         if field_view.has_point(unit["pos"]):
@@ -1932,15 +1933,7 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             volley_age=render_clock-float(volley["time"])
             volley_offset=(volley["from"] as Vector2)-(unit["pos"] as Vector2)
         var center: Vector2=unit["pos"]
-        var march_offset:=Vector2.ZERO
-        if sim.started and not sim.finished and not sim.paused and previous_centers.has(id):
-            var previous: Vector2=previous_centers[id]
-            march_offset=previous.lerp(center,clampf(step_buffer/0.1,0.0,1.0))-center
-        if sim.six_armies and core>=3:
-            var anchors: Array[Vector2]=display_slots.slice(0,core)
-            for i in range(anchors.size()): anchors[i]+=march_offset
-            var field_ink:=Color("#244d72") if unit["side"]==0 else Color("#8a383c")
-            _draw_formation_footprint(anchors,Color(field_ink,0.30*accent.a),Color(accent,0.83*accent.a),1.15/camera_zoom)
+        var march_offset:=_render_offset(id,center)
         var scatter: float=(100.0-float(unit["cohesion"]))*0.045
         if bool(unit["routed"]): scatter+=6.5
         var last_attack_age: float=render_clock-float(unit.get("last_visual",-100.0))
@@ -1984,6 +1977,28 @@ func _nearest_volley_lane(point: Vector2, lanes: Array[Vector2]) -> int:
             selected=lane>>1
             closest=distance
     return selected
+
+func _render_offset(id: int, center: Vector2) -> Vector2:
+    if sim.started and not sim.finished and not sim.paused and previous_centers.has(id):
+        var previous: Vector2=previous_centers[id]
+        return previous.lerp(center,clampf(step_buffer/0.1,0.0,1.0))-center
+    return Vector2.ZERO
+
+func _draw_formation_ink(units: Array[Dictionary], field_view: Rect2) -> void:
+    for unit in units:
+        var center: Vector2=unit["pos"]
+        if not field_view.has_point(center): continue
+        var id: int=unit["id"]
+        var slots: Array[Vector2]=deformed_slot_cache.get(id,formation_render_cache[id])
+        var count:=mini(slots.size(),clampi(ceili(float(unit["troops"])/180.0),1,24))
+        if count<3: continue
+        var anchors: Array[Vector2]=slots.slice(0,count)
+        var offset:=_render_offset(id,center)
+        for i in range(count): anchors[i]+=offset
+        var ink:=Color("#244d72") if unit["side"]==0 else Color("#8a383c")
+        var edge: Color=COL_BLUE if unit["side"]==0 else COL_RED
+        var opacity: float=0.48 if unit["routed"] else (0.64 if unit["ambush_ready"]>=3.0 else 1.0)
+        _draw_formation_footprint(anchors,Color(ink,0.30*opacity),Color(edge,0.83*opacity),1.15/camera_zoom)
 
 func _draw_formation_footprint(slots: Array[Vector2], fill: Color, outline: Color, width: float) -> void:
     var hull: PackedVector2Array = Geometry2D.convex_hull(PackedVector2Array(slots))

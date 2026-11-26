@@ -3291,6 +3291,7 @@ func _destination_order(unit: Dictionary,enemy: Dictionary,action: String,reason
     var mission: String=unit["mission"]
     if mission=="철수": return {"action":"전술 철수","reason":"책사의 철수 지시","goal":dest}
     if p.distance_to(dest)<=65.0: unit["destination_reached"]=true
+    if action=="거리 유지" and distance<110.0: return original
     if not bool(unit["destination_reached"]):
         if distance<85.0 and action in ["거리 유지","측면 방어","교전","돌파","방어"]: return original
         return {"action":"지정 위치 이동","reason":"책사가 지정한 작전 지역으로 이동","goal":dest}

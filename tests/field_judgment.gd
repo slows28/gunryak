@@ -55,6 +55,9 @@ func _initialize() -> void:
     var intercept: Vector2=general["goal"]
     sim._move_unit(general,0.1)
     check((general["pos"] as Vector2).distance_to(intercept)<old.distance_to(intercept) and not sim.march_plans.has(0),"protector actually closes on its intercept")
+    for tick in range(80): sim._move_unit(general,0.1)
+    check(sim._physical_screen(ally,enemy).get("id",-1)==general["id"],"infantry arrives in a position that physically screens its archer")
+    general["pos"]=old
     expose_opening(sim)
     general["ai_cooldown"]=0.0
     sim.step(0.1)
@@ -74,5 +77,23 @@ func _initialize() -> void:
     check(general["field_choice"].is_empty() and general["goal"]==general["order_destination"],"lost observation restores original destination")
     var plans:=sim.LinkedMarch.plan(sim,{},0.1)
     check(plans.has(0),"linked march resumes with the same ally after danger passes")
+    var opposing:=WarSim.new()
+    opposing.set_long_operation(true)
+    opposing.set_scenario(WarSim.TRAINING_SCENARIO)
+    stage(opposing)
+    for unit in opposing.units: unit["side"]=1-int(unit["side"])
+    var red:=opposing.find_unit(0)
+    opposing._decide(red)
+    check(red["action"]=="아군 보호" and red["field_choice"].get("ally")==1,"opposing general uses the same local protection rule")
+    expose_opening(opposing)
+    opposing._decide(red)
+    check(red["action"]=="공격 지속","opposing general can press the same opening")
+    red["type"]="궁병"
+    red["ammo"]=40.0
+    opposing._decide(red)
+    check(red["action"]=="공격 지속" and red["goal"]==red["pos"],"archer presses from observed firing range")
+    red["ammo"]=0.0
+    opposing._decide(red)
+    check(red["field_choice"].is_empty(),"empty quiver rules out covering fire or a ranged attack")
     if failures==0: print("GUNRYAK_FIELD_JUDGMENT_PASS")
     quit(1 if failures else 0)
