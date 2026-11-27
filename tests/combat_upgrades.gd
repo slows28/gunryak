@@ -10,6 +10,7 @@ func _initialize() -> void:
     _running_charge()
     _contact_footwork()
     _planted_feet()
+    _melee_exchange()
     _melee_crowd()
     _formation_support()
     _change_ranks()
@@ -414,6 +415,39 @@ func _planted_feet() -> void:
     _check(is_equal_approx(right.x-left.x,4.5) and left.y==1.0, "approaching opponents stop at contact and retain lateral movement")
     _check(motion.stop_at_contact(Vector2.ZERO,Vector2(-3,0),Vector2(4,0),Vector2(2,0)) == Vector2(-3,0),
         "separating opponents can leave the contact")
+
+func _melee_exchange() -> void:
+    var motion=preload("res://scripts/infantry_exchange.gd")
+    var attacker: Dictionary={"core":1,"end":PackedVector2Array([Vector2.ZERO]),"heading":PackedFloat32Array([0]),
+        "partners":PackedInt32Array([3*4096]),"exchanges":{}}
+    var defender: Dictionary={"core":1,"end":PackedVector2Array([Vector2(8,0),Vector2(14,-4),Vector2(38,4)]),"exchanges":{}}
+    var hit: Dictionary={"attacker_id":0,"defender_id":3,"contacts":1,"damage":2.0,"kind":"근접","time":10.0,"visual_from":Vector2.ZERO}
+    hit.kind="화살"
+    motion.begin(hit,attacker,defender,0.4)
+    hit.kind="근접"
+    hit.damage=0.0
+    motion.begin(hit,attacker,defender,0.4)
+    _check(attacker.exchanges.is_empty() and defender.exchanges.is_empty(),"no infantry exchange on an arrow or a zero-loss event")
+    hit.damage=2.0
+    motion.begin(hit,attacker,defender,0.4)
+    var front: Dictionary=defender.exchanges.get(0,{})
+    var cover: Dictionary=defender.exchanges.get(24,{})
+    _check(attacker.exchanges.size()==1 and front.get("role",-1)==motion.Role.YIELD_GROUND and cover.get("role",-1)==motion.Role.FILL,"contact assigns an actual opponent and one close rear representative")
+    if front.is_empty() or cover.is_empty(): return
+    _check(not defender.exchanges.has(48) and motion.slot(24,1)==1 and motion.slot(1,1)<0,"distant file stays at its post and lost file identities cannot alias another soldier")
+    _check(motion.pose(front.role,0.10)==motion.Pose.SHIELD and motion.foot(front,0.10,front.root)==front.root,"front plants and braces before giving ground")
+    _check(motion.foot(front,0.24,front.root).x>front.root.x and motion.foot(cover,0.24,cover.root)==cover.root,"rear soldier waits until the defender has started to yield")
+    _check(motion.foot(cover,0.5,cover.root).distance_to(front.root)<1.0 and motion.foot(front,0.5,front.root).distance_to(front.root)>4.0,"cover occupies the released ground")
+    _check(motion.foot(cover,motion.DURATION,Vector2(20,1))==Vector2(20,1),"recovery follows the live formation")
+    var at: float=front.at
+    hit.time=10.5
+    motion.begin(hit,attacker,defender,0.4)
+    _check(is_equal_approx(front.at,at) and defender.exchanges.size()==2,"a new event cannot interrupt a committed exchange")
+    attacker.exchanges.clear()
+    defender.exchanges.clear()
+    attacker.end[0]=Vector2(-30,0)
+    motion.begin(hit,attacker,defender,0.4)
+    _check(attacker.exchanges.is_empty(),"out-of-reach feet cannot start a strike")
 
 func _melee_crowd() -> void:
     var motion := preload("res://scripts/infantry_motion.gd")

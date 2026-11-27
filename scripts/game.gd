@@ -5,6 +5,8 @@ const WarSim = preload("res://scripts/war_sim.gd")
 const Materials = preload("res://scripts/command_materials.gd")
 const BattleHud = preload("res://scripts/battle_hud.gd")
 const BattleAudio = preload("res://scripts/battle_audio.gd")
+const InfantryExchange = preload("res://scripts/infantry_exchange.gd")
+const INFANTRY_CONTACT = preload("res://assets/art/infantry_contact.svg")
 const InfantryMotion = preload("res://scripts/infantry_motion.gd")
 const FrontView=preload("res://scripts/front_view.gd")
 const TerrainArt = preload("res://scripts/terrain_art.gd")
@@ -1619,7 +1621,7 @@ func _gui_input(event: InputEvent) -> void:
         return
     if event is InputEventMouseButton and event.pressed and Rect2(MAP_TOP_LEFT,MAP_SIZE).has_point(event.position):
         if event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-            _change_zoom(0.25 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -0.25)
+            _change_zoom(0.25 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -0.25, event.position)
             accept_event()
             return
     if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
@@ -2074,7 +2076,7 @@ func _draw_depth_scene(soldiers:Array[Dictionary],trees:Array[Dictionary],visibl
         else:
             var item:Dictionary=soldiers[si]
             _draw_soldier(item["point"],item["unit"],item["accent"],int(item["index"]),
-                item["target"],float(item["bow_age"]),bool(item["shadow"]),item["reaction"],item["file_step"],item["swing_at"],item["stride_angle"],item["stroke_age"],item["look_angle"])
+                item["target"],float(item["bow_age"]),bool(item["shadow"]),item["reaction"],item["file_step"],item["swing_at"],item["stride_angle"],item["stroke_age"],item["look_angle"],item["exchange_pose"])
             si+=1
 
 func _update_contact_fronts(dt: float) -> void:
@@ -2189,11 +2191,13 @@ func _step_infantry_feet(dt: float) -> void:
         if mix > 0.2: state["bins"] = InfantryMotion.bins_for(state["proposal"])
         state["raw"] = raw
         state["target_id"] = unit["contact_target_id"]
+        state["routed"] = unit["routed"]
         state["fog"] = fog_enabled
         infantry_feet[id] = state
         prior[id] = old if old.get("tick", -2) == sim.step_count - 1 else {}
     for id: int in prior:
         _turn_infantry(sim.find_unit(id), infantry_feet[id], prior[id], dt)
+    _step_infantry_exchanges(prior,dt)
     _space_melee_feet(prior)
     for id: int in prior:
         var state: Dictionary = infantry_feet[id]
@@ -2209,6 +2213,49 @@ func _step_infantry_feet(dt: float) -> void:
             @warning_ignore("integer_division")
             var index: int = (partner / 24)*int(opponent["core"]) + partner % 24
             people[i] = opponent["end"][index]
+
+func _step_infantry_exchanges(prior: Dictionary, dt: float) -> void:
+    var now: float=sim.battle_time
+    for id: int in prior:
+        var state: Dictionary=infantry_feet[id]
+        var actions: Dictionary=prior[id].get("exchanges",{})
+        if state["routed"]: actions.clear()
+        state["exchanges"]=actions
+        for key: int in actions.keys():
+            var action: Dictionary=actions[key]
+            var i:=InfantryExchange.slot(key,state["core"])
+            var foe: int=action["enemy"]
+            if i<0 or i>=state["end"].size() or now-action["at"]>=InfantryExchange.DURATION or not prior.has(foe) or not contact_fronts.has(Vector2i(id,foe)) or infantry_feet[foe]["routed"]:
+                actions.erase(key)
+            elif Vector2(state["end"][i]).distance_squared_to(action["root"])>18.0*18.0:
+                actions.erase(key)
+    for hit in sim.combat_contacts.values():
+        var a: int=hit["attacker_id"]
+        var b: int=hit["defender_id"]
+        if not prior.has(a) or not prior.has(b) or hit["kind"]!="근접" or not hit.has("visual_from"): continue
+        var defender: Dictionary=infantry_feet[b]
+        if infantry_feet[a]["routed"] or defender["routed"] or not contact_fronts.has(Vector2i(a,b)): continue
+        var shift: Dictionary=sim.front_shifts.get(Vector2i(mini(a,b),maxi(a,b)),{})
+        var pressure: float=shift.get("pressure",0.0) if shift.get("loser",-1)==b else 0.0
+        InfantryExchange.begin(hit,infantry_feet[a],defender,pressure)
+    for id: int in prior:
+        var state: Dictionary=infantry_feet[id]
+        var actions: Dictionary=state["exchanges"]
+        if actions.is_empty(): continue
+        var points: PackedVector2Array=state["end"]
+        var origin: PackedVector2Array=state["start"]
+        var terrain_edge: bool=absf(state["center"].x-sim.river_x(state["center"].y))<150.0
+        for key: int in actions:
+            var i:=InfantryExchange.slot(key,state["core"])
+            var action: Dictionary=actions[key]
+            var goal:=InfantryExchange.foot(action,now-action["at"],points[i])
+            var next:=origin[i].move_toward(goal,dt*37.0).clamp(Vector2.ZERO,sim.field_size)
+            if terrain_edge and sim.in_open_water(next): continue
+            state["walked"][i]+=origin[i].distance_to(next)-origin[i].distance_to(points[i])
+            points[i]=next
+            var direction: Vector2=action["facing"]
+            state["heading"][i]=rotate_toward(state["from_heading"][i],direction.angle(),6.2*dt)
+        state["end"]=points
 
 func _space_melee_feet(updated: Dictionary) -> void:
     var points := PackedVector2Array()
@@ -2530,6 +2577,7 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             # the formation's cohesion scatter again would stack sprites.
             scatter *= 1.0 - lerpf(feet["from_mix"],feet["mix"],1.0-blend)
         var incoming: Array = impacts.get(id, [])
+        var exchanges: Dictionary = feet.get("exchanges",{}) if tracked and feet["fog"] == fog_enabled and not sim.finished and not unit["routed"] else {}
         var two_fronts: bool = sim.rear_responses.get(id, {}).get("front", -1) >= 0
         var swing_times: Dictionary = unit.get("melee_visual_times", {})
         for index in range(draw_count):
@@ -2558,7 +2606,8 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             var nearby: bool = index < local_owners.size() and local_owners[index] >= 0
             if nearby:
                 local_target = people[index]
-                if two_fronts: swing_at = swing_times.get(local_owners[index],-100.0)
+                swing_at = swing_times.get(local_owners[index],-100.0)
+            var exchange_pose := -1
             var stroke_age := -INF
             if unit["type"] == "보병" and sim.started and not sim.finished and local_target != Vector2.INF:
                 if index < people.size(): local_target = people[index]
@@ -2566,7 +2615,13 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
                     var direction := point.direction_to(local_target)
                     var exposed := nearby or (slots[index] - slots[index % core]).dot(direction) >= -1.5
                     var facing_foe := look_angle == -INF or Vector2.from_angle(look_angle).dot(direction) >= 0.45
-                    stroke_age = InfantryMotion.swing_age(id, person, render_clock, swing_at) if exposed and facing_foe and point.distance_squared_to(local_target) <= 13.0*13.0 else -1.0
+                    stroke_age = -1.0
+                    if exposed and facing_foe and point.distance_squared_to(local_target) <= InfantryExchange.REACH * InfantryExchange.REACH:
+                        stroke_age = InfantryMotion.swing_age(id, person, render_clock, swing_at)
+                        if nearby and not unit["routed"]:
+                            exchange_pose = InfantryExchange.Pose.SHIELD
+                            if stroke_age >= 0.0 and stroke_age < 0.38:
+                                exchange_pose = InfantryExchange.pose(InfantryExchange.Role.PRESS, stroke_age)
             var event_age: float = render_clock - swing_at - float(index%5)*0.026
             if unit["type"] != "보병" and local_target!=Vector2.INF and event_age>=0.0 and event_age<=0.30:
                 var lunge: float=sin(clampf(event_age/0.30,0.0,1.0)*PI)*SOLDIER_SCALE
@@ -2583,8 +2638,11 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
                     point+=volley_offset*(1.0-smoothstep(FrontView.VOLLEY_RELEASE,FrontView.VOLLEY_RECOVERY,bow_age))
             if point!=display_slots[index] and sim.in_open_water(point): point=display_slots[index]
             point=point.clamp(Vector2.ZERO,sim.field_size)
+            if exchanges.has(person):
+                var action: Dictionary=exchanges[person]
+                exchange_pose=InfantryExchange.pose(action["role"],render_clock-action["at"])
             batch.append({"point":point,"unit":unit,"accent":accent,"index":index,"target":local_target,
-                "bow_age":bow_age,"shadow":index<core,"reaction":FrontView.hit_reaction(point, index, incoming),"file_step":file_step,"swing_at":swing_at,"stride_angle":stride_angle,"stroke_age":stroke_age,"look_angle":look_angle})
+                "bow_age":bow_age,"shadow":index<core,"reaction":FrontView.hit_reaction(point, index, incoming),"file_step":file_step,"swing_at":swing_at,"stride_angle":stride_angle,"stroke_age":stroke_age,"look_angle":look_angle,"exchange_pose":exchange_pose})
     batch.sort_custom(func(a:Dictionary,b:Dictionary)->bool: return (a["point"] as Vector2).y<(b["point"] as Vector2).y)
     return batch
 
@@ -3093,8 +3151,10 @@ func _clamp_camera(focused_sector: int=-1, focused_objective: int=-1) -> void:
     camera_center.x = clampf(camera_center.x,minf(half.x,sim.field_size.x*0.5),maxf(sim.field_size.x-half.x,sim.field_size.x*0.5))
     camera_center.y = clampf(camera_center.y,minf(half.y,sim.field_size.y*0.5),maxf(sim.field_size.y-half.y,sim.field_size.y*0.5))
 
-func _change_zoom(delta: float) -> void:
-    camera_zoom = clampf(camera_zoom+delta,_overview_zoom(),2.5)
+func _change_zoom(delta: float, cursor: Vector2 = Vector2.INF) -> void:
+    var anchor := _world_mouse(cursor) if cursor != Vector2.INF else camera_center
+    camera_zoom = clampf(camera_zoom+delta,_overview_zoom(),4.25)
+    if cursor != Vector2.INF: camera_center += anchor - _world_mouse(cursor)
     _clamp_camera()
     if is_instance_valid(map_layer): map_layer.queue_redraw()
     queue_redraw()
@@ -3287,7 +3347,7 @@ func _stride_phase(unit: Dictionary, index: int) -> float:
 func _soldier_motion_region(base: Rect2,pose: int) -> Rect2:
     return Rect2(base.position+Vector2(pose*288,0),base.size)
 
-func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, target: Vector2, bow_age: float, draw_shadow: bool, reaction: Vector2, file_step: Vector2, swing_at: float = -INF, stride_angle: float = -INF, stroke_age: float = -INF, look_angle: float = -INF) -> void:
+func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, target: Vector2, bow_age: float, draw_shadow: bool, reaction: Vector2, file_step: Vector2, swing_at: float = -INF, stride_angle: float = -INF, stroke_age: float = -INF, look_angle: float = -INF, exchange_pose: int = -1) -> void:
     var direction: Vector2 = unit["facing"]
     if target!=Vector2.INF and not bool(unit["routed"]) and p.distance_squared_to(target)>0.1:
         direction=(target-p).normalized()
@@ -3333,6 +3393,9 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
             FrontView.BowPhase.LOWER:
                 pose=4
                 tilt=lerpf(0.06,0.19,smoothstep(FrontView.VOLLEY_RELEASE+0.075,FrontView.VOLLEY_RECOVERY,bow_age))
+    if exchange_pose >= 0:
+        moving=false
+        tilt=0.0
     var ground := p
     if moving:
         var stride := sin(stride_angle if stride_angle != -INF else (file_phase if dressing else _stride_phase(unit, index)))
@@ -3345,7 +3408,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
         if kind == 0: tilt -= 0.09 * reaction.length()
         else: p += reaction * SOLDIER_SCALE * 2.6
         pose = 5
-    if kind == 0 and stroke_age != -INF:
+    if kind == 0 and stroke_age != -INF and exchange_pose < 0:
         # Rotate the upper body about the atlas foot anchor. The feet keep
         # their ground through the strike and return to a guarded stance.
         if stroke_age >= 0.0 and stroke_age < 0.38:
@@ -3368,6 +3431,10 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     map_layer.draw_set_transform(map_offset+p*camera_zoom,rotation,Vector2(mirror,1.0)*camera_zoom)
     var art: Texture2D = SOLDIER_MOTION if pose>=0 else SOLDIER_ART
     var source: Rect2 = _soldier_motion_region(region,pose) if pose>=0 else region
+    if exchange_pose>=0:
+        art=INFANTRY_CONTACT
+        source=Rect2((exchange_pose*3+column)*128,int(unit["side"])*96,128,96)
+        extent.x=extent.y*128.0/96.0
     map_layer.draw_texture_rect_region(art,Rect2(Vector2(-extent.x*0.5,-extent.y*0.90),extent),source,shade)
     if aiming==FrontView.BowPhase.DRAW and column==0 and camera_zoom>=1.35:
         var draw: float=smoothstep(0.08,FrontView.VOLLEY_RELEASE,bow_age)

@@ -25,6 +25,7 @@ TESTS = [
     ("northern_campaign", ["--headless", "--path", "{project}", "--script", "res://tests/northern_campaign.gd"], "GUNRYAK_NORTHERN_PASS"),
     ("objective_pressure", ["--headless", "--path", "{project}", "--script", "res://tests/objective_pressure.gd"], "GUNRYAK_PRESSURE_PASS"),
     ("unit_combat", ["--headless", "--path", "{project}", "--script", "res://tests/combat_upgrades.gd"], "GUNRYAK_COMBAT_PASS"),
+    ("infantry_contact_replay", ["--headless", "--path", "{project}", "--fixed-fps", "24", "--script", "res://tests/infantry_contact_replay.gd"], "GUNRYAK_INFANTRY_REPLAY_PASS"),
     ("formation_efficiency", ["--headless", "--path", "{project}", "--script", "res://tests/formation_efficiency.gd"], "GUNRYAK_FORMATION_EFFICIENCY_PASS"),
     ("tactics_playtest", ["--headless", "--path", "{project}", "--script", "res://tests/tactics_playtest.gd"], "GUNRYAK_TACTICS_PASS"),
     ("balance_matrix", ["--headless", "--path", "{project}", "--script", "res://tests/balance_matrix.gd"], "GUNRYAK_BALANCE_PASS"),
