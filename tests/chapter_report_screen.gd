@@ -46,6 +46,7 @@ func _run():
                 selected=r.unit_id
                 break
         if not letter.is_empty(): break
+    var letter_tick: int=sim.step_count
     game.selected_id=selected
     game._select_unit()
     game.camera_center=sim.find_unit(selected).pos
@@ -62,7 +63,12 @@ func _run():
     var ok: bool=game.situation_detail.text.contains(letter.objective_account) and not game.reply_yes.visible and game.situation_record.text==letter.desk_summary
     game.situation_dialog.hide()
     game._close_situations()
-    game._open_order_map()
+    while sim.turn<sim.COURIER_TURN and not sim.finished:
+        sim.step(0.1)
+    game._open_due_council()
+    ok=ok and game.order_view.visible and game.order_view.council_round==1
+    ok=ok and game.order_view.progress_label.text==sim.chapter.get("desk_summary","")
+    if not ok: push_error("Letter, receipt or fifth-day council disagrees with the field state")
     await capture("map-%d"%n)
-    print("CHAPTER_REPORT ",n," tick ",sim.step_count," unit ",selected," ",letter.sender," ",letter.kind," ",letter.desk_summary," ",letter.objective_account)
+    print("CHAPTER_REPORT ",n ," tick ",letter_tick," unit ",selected," ",letter.sender," ",letter.kind," ",letter.desk_summary," ",letter.objective_account)
     game._quit_game(0 if ok else 1)

@@ -134,7 +134,7 @@ static func victory(sim) -> void:
             "lure": detail+=" · 기곡 유인 "+("성공" if c["baited"] else "미달")
             "hold": detail+=" · 고갯길 수비대 "+("주둔" if garrison else "부재")
             "flank": detail+=" · 측후방 피해 %d / 150명" % roundi(flank)
-            "link": detail+=" · 협동 피해 %d / 120명" % roundi(linked)
+            "link": detail+=" · 협동 피해 %d / 120명" % floori(linked)
             "river": detail+=" · 건넌 군단 %d / 2" % crossed
             "siege","capital": detail+=" · 성문 내구도 %d%% · 성내 유지 %d / 120초" % [ceili(100.0*sim.structures[0]["hp"]/sim.structures[0]["max_hp"]),floori(site["hold"]*sim.operation_scale()) if site["owner"]==0 else 0]
             "decisive": detail+=" · 위군 잔여 %d%%" % ceili(100.0*sim.total_troops(1)/float(c["enemy_initial"]))
@@ -171,7 +171,7 @@ static func report_progress(sim) -> void:
 static func _river_report(sim,u: Dictionary) -> Array:
     var name: String=u["name"]
     if on_east_bank(sim,u):
-        return ["도하 완료","%s군이 위수를 건너 동안에 도착했습니다. 이 강둑에 남아 있는 군단 두 개과 동쪽 교두보 확보가 필요합니다." % name]
+        return ["도하 완료","%s군이 위수를 건너 동안에 도착했습니다. 승리하려면 동쪽 강둑에 두 군단이 남아 있고 교두보도 우리 손에 있어야 합니다." % name]
     if u["bridge_crossings"]>0 and u["pos"].x<sim.river_x(u["pos"].y):
         return ["서안 복귀","%s군이 위수 서쪽으로 돌아왔습니다. 지금은 동안에 주둔한 군단 수에서 빠집니다." % name]
     var bridge: float=u["bridge_y"]
@@ -186,10 +186,10 @@ static func _link_report(sim,u: Dictionary) -> Array:
     if u.has("joint_time"):
         var ally: Dictionary=sim.find_unit(u["joint_partner"])
         var partner: String=ally.get("name","협동 군단")
-        var credit: int=roundi(u["linked_hits"])
+        var credit: int=floori(u["linked_hits"])
         if elapsed<=3.0:
             var kind: String="협공 성과" if credit>=120 and sim.chapter["metrics"].has("협공 성립"+str(u["id"])) else "협공 성립"
-            return [kind,"%s군과 %s군이 같은 적을 쳤습니다. 이번 전투에서 우리 %s군이 협공으로 가한 피해는 %d명입니다. 전군의 목표는 120명과 무공 확보입니다." % [u["name"],partner,u["name"],credit]]
+            return [kind,"%s군과 %s군이 같은 적을 쳤습니다. 우리 군단의 누적 협공 피해는 %d명입니다. 전군이 120명을 채우고 무공 집결지를 확보해야 합니다." % [u["name"],partner,credit]]
         if elapsed>=6.0:
             return ["협공 중단","%s군과 마지막으로 협공한 뒤 %d초 동안 추가 협동 타격이 없었습니다. 우리 군단의 누적 기여는 %d명입니다." % [partner,floori(elapsed*sim.operation_scale()),credit]]
     var other: Dictionary=sim.find_unit(u["assigned_link"])
