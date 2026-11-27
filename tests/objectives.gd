@@ -34,7 +34,7 @@ func check_headquarters_watch() -> void:
     check(not s.home_approach_seen(),"report expires when contact is lost")
     check(s.issue_map_order(scout.id,"본진 방어",Vector2.ZERO) and scout.order_destination==home,"headquarters order anchors to current camp")
     check(not s.LinkedMarch._available(scout),"another corps cannot pull the headquarters guard into a linked march")
-    var next:=Vector2(690,1050)
+    var next:=home+Vector2(0,120)
     check(s.place_post("본진",next) and scout.order_destination==next and not s.home_approach_seen(),"headquarters duty follows relocation")
     scout["pos"]=next
     scout["routed"]=true
