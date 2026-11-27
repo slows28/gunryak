@@ -30,6 +30,7 @@ func replay() -> void:
             game._quit_game(1)
             return
     game._start()
+    game.fog_enabled=true
     var officer: int=int(args[2]) if args.size()==5 else -1
     var limit: int=int(args[1]) if args.size()==5 else 3000
     while not sim.finished and sim.step_count<limit:

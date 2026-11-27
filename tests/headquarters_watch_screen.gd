@@ -39,15 +39,22 @@ func replay() -> void:
     campaign.equip(2,"shield")
     campaign.equip(3,"regroup")
     game._launch_campaign_battle(11)
+    if not baseline:
+        expect(game.sim.place_post("본진",Vector2(670,855)),"legal western camp for the approach replay")
     game._start()
     var sim=game.sim
     var sent: Dictionary={}
-    while sim.step_count<2220 and not sim.finished:
+    # The first raid moves with the opposing AI. Replay to an actionable
+    # observation rather than assuming every build reaches it on the same tick.
+    while not sim.finished and (not baseline or sim.step_count<2220):
         sim.step(0.1)
         for i in range(game.arrival_messages.size()-1,-1,-1):
             game.arrival_messages[i].remaining-=0.1*sim.operation_scale()
             if game.arrival_messages[i].remaining<=0: game.arrival_messages.remove_at(i)
-        if sim.step_count>=2200: game._update_contact_fronts(0.1)
+        if sim.home_approach_seen(): game._update_contact_fronts(0.1)
+        if not baseline and sim.turn>=sim.COURIER_TURN and sim.home_approach_seen() and sim.headquarters[0].occupation==0:
+            game._refresh_hud()
+            if game.dispatch_headline.visible and "인근 적 관측" in game.dispatch_headline.text and sim.home_relief_candidate()>=0: break
         if sim.turn<sim.COURIER_TURN or sim.step_count%20!=0: continue
         for letter in sim.chapter.get("receipts",{}).values():
             var id: int=letter.unit_id

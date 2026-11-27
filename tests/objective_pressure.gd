@@ -13,6 +13,10 @@ func _initialize() -> void:
     sim.set_long_operation(true)
     sim.tactical_enabled=true
     Field.deploy(sim,11)
+    var home:=sim.units.filter(func(u): return u.side==1 and u.mission=="본진 방어" and u.has_destination)
+    check(home.size()==1 and home[0].order_destination==sim.headquarters[1].pos,"one real formation opens on headquarters duty")
+    Field.assign_home_guard(sim)
+    check(sim.units.filter(func(u): return u.side==1 and u.mission=="본진 방어" and u.has_destination).size()==1,"respect the existing assignment")
     var site:=Vector2(1780,715)
     sim.outposts[0].pos=site
     for u in sim.units:

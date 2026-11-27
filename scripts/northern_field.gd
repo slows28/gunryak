@@ -44,6 +44,7 @@ static func deploy(sim, number: int) -> void:
         var unit: Dictionary=sim.units.back()
         unit["formation"]="안행진" if kind=="궁병" else "어린진"
         if number>=5: unit["mission"]="측후방 기동" if kind=="기병" else "중앙 진격"
+    if stage[2] in PRESSURE_MODES: assign_home_guard(sim)
     sim._map_terrain_posts()
     sim.chapter={"number":number,"mode":stage[2],"baited":false,"enemy_count":enemy_count,"enemy_initial":0,"metrics":{}}
 
@@ -54,6 +55,25 @@ const PRESSURE_MODES:=["sites","fronts","line","link","decisive"]
 const MASS_RADIUS:=240.0
 const MASS_CORPS:=4
 const WATCH_SECONDS:=17.0
+
+# The objective watch draws on field corps. Keep one existing infantry corps
+# on the ordinary headquarters mission, under the same rules as a Shu garrison.
+static func assign_home_guard(sim) -> void:
+    var home: Vector2=sim.headquarters[1]["pos"]
+    var guard: Dictionary={}
+    var nearest:=INF
+    for u in sim.units:
+        if u["side"]!=1 or u.has("parent_id") or u["reserve"] or u["routed"] or u["troops"]<600: continue
+        if u["mission"]=="본진 방어" and u["has_destination"]: return
+        if u["type"]!="보병" or u["has_destination"] or u["defense_set"]: continue
+        var distance: float=Vector2(u["pos"]).distance_squared_to(home)
+        if distance<nearest:
+            guard=u
+            nearest=distance
+    if not guard.is_empty():
+        guard["mission"]="본진 방어"
+        guard["has_destination"]=true
+        guard["order_destination"]=home
 
 static func review_pressure(sim) -> void:
     var mode: String=sim.chapter.get("mode","")
