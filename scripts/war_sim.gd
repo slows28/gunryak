@@ -91,6 +91,7 @@ var timeline: Array[Dictionary] = []
 var visual_effects: Array[Dictionary] = []
 var front_shifts: Dictionary = {}
 var combat_contacts: Dictionary = {}
+var rear_responses: Dictionary = {}
 var combat_history: Array[Dictionary] = []
 const COMBAT_HISTORY_SECONDS: float = 2.0
 var dust_effects: Array[Dictionary] = []
@@ -127,6 +128,7 @@ func reset() -> void:
     visual_effects.clear()
     front_shifts.clear()
     combat_contacts.clear()
+    rear_responses.clear()
     fallen_marks.clear()
     combat_history.clear()
     dust_effects.clear()
@@ -1310,14 +1312,22 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var pos: Vector2 = unit["pos"]
     var goal: Vector2 = unit["goal"]
     var enemy: Dictionary = _nearest_visible_enemy(unit)
+    var reply: Dictionary = rear_responses.get(unit["id"], {})
+    var meeting_contact := false
+    if not reply.is_empty() and _can_answer_rear(unit):
+        var opponent := find_unit(reply["front"] if reply["front"] >= 0 else reply["rear"])
+        if _in_melee(unit, opponent):
+            enemy = opponent
+            goal = pos
+            meeting_contact = true
     var dressing_line: bool=long_operation and not enemy.is_empty() and unit["action"] in ["후열 정렬","엄호 사격","전열 유지","거리 유지","궁병 보호","협동 엄호"]
     if not enemy.is_empty() and str(unit["action"]) not in ["수레 공격", "후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호","아군 보호","후열 정렬","엄호 사격","전열 유지"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
             goal = pos
-            unit["goal"] = pos
-    var march: Dictionary=march_plans.get(unit["id"],{})
+            if not meeting_contact: unit["goal"] = pos
+    var march: Dictionary={} if meeting_contact else march_plans.get(unit["id"],{})
     var rate: float
     if march.is_empty():
         rate=_movement_rate(unit,enemy)
@@ -1387,7 +1397,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var deployed: bool = step_count <= 1 and march.get("phase", "") == "연계 행군"
     if long_operation and not deployed and not prior_heading.is_zero_approx():
         var desired: Vector2 = unit["facing"]
-        if march.is_empty() and actual_move.is_zero_approx() and not enemy.is_empty() and unit["contact_target_id"] == enemy["id"] and not unit["routed"]:
+        if meeting_contact or (march.is_empty() and actual_move.is_zero_approx() and not enemy.is_empty() and unit["contact_target_id"] == enemy["id"] and not unit["routed"]):
             desired = pos.direction_to(enemy["pos"])
         var turn_rate := 2.8 if unit["type"] == "기병" else 2.1
         unit["facing"] = prior_heading.rotated(clampf(prior_heading.angle_to(desired), -turn_rate * dt, turn_rate * dt)).normalized()
@@ -1706,18 +1716,80 @@ func visual_contact_pair(attacker: Dictionary,defender: Dictionary) -> Array[Vec
                 pair[1]=q
     return pair
 
+func _can_answer_rear(unit: Dictionary) -> bool:
+    return unit["type"] == "보병" and _can_attack_troops(unit) and unit["action"] not in [
+        "후퇴", "재집결", "전술 철수", "전술 재집결", "보급 복귀", "탄약 보충", "거리 유지"]
+
+func _in_melee(unit: Dictionary, other: Dictionary) -> bool:
+    if other.is_empty() or other["routed"] or not _locally_observed(unit, other): return false
+    var p: Vector2 = unit["pos"]
+    var q: Vector2 = other["pos"]
+    return not _river_separates(p, q) and _detour_goal(unit, p, q) == q and formation_contacts(unit, other, 30.0) > 0
+
+# A corps learns about a second front from landed melee hits. Keep its main
+# heading while its front is occupied. Rotate the whole body for a lone threat.
+func _read_melee_pressure() -> Dictionary:
+    var incoming: Dictionary = {}
+    var threatened: Dictionary = {}
+    for hit in combat_contacts.values():
+        if hit["kind"] == "화살" or hit["damage"] <= 0.0: continue
+        var id: int = hit["defender_id"]
+        if hit["rear"] or rear_responses.has(id): threatened[id] = true
+        if not incoming.has(id): incoming[id] = []
+        incoming[id].append(hit)
+    var responses: Dictionary = {}
+    for id: int in threatened:
+        var unit := find_unit(id)
+        if not _can_answer_rear(unit): continue
+        var old: Dictionary = rear_responses.get(id, {})
+        var rear_id := -1
+        var front_id := -1
+        var rear_score := -INF
+        var front_score := -INF
+        var pos: Vector2 = unit["pos"]
+        var heading: Vector2 = unit["facing"]
+        for hit: Dictionary in incoming[id]:
+            var other := find_unit(hit["attacker_id"])
+            if not _can_attack_troops(other): continue
+            var bearing := pos.direction_to(other["pos"]).dot(heading)
+            var turning: bool = old.get("front", -2) == -1 and old.get("rear", -1) == other["id"]
+            var behind := bearing < -0.4 or (turning and bearing < 0.8)
+            if not behind and bearing <= 0.3: continue
+            if not _in_melee(unit, other): continue
+            var score: float = -pos.distance_squared_to(other["pos"])
+            if behind and (other["id"] == old.get("rear", -1) or score > rear_score):
+                rear_id = other["id"]
+                rear_score = INF if rear_id == old.get("rear", -1) else score
+            elif not behind and (other["id"] == old.get("front", -1) or score > front_score):
+                front_id = other["id"]
+                front_score = INF if front_id == old.get("front", -1) else score
+        if rear_id < 0: continue
+        if front_id < 0:
+            var opponent := find_unit(old.get("front", unit["contact_target_id"]))
+            if not opponent.is_empty() and opponent["id"] != rear_id and pos.direction_to(opponent["pos"]).dot(heading) > 0.3 and _in_melee(unit, opponent):
+                front_id = opponent["id"]
+        responses[id] = {"front": front_id, "rear": rear_id}
+    return responses
+
 func _combat(dt: float) -> void:
     if dt<=0.0: return
     # Precompute strikes before taking losses. Both sides resolve simultaneously.
     var damage_entries: Array[Dictionary] = []
     var targets: Dictionary = {}
     var requested_losses: Dictionary = {}
+    rear_responses = _read_melee_pressure() if long_operation else {}
     combat_contacts={}
     while not combat_history.is_empty() and battle_time-float(combat_history.front()["time"])>COMBAT_HISTORY_SECONDS:
         combat_history.pop_front()
     for unit in units:
         if six_armies and _can_attack_troops(unit):
-            targets[int(unit["id"])]=_combat_target(unit)
+            var reply: Dictionary = rear_responses.get(unit["id"], {})
+            if reply.is_empty():
+                targets[int(unit["id"])] = _combat_target(unit)
+            else:
+                # Share the existing strike budget across the two contacts.
+                var rear_file: bool = reply["front"] < 0 or (step_count + int(unit["id"])) % 3 == 0
+                targets[int(unit["id"])] = find_unit(reply["rear"] if rear_file else reply["front"])
     for unit in units:
         unit["contact_troops"]=0
         unit["contact_target_id"]=-1
@@ -1861,7 +1933,10 @@ func _combat(dt: float) -> void:
             "ambush":ambush,"counter":counter,"guarding":guarding,"kind":attack_kind,"contacts":contacts,
             "from":pos,"to":ep,"time":battle_time,"side":unit["side"]
         }
-        if shock>0.0 or battle_time-float(unit["last_visual"])>=(0.9 if bow else 0.55):
+        var visual_time: float = unit["last_visual"]
+        if rear_responses.get(source_id, {}).get("front", -1) >= 0:
+            visual_time = unit.get("melee_visual_times", {}).get(target_id, -100.0)
+        if shock>0.0 or battle_time-visual_time>=(0.9 if bow else 0.55):
             var pair: Array[Vector2]=visual_contact_pair(unit,enemy)
             entry["visual_from"]=pair[0]
             entry["visual_to"]=pair[1]
@@ -1911,6 +1986,9 @@ func _combat(dt: float) -> void:
             source["damage_dealt"] = float(source["damage_dealt"]) + actual_damage
             if entry.has("visual_from"):
                 source["last_visual"]=battle_time
+                if entry["kind"] != "화살":
+                    if not source.has("melee_visual_times"): source["melee_visual_times"] = {}
+                    source["melee_visual_times"][entry["defender_id"]] = battle_time
                 visual_effects.append(entry)
                 if visual_effects.size()>100: visual_effects.pop_front()
             if six_armies:

@@ -11,6 +11,7 @@ func _initialize() -> void:
     _change_ranks()
     _aftermath()
     _targeting()
+    _rear_pressure()
     _simultaneous_losses()
     print("GUNRYAK_COMBAT_PASS" if failures==0 else "GUNRYAK_COMBAT_FAIL %d" % failures)
     quit(0 if failures==0 else 1)
@@ -308,3 +309,53 @@ func _aftermath() -> void:
     _check(fallen.size()>=2 and sim.fallen_marks==fallen,"fallen remain at the hit location as survivors retreat and desert")
     sim.reset()
     _check(sim.fallen_marks.is_empty(),"starting another operation clears the previous battlefield")
+
+func _rear_pressure() -> void:
+    var sim := _field()
+    var unit := _place(sim.find_unit(0),Vector2(760,790),"보병","방진")
+    var front := _place(sim.find_unit(3),Vector2(812,790),"보병","방진")
+    var rear := _place(sim.find_unit(4),Vector2(706,790),"보병","방진")
+    rear["facing"] = Vector2.RIGHT
+    unit["contact_target_id"] = front["id"]
+    unit["action"] = "지정 지역 사수"
+    unit["goal"] = Vector2(900,790)
+    var hits := {}
+    var strokes := {}
+    for i in range(36):
+        sim.battle_time += 0.1
+        sim.step_count += 1
+        sim._combat(0.1)
+        var hit: Dictionary = sim.combat_contacts.get(unit["id"], {})
+        if hit.is_empty(): continue
+        var id: int = hit["defender_id"]
+        hits[id] = hits.get(id,0) + 1
+        if hit.has("visual_from"): strokes[id] = true
+    _check(hits.get(front["id"],0) == 24 and hits.get(rear["id"],0) == 12,
+        "two-sided infantry contact shares 36 strikes between both real opponents")
+    _check(strokes.has(front["id"]) and strokes.has(rear["id"]), "both lines receive actual attack animation events")
+    var position: Vector2 = unit["pos"]
+    var goal: Vector2 = unit["goal"]
+    sim._move_unit(unit,0.1)
+    _check(unit["pos"] == position and unit["goal"] == goal and unit["facing"].dot(Vector2.RIGHT)>0.99,
+        "dual contact holds the corps heading and preserves the player's destination")
+    front["troops"] = 0.0
+    sim._combat(0.1)
+    var heading: Vector2 = unit["facing"]
+    sim._move_unit(unit,0.1)
+    _check(sim.rear_responses[unit["id"]]["front"] == -1 and absf(heading.angle_to(unit["facing"])) > 0.1 and absf(heading.angle_to(unit["facing"])) <= 0.211,
+        "an unopposed rear hit starts a bounded pivot towards the attacker")
+    unit["action"] = "후퇴"
+    unit["goal"] = position + Vector2(0,100)
+    sim._move_unit(unit,0.1)
+    sim._combat(0.1)
+    _check(not sim.rear_responses.has(unit["id"]) and unit["pos"] != position, "withdrawal proceeds even after a rear hit")
+    unit["action"] = "방어"
+    unit["facing"] = Vector2.RIGHT
+    rear["pos"] = position - Vector2(180,0)
+    sim._combat(0.1)
+    _check(not sim.rear_responses.has(unit["id"]), "an attacker that leaves contact cannot hold the corps")
+    rear["type"] = "궁병"
+    rear["pos"] = position - Vector2(100,0)
+    for i in range(2): sim._combat(0.1)
+    _check(sim.combat_contacts.get(rear["id"],{}).get("kind","") == "화살" and not sim.rear_responses.has(unit["id"]),
+        "arrows from behind do not invent a rear melee")

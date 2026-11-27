@@ -625,6 +625,8 @@ func _field_action(u: Dictionary) -> String:
     if float(u["troops"])<=0.0: return "전멸"
     if bool(u["routed"]): return "패주"
     if sim.started and not sim.finished:
+        var response: Dictionary = sim.rear_responses.get(u["id"], {})
+        if not response.is_empty(): return "앞뒤 교전" if response["front"] >= 0 else "후방으로 전환"
         if u["type"] == "기병" and u["charge"] >= 32.0: return "돌격 가속"
         if not u.get("field_choice",{}).is_empty(): return u["action"]
         var age: float=sim.battle_time-float(u.get("last_visual",-100.0))
@@ -1110,6 +1112,11 @@ func _refresh_commander_desk() -> void:
             details_label.tooltip_text+="\n"+stages[clampi(int(unit["flank_phase"]),0,2)]+" · 완료 %d · 공격 %d · 중단 %d" % [
                 int(unit["flank_completed"]),int(unit["flank_commits"]),int(unit["flank_aborts"])]
     decision_label.text=str(unit["reason"])
+    var reply: Dictionary = sim.rear_responses.get(unit["id"], {})
+    if sim.started and not sim.finished and not reply.is_empty():
+        var rear := sim.find_unit(reply["rear"])
+        var name_at_rear: String = str(rear["name"]) if _visible_unit(rear) else "적군"
+        decision_label.text = "정면 교전 유지 · 후열이 %s에 대응" % name_at_rear if reply["front"] >= 0 else "뒤에서 %s의 공격을 받아 대열 선회" % name_at_rear
     var proposal: String=str(mind.get("proposal",""))
     var concern: String=str(mind.get("concern",""))
     commander_request.text="건의 없음" if proposal.is_empty() else proposal
@@ -2001,7 +2008,7 @@ func _draw_depth_scene(soldiers:Array[Dictionary],trees:Array[Dictionary],visibl
         else:
             var item:Dictionary=soldiers[si]
             _draw_soldier(item["point"],item["unit"],item["accent"],int(item["index"]),
-                item["target"],float(item["bow_age"]),bool(item["shadow"]),item["reaction"],item["file_step"])
+                item["target"],float(item["bow_age"]),bool(item["shadow"]),item["reaction"],item["file_step"],item["swing_at"])
             si+=1
 
 func _update_contact_fronts(dt: float) -> void:
@@ -2160,17 +2167,31 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         var core: int=mini(slots.size(),clampi(ceili(float(unit["troops"])/180.0),1,24)) if sim.six_armies else slots.size()
         var reach: float=173.0 if unit["type"]=="궁병" else 34.0
         var target_id: int=int(unit.get("contact_target_id",-1))
-        var target: Dictionary=sim.find_unit(target_id)
-        var can_contact: bool=sim.started and not sim.finished and not bool(unit["routed"]) and target_id>=0 and not target.is_empty() and _visible_unit(target)
         var targets: Array[Vector2]=[]
-        if can_contact:
+        var file_opponents: Array[int]=[]
+        if sim.started and not sim.finished and not unit["routed"] and target_id >= 0:
             if not cacheable or not contact_cache.has(id):
-                var anchors: Array[Vector2]=sim.formation_slots(target)
+                var choices: Array = [target_id]
+                var reply: Dictionary = sim.rear_responses.get(id, {})
+                if reply.get("front", -1) >= 0: choices = [reply["front"], reply["rear"]]
                 var aim: Array[Vector2]=[]
-                # Every file shares its actual tactical slot's opponent.
-                for index in range(core): aim.append(FrontView.local_target(slots[index],anchors,reach))
-                contact_cache[id]=aim
-            targets=contact_cache[id]
+                var owners: Array[int]=[]
+                aim.resize(core)
+                aim.fill(Vector2.INF)
+                owners.resize(core)
+                owners.fill(-1)
+                for foe_id: int in choices:
+                    var opponent := sim.find_unit(foe_id)
+                    if opponent.is_empty() or opponent["troops"] <= 0 or not _visible_unit(opponent): continue
+                    var anchors := sim.formation_slots(opponent)
+                    for file in range(core):
+                        var at := FrontView.local_target(slots[file], anchors, reach)
+                        if at != Vector2.INF and slots[file].distance_squared_to(at) < slots[file].distance_squared_to(aim[file]):
+                            aim[file] = at
+                            owners[file] = foe_id
+                contact_cache[id] = {"aim": aim, "opponents": owners}
+            targets = contact_cache[id]["aim"]
+            file_opponents = contact_cache[id]["opponents"]
         var draw_count: int=slots.size()
         if sim.six_armies and camera_zoom<1.35:
             draw_count=mini(draw_count,core*(6 if camera_zoom>=0.92 else 4))
@@ -2196,7 +2217,8 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         var scatter: float=(100.0-float(unit["cohesion"]))*0.045
         if bool(unit["routed"]): scatter+=6.5
         var incoming: Array = impacts.get(id, [])
-        var last_attack_age: float=render_clock-float(unit.get("last_visual",-100.0))
+        var two_fronts: bool = sim.rear_responses.get(id, {}).get("front", -1) >= 0
+        var swing_times: Dictionary = unit.get("melee_visual_times", {})
         for index in range(draw_count):
             var file_step := Vector2.ZERO if file_steps.is_empty() else file_steps[index % core]
             var point: Vector2=display_slots[index]+march_offset-file_step*blend
@@ -2207,7 +2229,9 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
                 local_target=targets[index%core]
                 if local_target!=Vector2.INF and slots[index].distance_squared_to(local_target)>reach*reach:
                     local_target=Vector2.INF
-            var event_age: float=last_attack_age-float(index%5)*0.026
+            var swing_at: float = unit["last_visual"]
+            if two_fronts and not file_opponents.is_empty(): swing_at = swing_times.get(file_opponents[index % core], -100.0)
+            var event_age: float = render_clock - swing_at - float(index%5)*0.026
             if local_target!=Vector2.INF and event_age>=0.0 and event_age<=0.30:
                 var lunge: float=sin(clampf(event_age/0.30,0.0,1.0)*PI)*SOLDIER_SCALE
                 point=FrontView.advance_toward_contact(point,local_target,lunge,str(unit["type"]))
@@ -2224,7 +2248,7 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             if point!=display_slots[index] and sim.in_open_water(point): point=display_slots[index]
             point=point.clamp(Vector2.ZERO,sim.field_size)
             batch.append({"point":point,"unit":unit,"accent":accent,"index":index,"target":local_target,
-                "bow_age":bow_age,"shadow":index<core,"reaction":FrontView.hit_reaction(point, index, incoming),"file_step":file_step})
+                "bow_age":bow_age,"shadow":index<core,"reaction":FrontView.hit_reaction(point, index, incoming),"file_step":file_step,"swing_at":swing_at})
     batch.sort_custom(func(a:Dictionary,b:Dictionary)->bool: return (a["point"] as Vector2).y<(b["point"] as Vector2).y)
     return batch
 
@@ -2909,12 +2933,12 @@ func _soldier_region(unit: Dictionary) -> Rect2:
 
 # Read-only pose selection. Attack frames follow the actual emitted combat event.
 # The sim clock freezes in pause; marching phase is scaled to operation time.
-func _soldier_pose(unit: Dictionary, index: int, now: float, in_reach: bool = true) -> int:
+func _soldier_pose(unit: Dictionary, index: int, now: float, in_reach: bool = true, swing_at: float = -INF) -> int:
     if not sim.started or sim.finished: return -1
     var kind: String = str(unit["type"])
     var moving := float(unit.get("stride_step", float(unit.get("motion_speed", 0.0)) * 0.1)) > 0.12
     var routed: bool = bool(unit.get("routed",false))
-    var age: float = now-float(unit.get("last_visual",-100.0))
+    var age: float = now - (float(unit.get("last_visual",-100.0)) if swing_at == -INF else swing_at)
     if kind!="궁병" and not routed and in_reach:
         if age>=0.0 and age<0.27:
             return 3 if age<0.11 else 4
@@ -2934,7 +2958,7 @@ func _stride_phase(unit: Dictionary, index: int) -> float:
 func _soldier_motion_region(base: Rect2,pose: int) -> Rect2:
     return Rect2(base.position+Vector2(pose*288,0),base.size)
 
-func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, target: Vector2, bow_age: float, draw_shadow: bool, reaction: Vector2, file_step: Vector2) -> void:
+func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, target: Vector2, bow_age: float, draw_shadow: bool, reaction: Vector2, file_step: Vector2, swing_at: float = -INF) -> void:
     var direction: Vector2 = unit["facing"]
     if target!=Vector2.INF and not bool(unit["routed"]) and p.distance_squared_to(target)>0.1:
         direction=(target-p).normalized()
@@ -2946,7 +2970,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     # Front and rear ranks no longer perform the same thrust on every tick.
     var visual_contact: bool=target!=Vector2.INF
     var delay: float=float(index%5)*0.026
-    var pose: int = _soldier_pose(unit,index,render_clock-delay,visual_contact)
+    var pose: int = _soldier_pose(unit,index,render_clock-delay,visual_contact,swing_at)
     var dressing: bool = file_step.length_squared() > 0.035 and not visual_contact and sim.started and not sim.finished
     var file_phase := render_clock * 16.0 + float(index) * 2.39996
     if dressing:
