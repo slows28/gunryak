@@ -573,14 +573,14 @@ func _capture() -> void:
     for shape: String in game.sim.LARGE_FORMATIONS:
         var friendly: Rect2i=game.CorpsStandard.tile({"name":"왕평","formation":shape,"side":0})
         var enemy: Rect2i=game.CorpsStandard.tile({"name":"왕쌍","formation":shape,"side":1})
-        var field: Color=cloth.get_pixelv(friendly.position+Vector2i(8,55))
+        var dye_sample: Color=cloth.get_pixelv(friendly.position+Vector2i(8,55))
         var header_a: Color=cloth.get_pixelv(friendly.position+Vector2i(7,8))
         var header_b: Color=cloth.get_pixelv(enemy.position+Vector2i(7,8))
-        if dyes_seen.has(field) or not field.is_equal_approx(cloth.get_pixelv(enemy.position+Vector2i(8,55))) or header_a.b<=header_a.r or header_b.r<=header_b.b or cloth.get_pixelv(friendly.position+Vector2i(32,72)).a<0.9 or cloth.get_pixelv(enemy.position+Vector2i(32,72)).a>0.1:
+        if dyes_seen.has(dye_sample) or not dye_sample.is_equal_approx(cloth.get_pixelv(enemy.position+Vector2i(8,55))) or header_a.b<=header_a.r or header_b.r<=header_b.b or cloth.get_pixelv(friendly.position+Vector2i(32,72)).a<0.9 or cloth.get_pixelv(enemy.position+Vector2i(32,72)).a>0.1:
             push_error("VISUAL_CAPTURE_FAIL: formation dye, faction ribbon or forked hem missing for "+shape)
             quit(1)
             return
-        dyes_seen.append(field)
+        dyes_seen.append(dye_sample)
     if game.CorpsStandard.insignia({"name":"위연 별동대"})!="魏" or game.CorpsStandard.insignia({"name":"장합"})!="張" or game.CorpsStandard.insignia({"name":"왕실 예비대 1"})!="備":
         push_error("VISUAL_CAPTURE_FAIL: commander or reserve insignia mismatch")
         quit(1)
