@@ -36,7 +36,7 @@ func _play():
     expect(game.order_view.visible and game.sim.command_ids(0).size()==12,"preparation opens real orders")
     await frame("02-orders")
     game._start()
-    expect(game.sim.started and game.general_cards.size()==12,"twelve live cards")
+    expect(game.sim.started and game.general_cards.size()==12 and game.friendly_tab.text=="아군 12","twelve live cards and roster count")
     game.camera_zoom=1.5
     game.camera_center=game.sim.field_size*0.5
     game._clamp_camera()

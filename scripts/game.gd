@@ -361,7 +361,7 @@ func _build_interface() -> void:
         button.mouse_default_cursor_shape=Control.CURSOR_POINTING_HAND
         objective_buttons.append(button)
     _label("지휘 본부",Vector2(970,69),Vector2(156,32),23,COL_TEXT)
-    friendly_tab=_button("아군 10",Vector2(970,108),Vector2(91,28),_show_friendly_roster)
+    friendly_tab=_button("아군",Vector2(970,108),Vector2(91,28),_show_friendly_roster)
     enemy_tab=_button("적군 10",Vector2(1067,108),Vector2(91,28),_show_enemy_roster)
     fog_button=_button("전체 시야",Vector2(1164,108),Vector2(92,28),func(): _toggle_fog(not fog_enabled))
     friendly_tab.toggle_mode=true
@@ -620,6 +620,7 @@ func _refresh_enemy_roster() -> void:
     if not visible_ids.has(observed_enemy_id):
         observed_enemy_id=-1
         enemy_list.deselect_all()
+    friendly_tab.text="아군 %d" % sim.command_ids(0).size()
     enemy_tab.text="적군 %d" % visible_ids.size()
     friendly_tab.set_pressed_no_signal(not observing_enemy)
     enemy_tab.set_pressed_no_signal(observing_enemy)
@@ -2679,7 +2680,7 @@ func _draw_unit(unit: Dictionary) -> void:
         else: drawn_slots=_contact_slots(unit,_visual_slots(unit))
     _draw_corps_standard(unit,p+_render_offset(id,p),accent.a)
     var skill: Dictionary=unit.get("field_skill",{})
-    if not skill.is_empty() and sim.battle_time-skill["start"]<1.8:
+    if not skill.is_empty() and sim.battle_time-skill["start"]<1.8 and (side==0 or sim.player_can_see(unit["pos"])):
         var at:=p+Vector2(6,-36)/camera_zoom
         _map_plate(skill["title"],at,WarSim.Skills.SIGNAL[skill["effect"]],12)
     var forward: Vector2 = unit["facing"]
