@@ -1207,9 +1207,23 @@ func _capture_melee_ranks() -> bool:
     game.set_process(false)
     game._leave_title(1)
     game._start()
-    for tick in range(1,451):
+    # Resume the recorded approach so an unrelated commander's decision on
+    # the other flank cannot remove this specific infantry contact. Simulation,
+    # damage, foot placement and drawing all run live for the final 44 ticks.
+    var path := "res://tests/fixtures/infantry-front-8998ca8.state"
+    var file := FileAccess.open_compressed(path,FileAccess.READ,FileAccess.COMPRESSION_ZSTD)
+    if file == null:
+        push_error("VISUAL_CAPTURE_FAIL: missing infantry contact fixture")
+        return false
+    var replay: Dictionary = file.get_var()
+    file.close()
+    game.sim.rng.state = replay["-rng"]
+    replay.erase("-rng")
+    for key in replay: game.sim.set(key,replay[key])
+    if game.sim.step_count != 406: return false
+    for tick in 44:
         game.sim.step(0.1)
-        if tick > 406: game._update_contact_fronts(0.1)
+        game._update_contact_fronts(0.1)
     var leader: Dictionary = game.sim.find_unit(0)
     var foe: Dictionary = game.sim.find_unit(9)
     var front: Dictionary = game.contact_fronts.get(Vector2i(0,9),{})
