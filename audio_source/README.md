@@ -19,4 +19,4 @@ MIDI는 Frank Wen의 FluidR3 GM 음색으로 렌더링했다. 배포 시 동봉�
 
 새 여섯 곡은 군략을 위한 창작곡이다. `python3 audio_source/arrange_field_score.py`로 편집 가능한 MIDI 여섯 개를 재생성한다. 배포 음원은 기존 곡과 같은 FluidR3 GM으로 렌더링한 44.1kHz 스테레오 Ogg Vorbis다. 순환곡에는 마디 끝의 잔향을 앞부분에 겹쳤고, 승전·패전곡에는 독립된 종지와 잔향을 남겼다.
 
-Godot 임포트 후 `godot --headless --audio-driver Dummy --path . --script res://tests/field_score.gd -- /tmp/gunryak-score.wav`로 일곱 상황을 전환하면서 게임 마스터 출력의 시연 파일을 생성한다.
+Godot 임포트 후 `godot --headless --audio-driver Dummy --path . --script res://tests/field_score.gd -- /tmp/gunryak-score.wav`로 일곱 상황을 차례대로 전환하면서 게임 마스터 출력으로 약 90초 분량의 시연 파일을 생성한다. 로그의 CUE 시각은 녹음된 파일에서 해당 상황이 시작되는 지점이다.

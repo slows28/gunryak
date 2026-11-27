@@ -17,7 +17,7 @@ func listen(key: String) -> void:
     var player: AudioStreamPlayer=game.score.players[key]
     expect(player.stream.loop==(key not in ["homecoming","ashes"]),"loop property "+key)
     tap.clear_buffer()
-    await create_timer(5.0 if record else 3.2).timeout
+    await create_timer(14.0 if record else 3.2).timeout
     var frames:=tap.get_buffer(tap.get_frames_available())
     expect(not frames.is_empty(),"mixed audio for "+key)
     var energy:=0.0
@@ -38,7 +38,7 @@ func _run():
     await process_frame
     game.set_process(false)
     game.hide()
-    tap.buffer_length=8.0
+    tap.buffer_length=20.0 if record else 8.0
     AudioServer.add_bus_effect(0,tap)
     await listen("council")
     game._leave_title(0)
