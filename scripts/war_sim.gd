@@ -36,6 +36,8 @@ var next_supply_survey: float=0.0
 const MARCH_LEG := 320.0
 const MORALE_NEWS_DISTANCE := 280.0
 const FIELD_CORPS := 10
+const LOSSES_PER_FALLEN := 65
+var fallen_marks: Array[Dictionary] = []
 var terrain_posts: Array[Dictionary] = []
 const AI_VISION_RANGE: float = 285.0
 const MAX_TROOPS: float = 5000.0
@@ -125,6 +127,7 @@ func reset() -> void:
     visual_effects.clear()
     front_shifts.clear()
     combat_contacts.clear()
+    fallen_marks.clear()
     combat_history.clear()
     dust_effects.clear()
     troop_history.clear()
@@ -541,10 +544,15 @@ func _supply_logic(dt: float) -> void:
 func _camp_side(side: int) -> String:
     return "아군" if side==0 else "적군"
 
-func _nearby_corps(side: int, center: Vector2, radius: float) -> int:
+# The corps can still be seen and struck while it rests or is disordered.
+func _can_attack_troops(unit: Dictionary) -> bool:
+    return unit["troops"] > 0.0 and not unit["routed"] and unit["action"] not in ["휴식","사기 혼란","수레 공격"]
+
+func _nearby_corps(side: int, center: Vector2, radius: float, attacking: bool = false) -> int:
     var count:=0
     for unit in units:
         if unit["side"]!=side or unit["troops"]<=0 or unit["routed"]: continue
+        if attacking and not _can_attack_troops(unit): continue
         var point: Vector2=unit["pos"]
         if point.distance_squared_to(center)>radius*radius: continue
         if long_operation and _river_separates(point,center): continue
@@ -553,7 +561,7 @@ func _nearby_corps(side: int, center: Vector2, radius: float) -> int:
 
 func _update_base_raid(base: Dictionary, dt: float) -> void:
     var side: int=base["side"]
-    var raiders:=_nearby_corps(1-side,base["pos"],RAID_RADIUS)
+    var raiders:=_nearby_corps(1-side,base["pos"],RAID_RADIUS,true)
     var rate:=mini(2,raiders)
     if rate>0 and _nearby_corps(side,base["pos"],GUARD_RADIUS)>0: rate=0
     if base["raid_rate"]==0 and rate>0: _site_notice(side,_camp_side(side)+" 보급기지 급습",base["pos"])
@@ -772,7 +780,7 @@ func _update_supply_crew(crew: Dictionary, dt: float) -> void:
     var closest: Dictionary={}
     var closest_distance:=INF
     for enemy in units:
-        if enemy["side"]==side or enemy["troops"]<=0 or enemy["routed"]: continue
+        if enemy["side"]==side or not _can_attack_troops(enemy): continue
         var distance:=pos.distance_squared_to(enemy["pos"])
         if distance>RAID_RADIUS*RAID_RADIUS or (long_operation and _river_separates(pos,enemy["pos"])): continue
         attackers+=1
@@ -782,8 +790,7 @@ func _update_supply_crew(crew: Dictionary, dt: float) -> void:
     if attackers>0:
         # Only the small rear guard fights, at physical contact range.
         var loss:=minf(closest["troops"],dt*(0.6 if six_armies else 0.025)*crew["strength"]/100.0)
-        closest["troops"]-=loss
-        closest["casualties_taken"]+=loss
+        _take_combat_loss(closest, loss, pos, true)
         var escorted:=_nearby_corps(side,pos,GUARD_RADIUS)>0
         crew["strength"]=maxf(0.0,crew["strength"]-dt*attackers*(4.0 if escorted else 25.0))
         if crew["strength"]<=0:
@@ -1123,6 +1130,13 @@ func _decide(unit: Dictionary) -> void:
         action="본진 공략"
         reason="적 본진 점거"
         goal=_home_point(0)
+    if scenario_id == 3 and side == 1 and not convoy.is_empty() and action in ["차단", "교전", "돌파", "공격 지속"]:
+        var wagon: Vector2 = convoy["pos"]
+        var gap := pos.distance_to(wagon)
+        if gap < 115.0 and gap < enemy_distance and _convoy_access(unit, wagon):
+            action = "수레 공격" if gap <= 42.0 else "차단"
+            reason = "군량 수레에 접근해 파손" if action == "수레 공격" else "호위 수레의 진로를 막기 위해 접근"
+            goal = wagon
     if action != str(unit["last_timeline_action"]):
         unit["last_timeline_action"] = action
         if int(unit["side"]) == 0 and timeline.size() < 1200:
@@ -1179,6 +1193,22 @@ func _occupied_files(unit: Dictionary, count: int) -> Array[Vector2]:
     var wanted: String = unit["next_formation"]
     var drill: Dictionary = unit.get("drill", {})
     var settled: Dictionary = unit.get("dressed_files", {})
+    var files := FormationDrill.pattern(current, count)
+    if settled.get("shape", "") == current: files = settled["files"]
+    if not wanted.is_empty() and drill.get("shape", "") == wanted: files = _sample_drill(unit, drill)
+    if files.size() == count: return files
+    # Hits can change the size between model steps. Sample surviving files without
+    # changing the commander's drill clock when a camera asks for the geometry.
+    var surviving := FormationDrill.pattern(current, count).duplicate()
+    for i in range(mini(count, files.size())): surviving[i] = files[i]
+    return surviving
+
+func _prepare_formation_files(unit: Dictionary) -> void:
+    var count := clampi(ceili(float(unit["troops"]) / 180.0), 1, 24)
+    var current: String = unit["formation"]
+    var wanted: String = unit["next_formation"]
+    var drill: Dictionary = unit.get("drill", {})
+    var settled: Dictionary = unit.get("dressed_files", {})
     var origins := FormationDrill.pattern(current, count)
     if settled.get("shape", "") == current:
         var files: Array[Vector2] = settled["files"]
@@ -1188,7 +1218,7 @@ func _occupied_files(unit: Dictionary, count: int) -> Array[Vector2]:
             files = FormationDrill.match_files(surviving, origins)
             settled["files"] = files
         origins = files
-    if wanted.is_empty(): return origins
+    if wanted.is_empty(): return
     if drill.get("shape", "") != wanted or drill["targets"].size() != count:
         # A casualty can remove a file mid-order. Reassign from the surviving
         # positions with the remaining time, preserving the occupied ground.
@@ -1200,7 +1230,6 @@ func _occupied_files(unit: Dictionary, count: int) -> Array[Vector2]:
             unit["form_duration"] = maxf(0.001, unit["form_remaining"])
         drill = {"shape":wanted, "origins":origins, "targets":FormationDrill.match_files(origins, FormationDrill.pattern(wanted,count))}
         unit["drill"] = drill
-    return _sample_drill(unit, drill)
 
 func _sample_drill(unit: Dictionary, drill: Dictionary) -> Array[Vector2]:
     var progress := 1.0 - float(unit["form_remaining"]) / maxf(0.001, unit["form_duration"])
@@ -1230,13 +1259,12 @@ func _mission_point(side: int, mission: String) -> Vector2:
         _: return layout_point(Vector2(x,287.0))
 
 func _formation_transition(unit: Dictionary, dt: float) -> void:
+    if six_armies: _prepare_formation_files(unit)
     if str(unit["next_formation"]) == "":
         return
     unit["form_remaining"] = float(unit["form_remaining"]) - dt
     if float(unit["form_remaining"]) <= 0.0:
         if six_armies:
-            var count := clampi(ceili(float(unit["troops"]) / 180.0), 1, 24)
-            _occupied_files(unit, count)
             unit["dressed_files"] = {"shape":unit["next_formation"], "files":unit["drill"]["targets"]}
             unit.erase("drill")
         if unit["formation"] != unit["next_formation"]:
@@ -1283,7 +1311,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var goal: Vector2 = unit["goal"]
     var enemy: Dictionary = _nearest_visible_enemy(unit)
     var dressing_line: bool=long_operation and not enemy.is_empty() and unit["action"] in ["후열 정렬","엄호 사격","전열 유지","거리 유지","궁병 보호","협동 엄호"]
-    if not enemy.is_empty() and str(unit["action"]) not in ["후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호","아군 보호","후열 정렬","엄호 사격","전열 유지"]:
+    if not enemy.is_empty() and str(unit["action"]) not in ["수레 공격", "후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호","아군 보호","후열 정렬","엄호 사격","전열 유지"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
@@ -1688,12 +1716,12 @@ func _combat(dt: float) -> void:
     while not combat_history.is_empty() and battle_time-float(combat_history.front()["time"])>COMBAT_HISTORY_SECONDS:
         combat_history.pop_front()
     for unit in units:
-        if six_armies and float(unit["troops"])>0.0 and not bool(unit["routed"]):
+        if six_armies and _can_attack_troops(unit):
             targets[int(unit["id"])]=_combat_target(unit)
     for unit in units:
         unit["contact_troops"]=0
         unit["contact_target_id"]=-1
-        if float(unit["troops"])<=0.0 or bool(unit["routed"]): continue
+        if not _can_attack_troops(unit): continue
         var enemy: Dictionary = targets.get(int(unit["id"]),{}) if six_armies else _combat_target(unit)
         if enemy.is_empty():
             continue
@@ -1854,8 +1882,7 @@ func _combat(dt: float) -> void:
         if remaining-actual_damage<0.000001: actual_damage=remaining
         entry["damage"]=actual_damage
         combat_contacts[int(entry["attacker_id"])]=entry
-        defender["troops"] = maxf(0.0, float(defender["troops"]) - actual_damage)
-        defender["casualties_taken"] = float(defender["casualties_taken"]) + actual_damage
+        _take_combat_loss(defender, actual_damage, entry["from"], entry["kind"] != "화살")
         if bool(entry.get("guarding",false)) and actual_damage>0.0:
             defender["guard_intercept_damage"]+=actual_damage
             defender["guard_intercept_ticks"]+=1
@@ -1900,6 +1927,31 @@ func _combat(dt: float) -> void:
                     ally["morale"] = maxf(0.0, float(ally["morale"]) - 12.0)
     if not combat_contacts.is_empty():
         combat_history.append({"time":battle_time,"contacts":combat_contacts.values()})
+
+# Place one representative body when real, accumulated battle losses cross a threshold.
+# Sample the victim's formation before removing the last file of a destroyed unit.
+func _take_combat_loss(unit: Dictionary, damage: float, origin: Vector2, melee: bool) -> void:
+    var previous: float = unit["casualties_taken"]
+    var total := previous + damage
+    var first := floori(previous / LOSSES_PER_FALLEN)
+    var last := floori(total / LOSSES_PER_FALLEN)
+    if last > first:
+        var slots := formation_slots(unit)
+        if slots.is_empty(): slots.append(unit["pos"])
+        if melee:
+            slots.sort_custom(func(a: Vector2, b: Vector2): return a.distance_squared_to(origin) < b.distance_squared_to(origin))
+        var available := ceili(slots.size() * 0.5) if melee else slots.size()
+        for number in range(first, last):
+            var index: int = number * 37 + int(unit["id"]) * 13
+            var angle := fmod(index * 2.39996, TAU)
+            var point := slots[index % available] + Vector2.from_angle(angle) * (2.0 + index % 6)
+            if long_operation: point = _dry_formation_slot(unit["pos"], point)
+            if in_open_water(point): point = unit["pos"]
+            if in_open_water(point): continue
+            fallen_marks.append({"point": _field_point(point), "side": unit["side"], "kind": unit["type"],
+                "pose": number % 3, "angle": angle, "time": battle_time})
+    unit["casualties_taken"] = total
+    unit["troops"] = maxf(0.0, float(unit["troops"]) - damage)
 
 func _bow_effectiveness(unit: Dictionary, contacts: int, distance: float, ammo_fraction: float, screened: bool) -> float:
     var full_ranks: int=clampi(ceili(float(unit["troops"])/180.0),1,24) if six_armies else 12
@@ -3097,7 +3149,7 @@ func _update_structures(dt: float) -> void:
         var center: Vector2 = (structure["rect"] as Rect2).get_center()
         var bounds: Rect2 = (structure["rect"] as Rect2).grow(26.0)
         for unit in units:
-            if int(unit["side"]) == int(structure["side"]) or bool(unit["routed"]) or float(unit["troops"]) <= 0.0:
+            if int(unit["side"]) == int(structure["side"]) or not _can_attack_troops(unit):
                 continue
             if not bounds.has_point(unit["pos"]):
                 continue
@@ -3143,7 +3195,7 @@ func _update_convoy(dt: float) -> void:
     var guards: int = int(situation["guards"])
     var attackers: int = int(situation["attackers"])
     if attackers > 0:
-        convoy["hp"] = maxf(0.0,float(convoy["hp"])-dt*float(attackers)* (0.8 if guards > 0 else 3.5))
+        convoy["hp"] = maxf(0.0,float(convoy["hp"])-dt*float(situation["strikers"])* (0.8 if guards > 0 else 3.5))
         convoy["blocked_seconds"] = float(convoy.get("blocked_seconds",0.0))+dt
     elif guards == 0:
         convoy["unguarded_seconds"] = float(convoy.get("unguarded_seconds",0.0))+dt
@@ -3162,21 +3214,29 @@ func commander_guard_count(side: int) -> int:
                 count += 1
     return count
 
+func _convoy_access(unit: Dictionary, wagon: Vector2) -> bool:
+    var pos: Vector2 = unit["pos"]
+    return (not wide_field or not _river_separates(pos, wagon)) and _detour_goal(unit, pos, wagon) == wagon
+
 func convoy_status() -> Dictionary:
     if convoy.is_empty(): return {}
     var p: Vector2 = convoy["pos"]
     var destination: Vector2 = convoy["goal"]
     var guards: int = 0
     var attackers: int = 0
+    var strikers := 0
     for unit in units:
         if float(unit["troops"]) <= 0.0 or bool(unit["routed"]): continue
         var distance: float = p.distance_to(unit["pos"])
-        if int(unit["side"]) == 0 and distance < 125.0: guards += 1
-        elif int(unit["side"]) == 1 and distance < 65.0: attackers += 1
+        if int(unit["side"]) == 0:
+            if distance < 125.0 and _convoy_access(unit, p): guards += 1
+        elif distance < 65.0 and unit["action"] in ["차단", "수레 공격"] and _convoy_access(unit, p):
+            attackers += 1
+            if distance <= 42.0 and unit["action"] == "수레 공격": strikers += 1
     var length: float = maxf(1.0,layout_point(Vector2(100,282)).distance_to(destination))
     var progress: float = clampf(1.0-p.distance_to(destination)/length,0.0,1.0)
     var state: String = "파괴" if float(convoy["hp"])<=0.0 else ("도착" if p.distance_to(destination)<12.0 else ("교전 정체" if attackers>0 else ("호위 대기" if guards==0 else ("호위 이동" if started else "출전 준비"))))
-    return {"guards":guards,"attackers":attackers,"progress":progress,"remaining":p.distance_to(destination),"state":state}
+    return {"guards":guards,"attackers":attackers,"strikers":strikers,"progress":progress,"remaining":p.distance_to(destination),"state":state}
 
 # Read-only route preview for the selected army. Never picks a new bridge.
 func committed_route_preview(unit: Dictionary) -> Array[Vector2]:

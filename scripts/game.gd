@@ -11,6 +11,7 @@ const Campaign = preload("res://scripts/campaign.gd")
 const CampaignView = preload("res://scripts/campaign_view.gd")
 const OrderMap = preload("res://scripts/order_map.gd")
 const PAINTED_ART = preload("res://assets/art/painted_atlas.webp")
+const FALLEN_ART := preload("res://assets/art/fallen_soldiers.svg")
 const SOLDIER_ART = preload("res://assets/art/soldier_sprites.svg")
 const SOLDIER_MOTION = preload("res://assets/art/soldier_motion.svg")
 const BATTLE_ARROW = preload("res://assets/art/battle_arrow.png")
@@ -116,8 +117,6 @@ var battle_feed: PanelContainer
 var corps_scroll: ScrollContainer
 var general_cards: Array[BattleHud.CorpsCard]=[]
 var map_label_areas: Array[Rect2]=[]
-var fallen_marks: Array[Dictionary]=[]
-var loss_carry: Dictionary={}
 var sector_cards: Array[BattleHud.SectorCard]=[]
 var sector_snapshot: Array[Dictionary]=[]
 var sector_selection: int=-1
@@ -381,7 +380,9 @@ func _build_interface() -> void:
     policy_choice.hide()
     apply_btn = _button("작전 적용 / 전령 보내기",Vector2(970,554),Vector2(286,40),_apply_order)
     apply_btn.hide()
-    live_order_button=_button("작전 지도 열기",Vector2(970,554),Vector2(286,40),_open_order_map)
+    live_order_button=_button("작전 지도 열기",Vector2(970,554),Vector2(286,40),func():
+        if sim.finished: outcome_dialog.show()
+        else: _open_order_map())
     _primary_button(live_order_button)
     live_order_button.add_theme_font_size_override("font_size",16)
     mind_button=_button("장수 보고",Vector2(1144,70),Vector2(112,28),_open_mind_report)
@@ -745,8 +746,6 @@ func _start() -> void:
         order_view.hide()
     battle_samples.clear()
     recent_losses.clear()
-    fallen_marks.clear()
-    loss_carry.clear()
     previous_centers.clear()
     previous_files.clear()
     contact_cache.clear()
@@ -849,8 +848,6 @@ func _reset() -> void:
     automatic_night_fog = false
     battle_samples.clear()
     recent_losses.clear()
-    fallen_marks.clear()
-    loss_carry.clear()
     previous_centers.clear()
     previous_files.clear()
     contact_cache.clear()
@@ -897,7 +894,7 @@ func _process(delta: float) -> void:
             if arrival_messages[i]["remaining"]<=0.0: arrival_messages.remove_at(i)
     if sim.started and not sim.paused and not sim.finished:
         render_clock = sim.battle_time + step_buffer
-    if is_instance_valid(title_screen) and not title_screen.visible and (not is_instance_valid(strategy_view) or not strategy_view.visible) and not sim.finished:
+    if is_instance_valid(title_screen) and not title_screen.visible and (not is_instance_valid(strategy_view) or not strategy_view.visible) and not outcome_dialog.visible:
         if not planning_dialog.visible and not brief_dialog.visible and not situation_dialog.visible and not mind_dialog.visible:
             var pan := Vector2(float(Input.is_physical_key_pressed(KEY_RIGHT))-float(Input.is_physical_key_pressed(KEY_LEFT)),float(Input.is_physical_key_pressed(KEY_DOWN))-float(Input.is_physical_key_pressed(KEY_UP)))
             if pan.length_squared() > 0.0:
@@ -1030,11 +1027,14 @@ func _refresh_hud() -> void:
     apply_btn.text = "초기 작전 설정" if not sim.started else "전령 보내기 (5일차~)"
     start_btn.visible=not sim.started
     pause_btn.visible=sim.started
-    live_order_button.disabled=sim.finished
+    live_order_button.disabled=false
     live_order_button.text="작전 지도 열기" if not sim.started else "작전 지도 · 전령 지시"
     retreat_button.disabled=captured or sim.finished or not sim.started
     if captured: live_order_button.text="작전 지도 · 전황 보기"
     _refresh_commander_desk()
+    if sim.finished:
+        live_order_button.disabled=false
+        live_order_button.text="전투 결과 다시 보기"
     if battle_feed.visible: _refresh_battle_feed()
     _refresh_general_cards(pending)
     _refresh_sector_board()
@@ -1863,11 +1863,12 @@ func _draw_map(_canvas: Control) -> void:
         var wagon: Vector2 = sim.convoy["pos"]
         var cargo: Dictionary = sim.convoy_status()
         var k: float = maxf(1.0,0.75/camera_zoom)
+        var cargo_label: String = "피습" if cargo["strikers"] > 0 and sim.convoy["hp"] > 0 else str(cargo["state"])
         var cargo_color: Color = COL_RED if str(cargo["state"]) in ["교전 정체","파괴"] else COL_GOLD
         _paint_tile(44,Rect2(wagon-Vector2(17,15)*k,Vector2(34,30)*k))
         map_layer.draw_rect(Rect2(wagon+Vector2(-25,18)*k,Vector2(50,5)*k),Color("#352c20"))
         map_layer.draw_rect(Rect2(wagon+Vector2(-25,18)*k,Vector2(50*float(sim.convoy["hp"])/100.0,5)*k),cargo_color)
-        _map_plate("수레 %d%% · %s" % [roundi(float(cargo["progress"])*100.0),str(cargo["state"])],wagon+Vector2(0,-33)*k,cargo_color,maxi(11,roundi(11.0/camera_zoom)))
+        _map_plate("수레 %d%% · %s" % [roundi(float(cargo["progress"])*100.0),cargo_label],wagon+Vector2(0,-33)*k,cargo_color,maxi(11,roundi(11.0/camera_zoom)))
         var finish: Vector2 = sim.convoy["goal"]
         map_layer.draw_arc(finish,20.0*k,0,TAU,36,Color(COL_GOLD,0.85),2.0*k,true)
         _map_plate("호위 도착점",finish+Vector2(0,-28)*k,COL_GOLD,maxi(11,roundi(11.0/camera_zoom)))
@@ -1877,9 +1878,10 @@ func _draw_map(_canvas: Control) -> void:
             visible_units.append(unit)
     visible_units.sort_custom(func(a: Dictionary,b: Dictionary) -> bool: return (a["pos"] as Vector2).y < (b["pos"] as Vector2).y)
     _draw_fallen(field_view)
-    _draw_march_dust(field_view)
-    _draw_contact_scuffs(field_view)
-    _draw_contact_fronts(visible_units,field_view)
+    if not sim.finished:
+        _draw_march_dust(field_view)
+        _draw_contact_scuffs(field_view)
+        _draw_contact_fronts(visible_units,field_view)
     if camera_zoom>=0.65:
         var soldiers: Array[Dictionary]=_visible_soldier_batch(visible_units,field_view)
         if sim.six_armies: _draw_formation_ink(visible_units,field_view)
@@ -1891,7 +1893,7 @@ func _draw_map(_canvas: Control) -> void:
             if dark > 0.0:
                 _draw_watch_fire(Vector2(unit["pos"]) + _render_offset(unit["id"],unit["pos"]),20.0,dark)
     if not observing_enemy: _draw_cooperation_links()
-    _draw_combat_effects()
+    if not sim.finished: _draw_combat_effects()
     for home in sim.headquarters:
         var at: Vector2=home["pos"]
         if not field_view.has_point(at): continue
@@ -2133,6 +2135,7 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
     var volleys: Dictionary={}
     var impacts: Dictionary={}
     for fx in sim.visual_effects:
+        if sim.finished: break
         var age: float=render_clock-float(fx["time"])
         if fx["kind"]=="화살" and age>=0.0 and age<FrontView.VOLLEY_RECOVERY+FrontView.volley_lane_delay(2) and _combat_effect_visible(fx):
             volleys[int(fx["attacker_id"])]=fx
@@ -2601,8 +2604,6 @@ func _change_scenario(index: int) -> void:
         automatic_night_fog = false
         battle_samples.clear()
         recent_losses.clear()
-        fallen_marks.clear()
-        loss_carry.clear()
         previous_centers.clear()
         previous_files.clear()
         contact_cache.clear()
@@ -3017,36 +3018,16 @@ func _sample_battle_losses() -> void:
         var change: int=roundi(maxf(0.0,total-previous))
         if change>0 and _visible_unit(u):
             recent_losses[id]={"count":change,"time":sim.battle_time,"pos":u["pos"],"side":u["side"]}
-            _record_fallen(u,change)
-
-# Non-graphic representative fallen soldiers derive only from measured casualties.
-# Keep a remainder per unit so small losses accumulate instead of fabricating bodies.
-func _record_fallen(u: Dictionary,change: int) -> void:
-    var id: int=int(u["id"])
-    var total: int=int(loss_carry.get(id,0))+change
-    var count: int=mini(10,floori(float(total)/65.0))
-    loss_carry[id]=total-count*65
-    if count<=0: return
-    var anchors: Array[Vector2]=sim.formation_slots(u)
-    if anchors.is_empty(): anchors.append(u["pos"])
-    for i in range(count):
-        var k: int=posmod(sim.step_count*7+i*11+id*17,anchors.size())
-        var p: Vector2=anchors[k]+Vector2.from_angle(float(k+i)*2.39996)*4.0
-        if sim.terrain_at(p)=="하천": continue
-        fallen_marks.append({"point":p,"side":u["side"],"kind":str(u["type"]),"angle":float(posmod(sim.step_count+i*47+id*13,628))/100.0})
-    while fallen_marks.size()>480: fallen_marks.pop_front()
 
 func _draw_fallen(view: Rect2) -> void:
-    if camera_zoom<0.65: return
-    var offset: Vector2=MAP_SIZE*0.5-camera_center*camera_zoom
-    for entry in fallen_marks:
-        var p: Vector2=entry["point"]
-        if not view.has_point(p) or (fog_enabled and not sim.finished and not sim.player_can_see(p)): continue
-        var side: int=int(entry["side"])
-        var kind: int=1 if str(entry["kind"])=="궁병" else (2 if str(entry["kind"])=="기병" else 0)
-        var region:=Rect2(0,(side*3+kind)*96,96,96)
-        map_layer.draw_set_transform(offset+p*camera_zoom,float(entry["angle"]),Vector2.ONE*camera_zoom)
-        map_layer.draw_texture_rect_region(SOLDIER_ART,Rect2(Vector2(-6,-5)*SOLDIER_SCALE,Vector2(12,10)*SOLDIER_SCALE),region,Color(0.57,0.55,0.48,0.70))
+    var offset: Vector2 = MAP_SIZE * 0.5 - camera_center * camera_zoom
+    for entry in sim.fallen_marks:
+        var point: Vector2 = entry["point"]
+        if not view.has_point(point) or (fog_enabled and not sim.finished and not sim.player_can_see(point)): continue
+        var kind := 1 if entry["kind"] == "궁병" else (2 if entry["kind"] == "기병" else 0)
+        var region := Rect2(int(entry["pose"]) * 64, (int(entry["side"]) * 3 + kind) * 48, 64, 48)
+        map_layer.draw_set_transform(offset + point * camera_zoom, entry["angle"], Vector2.ONE * camera_zoom)
+        map_layer.draw_texture_rect_region(FALLEN_ART, Rect2(-8,-6,16,12), region)
     map_layer.draw_set_transform(offset,0.0,Vector2.ONE*camera_zoom)
 
 func _draw_loss_markers() -> void:
@@ -3480,11 +3461,9 @@ func _build_outcome_dialog() -> void:
     buttons.add_theme_constant_override("separation",8)
     layout.add_child(buttons)
     var close := Button.new()
-    close.text = "전장으로"
+    close.text = "전장 둘러보기"
     close.custom_minimum_size = Vector2(168,38)
-    close.pressed.connect(func():
-        if campaign_active: _advance_campaign()
-        else: outcome_dialog.hide())
+    close.pressed.connect(outcome_dialog.hide)
     buttons.add_child(close)
     var analysis := Button.new()
     analysis.text = "전투 분석"
@@ -3578,8 +3557,6 @@ func _begin_campaign() -> void:
     campaign.reset()
     campaign_active = true
     _clear_journal()
-    fallen_marks.clear()
-    loss_carry.clear()
     contact_cache.clear()
     contact_cache_step=-1
     sector_selection=-1

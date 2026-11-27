@@ -213,19 +213,20 @@ func _process(_dt: float) -> bool:
                     return false
         print("ROAD_BRIDGE_ALIGNMENT_PASS")
         var visual_unit: Dictionary=model.find_unit(0)
-        var before: float=float(visual_unit["troops"])
-        instance.call("_record_fallen",visual_unit,32)
-        if instance.fallen_marks.size()!=0:
+        var before: float=visual_unit.troops
+        model._take_combat_loss(visual_unit,32.5,visual_unit.pos,true)
+        if not model.fallen_marks.is_empty():
             push_error("GUNRYAK_SCENE_FAIL: casualty marks fabricated before threshold")
             quit(1)
             return false
-        instance.call("_record_fallen",visual_unit,33)
-        if instance.fallen_marks.size()!=1 or float(visual_unit["troops"])!=before:
-            push_error("GUNRYAK_SCENE_FAIL: casualty presentation modified simulation")
+        model._take_combat_loss(visual_unit,32.5,visual_unit.pos,true)
+        var first: Dictionary=model.fallen_marks[0].duplicate() if model.fallen_marks.size()==1 else {}
+        instance._sample_battle_losses()
+        instance._sample_battle_losses()
+        if first.is_empty() or model.fallen_marks.size()!=1 or model.fallen_marks[0]!=first or visual_unit.troops!=before-65.0:
+            push_error("GUNRYAK_SCENE_FAIL: presentation duplicated a casualty or changed its location")
             quit(1)
             return false
-        instance.fallen_marks.clear()
-        instance.loss_carry.clear()
         print("CASUALTY_PRESENTATION_PASS")
         print("OBJECTIVE_GEOGRAPHY_PASS")
         print("FRONT_OVERHAUL_PASS: real anchors, reconciled sectors, distinct maps and fixed-step highlights")

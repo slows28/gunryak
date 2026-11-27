@@ -229,6 +229,14 @@ func _run() -> void:
     var cargo_enemy:Dictionary=cargo_sim.find_unit(3)
     cargo_enemy["pos"]=cargo_sim.convoy["pos"]
     var stopped:Vector2=cargo_sim.convoy["pos"]
+    cargo_enemy["action"]="휴식"
+    cargo_sim._update_convoy(0.1)
+    check(cargo_sim.convoy["hp"]==100.0 and cargo_sim.convoy["pos"]!=stopped,"a resting corps does not halt or damage the wagon")
+    cargo_enemy["action"]="차단"
+    stopped=cargo_sim.convoy["pos"]
+    cargo_sim._update_convoy(0.1)
+    check(cargo_sim.convoy["pos"]==stopped and cargo_sim.convoy["hp"]==100.0,"blocking the road stops the wagon before the first strike")
+    cargo_enemy["action"]="수레 공격"
     cargo_sim._update_convoy(0.1)
     check(cargo_sim.convoy_status()["state"]=="교전 정체" and cargo_sim.convoy["pos"]==stopped and float(cargo_sim.convoy["hp"])<100.0,"cargo contested state matches halt and damage")
     cargo_guard["pos"]=cargo_sim.commanders[0]["pos"]

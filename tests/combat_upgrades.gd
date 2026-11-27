@@ -9,6 +9,7 @@ func _initialize() -> void:
     _running_charge()
     _contact_footwork()
     _change_ranks()
+    _aftermath()
     _targeting()
     _simultaneous_losses()
     print("GUNRYAK_COMBAT_PASS" if failures==0 else "GUNRYAK_COMBAT_FAIL %d" % failures)
@@ -284,3 +285,26 @@ func _overkill(reverse: bool) -> Vector2:
     _check(is_zero_approx(float(enemy["troops"])) and is_equal_approx(float(enemy["casualties_taken"]),2.0),
         "last defender applies the same loss as the sum of all attackers")
     return Vector2(left["damage_dealt"],right["damage_dealt"])
+
+func _aftermath() -> void:
+    var sim := _field()
+    var unit := _place(sim.find_unit(0),Vector2(720,750),"보병")
+    var enemy := _place(sim.find_unit(3),Vector2(755,750),"보병")
+    sim._order_formation(unit,"방진")
+    unit.troops-=400
+    var state := unit.duplicate(true)
+    var slots := sim.formation_slots(unit)
+    sim.visual_contact_pair(unit,enemy)
+    _check(not slots.is_empty() and state==unit,"rendering a depleted forming corps cannot rewrite its occupied files or clock")
+    enemy.action="휴식"
+    for tick in range(25):
+        sim._combat(0.1)
+    _check(enemy.damage_dealt==0 and enemy.casualties_taken>0,"a resting corps can suffer hits but does not launch attacks")
+    sim._take_combat_loss(enemy,130.0,unit.pos,true)
+    var fallen := sim.fallen_marks.duplicate(true)
+    enemy.pos+=Vector2(300,0)
+    enemy.routed=true
+    sim._update_general_conditions(enemy,0.1)
+    _check(fallen.size()>=2 and sim.fallen_marks==fallen,"fallen remain at the hit location as survivors retreat and desert")
+    sim.reset()
+    _check(sim.fallen_marks.is_empty(),"starting another operation clears the previous battlefield")
