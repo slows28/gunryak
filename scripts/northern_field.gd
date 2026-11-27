@@ -87,11 +87,13 @@ static func victory(sim) -> void:
     var flank:=0.0
     var linked:=0.0
     var crossed:=0
+    var garrison:=false
     var wei_losses:=0.0
     for u in sim.units:
         if u["troops"]>0 and not u["routed"]: standing[u["side"]]+=1
         if u["side"]==1: wei_losses+=float(u["casualties_taken"])
         if u["side"]==0:
+            if u["troops"]>0 and not u["routed"] and Vector2(u["pos"]).distance_to(site["pos"])<=sim.OUTPOST_RADIUS: garrison=true
             flank+=float(u["flank_damage"])
             linked+=float(u["linked_hits"])
             if u["bridge_crossings"]>0 and u["troops"]>0 and u["pos"].x>sim.river_x(u["pos"].y): crossed+=1
@@ -102,19 +104,22 @@ static func victory(sim) -> void:
         sim._finish("위군 전투 불능 — 승리")
         return
     if sim.battle_time<sim.LONG_OBJECTIVE_OPEN: return
-    var required:=30.0 if mode in ["siege","capital"] else 45.0
-    var count:=0
+    # Occupied territory persists after the garrison moves. Only an explicit
+    # holding objective requires uninterrupted presence on its capture circle.
+    var required:=30.0 if mode in ["siege","capital"] else (45.0 if mode=="field" else 0.0)
+    var secured: Array[bool]=[]
     for post in sim.outposts:
-        if post["owner"]==0 and post["hold"]>=required: count+=1
-    var first: bool=site["owner"]==0 and site["hold"]>=required
-    var second: bool=sim.outposts[1]["owner"]==0 and sim.outposts[1]["hold"]>=required
+        secured.append(post["owner"]==0 and post["challenger"]<0 and not post.get("contested",false) and post["hold"]>=required)
+    var count:=secured.count(true)
+    var first: bool=secured[0]
+    var second: bool=secured[1]
     var timed_out: bool=sim.battle_time>=sim.scenario_limit
     var won:=false
     match mode:
         "field": won=count>=2 or wei_losses>=10000
         "sites": won=count>=2
         "lure": won=first and c["baited"]
-        "hold": won=timed_out and first
+        "hold": won=timed_out and site["owner"]==0 and garrison
         "flank": won=first and flank>=150
         "fronts","line": won=first and second
         "siege","capital": won=first and sim.structures[0]["hp"]<=0
@@ -123,4 +128,15 @@ static func victory(sim) -> void:
         "link": won=first and linked>=120
         "decisive": won=count>=2 and sim.total_troops(1)<=0.7*float(c["enemy_initial"])
     if won or timed_out:
-        sim._finish(sim.scenario_title+(" — 승리" if won else " 목표 미달 — 패배"),"%s · 확보 %d곳 · 아군 %d명 / 위군 %d명" % [site["name"],count,sim.total_troops(0),sim.total_troops(1)])
+        var detail: String="확보 거점 %d곳" % count
+        match mode:
+            "field": detail+=" · 위군 전투 손실 %d / 10,000명" % roundi(wei_losses)
+            "lure": detail+=" · 기곡 유인 "+("성공" if c["baited"] else "미달")
+            "hold": detail+=" · 고갯길 수비대 "+("주둔" if garrison else "부재")
+            "flank": detail+=" · 측후방 피해 %d / 150명" % roundi(flank)
+            "link": detail+=" · 협동 피해 %d / 120명" % roundi(linked)
+            "river": detail+=" · 건넌 군단 %d / 2" % crossed
+            "siege","capital": detail+=" · 성문 내구도 %d%% · 성내 유지 %d / 120초" % [ceili(100.0*sim.structures[0]["hp"]/sim.structures[0]["max_hp"]),floori(site["hold"]*sim.operation_scale()) if site["owner"]==0 else 0]
+            "decisive": detail+=" · 위군 잔여 %d%%" % ceili(100.0*sim.total_troops(1)/float(c["enemy_initial"]))
+            "duel": detail+=" · 아군 %d명 / 위군 %d명" % [sim.total_troops(0),sim.total_troops(1)]
+        sim._finish(sim.scenario_title+(" — 승리" if won else " 목표 미달 — 패배"),detail)

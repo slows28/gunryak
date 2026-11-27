@@ -82,7 +82,7 @@ func _play():
     game._show_outcome()
     expect(game.reward_options.visible and game.reward_options.get_child_count()==3 and game.campaign_next.disabled,"three result options")
     await frame("04-rewards")
-    expect(game.reward_options.get_global_rect().end.y<=game.campaign_next.global_position.y and game.campaign_next.get_global_rect().end.y<=game.size.y,"reward and navigation fit without overlap")
+    expect(game.reward_options.get_global_rect().end.y<=game.campaign_next.global_position.y and game.campaign_next.get_global_rect().end.y<=game.reward_options.get_parent().get_parent().get_global_rect().end.y-6,"reward and navigation fit without overlap")
     game.reward_options.get_child(0).pressed.emit()
     game.campaign_next.pressed.emit()
     expect(prep.visible and game.campaign.state.stage==2,"next stage preparation")

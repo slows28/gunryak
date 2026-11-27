@@ -39,6 +39,7 @@ func _initialize():
             sim.find_unit(id).bridge_crossings=1
             sim.find_unit(id).pos=Vector2(1705,847)
         sim.find_unit(3).pos=sim.outposts[0].pos
+        sim.find_unit(0).pos=sim.outposts[0].pos
         for id in sim.command_ids(1): sim.find_unit(id).troops*=0.6
         for gate in sim.structures: gate.hp=0.0
         sim._check_victory()

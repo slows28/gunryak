@@ -1,0 +1,60 @@
+extends SceneTree
+## Each run starts a real battle at normal difficulty. Only the opening orders are scripted.
+const North=preload("res://scripts/northern_campaign.gd")
+const Sim=preload("res://scripts/war_sim.gd")
+
+func _initialize() -> void:
+    var args:=OS.get_cmdline_user_args()
+    var n:=int(args[0]) if not args.is_empty() else 1
+    var assault:=args.size()==2 and args[1]=="assault"
+    if n<1 or n>North.Field.CHAPTERS.size() or (args.size()>1 and not assault):
+        push_error("Use -- CHAPTER [assault]")
+        quit(2)
+        return
+    var campaign:=North.new()
+    campaign.save_path="user://north-playtest-%d-%s.json" % [n,assault]
+    # A legal inventory obtained by choosing the first reward at each preceding chapter.
+    for prior in range(1,n):
+        campaign.state.reward=prior
+        if not campaign.claim(campaign.choices()[0]):
+            quit(1)
+            return
+    campaign.equip(0,"pace")
+    campaign.equip(2,"shield")
+    campaign.equip(3,"regroup")
+    var sim:=Sim.new()
+    sim.set_long_operation(true)
+    sim.tactical_enabled=true
+    if not campaign.prepare(n,sim):
+        quit(1)
+        return
+    var start_blue:=sim.total_troops(0)
+    var start_red:=sim.total_troops(1)
+    if assault:
+        var objective: Vector2=sim.outposts[0].pos
+        var gate: bool=sim.chapter.mode in ["siege","capital"]
+        for id in sim.command_ids(0):
+            var unit:=sim.find_unit(id)
+            var target:=objective
+            var intent: String="공격"
+            if gate and unit.type=="보병":
+                var wall: Rect2=sim.structures[0].rect
+                target=Vector2(wall.position.x-13,wall.get_center().y)
+            elif unit.type=="궁병":
+                target=objective+Vector2(-90,0)
+                intent="지역 사수"
+            if not sim.issue_map_order(id,intent,target):
+                push_error("Illegal opening order for "+unit.name)
+                quit(1)
+                return
+    sim.start()
+    while not sim.finished and sim.step_count<3800: sim.step(0.1)
+    var uses: Dictionary={}
+    var sites: Array=[]
+    for u in sim.units:
+        if u.side!=0: continue
+        for key in u.get("skill_stats",{}):
+            uses[key]=uses.get(key,0)+int(u.skill_stats[key].uses)
+    for site in sim.outposts: sites.append({"name":site.name,"owner":site.owner,"held":roundi(site.hold*sim.operation_scale())})
+    print("CHAPTER_RUN ",JSON.stringify({"chapter":n,"plan":"assault" if assault else "brief","title":sim.scenario_title,"elapsed":roundi(sim.operation_elapsed()),"blue_start":start_blue,"red_start":start_red,"blue":sim.total_troops(0),"red":sim.total_troops(1),"winner":sim.winning_side,"why":sim.result,"uses":uses,"sites":sites,"gate_hp":roundi(sim.structures[0].hp) if sim.chapter.mode in ["siege","capital"] else -1}))
+    quit(0 if sim.finished and sim.validate_state().is_empty() else 1)
