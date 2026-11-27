@@ -2094,7 +2094,11 @@ func _step_infantry_feet(dt: float) -> void:
         if absf(unit["pos"].x - sim.river_x(unit["pos"].y)) < 150.0:
             var feet: PackedVector2Array = state["end"]
             for i in feet.size():
-                if sim.in_open_water(feet[i]): feet[i] = sim._dry_formation_slot(unit["pos"], feet[i])
+                if sim.in_open_water(feet[i]):
+                    var start: Vector2 = state["start"][i]
+                    var dry := sim._dry_formation_slot(unit["pos"], feet[i])
+                    state["walked"][i] += start.distance_to(dry) - start.distance_to(feet[i])
+                    feet[i] = dry
             state["end"] = feet
         state["proposal"] = state["end"]
         state["raw"] = raw
@@ -2133,7 +2137,7 @@ func _file_aim(unit: Dictionary, slots: Array[Vector2], core: int, reach: float)
 func _turn_infantry(unit: Dictionary, state: Dictionary, old: Dictionary, dt: float) -> void:
     var slots: Array[Vector2] = state["raw"]
     var core: int = state["core"]
-    var own: PackedVector2Array = state["proposal"]
+    var own: PackedVector2Array = state["proposal"].duplicate()
     var walked: PackedFloat32Array = state["walked"]
     var terrain_edge: bool = absf(unit["pos"].x - sim.river_x(unit["pos"].y)) < 150.0
     var origin: PackedVector2Array = state["start"]
