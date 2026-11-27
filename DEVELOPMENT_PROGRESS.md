@@ -1285,3 +1285,17 @@ Godot 4.7.2 정적 구조 및 엔진 검사 20개가 통과했다. 실행 명령
 - 승인받은 배포 브랜치 `downloads/windows-33417a9`에는 Windows ZIP 하나를 올렸다. 고정 주소에서 HTTP 200으로 다시 내려받아 전체 바이트와 ZIP 무결성을 확인했다. [Windows x64 다운로드](https://github.com/slows28/gunryak/raw/9a0b0e9c244617744863a5bb1d729ce42ca806bc/Gunryak-Windows-33417a9.zip)
 
 다음 검증 대상은 무공처럼 집결 중 전선이 밀릴 때 왕평의 접근로가 어느 부대에 얼마나 오래 막히는지, 그때 도착한 마속·위연이 왕평을 기다리거나 엄호하는 판단을 하는지다. 비교 영상, 작전 지도 원본과 실행 ZIP은 `/workspace/shared/downloads/gunryak-33417a9/`에 있다.
+
+## 2026-11-27 양 진영의 자율 연계와 보호 임무
+
+실행판 `f4fc3a0`, 비교판 `33417a9`, 작업 브랜치 `work/demo-field-intent`. 이전 실행판에서 작전 지도·광역 전장·보병 접전·장수 카드를 확인했다. 기준 화면은 `paper_orders.png`, `wide_overview.png`, `melee_ranks.png`, `commander_live_board.png`다.
+
+- `scripts/war_sim.gd`, `scripts/linked_march.gd`, `scripts/field_judgment.gd`, `scripts/field_skills.gd`를 연결했다. 자유 재량을 받은 촉군 장수와 위군 지휘는 직접 관측한 적, 근처 동료의 병종·상태·접촉을 바탕으로 연계 상대를 선택한다. 현지 역할은 이동과 교전, 스킬 발동 자격에 함께 반영한다. 받은 새 명령은 기존 자율 역할을 해제한다. 받기 전에는 기존 역할을 수행한다.
+- 명시적으로 엄호할 상대가 있는 장수는 아군 근처에서 확인된 위협을 먼저 다룬다. 위협이 사라지고 작전 구역에서 멀면 합류 지점으로 향한다. 담당 궁병의 구원 전령을 받은 보병은 눈앞에서 위협을 차단하던 중이면 그 차단을 계속한다. 기존 지도에서 아군 보호와 자유 재량의 동작 설명을 수정했다.
+- `scripts/rally_orders.gd`는 공동 집결지에 먼저 도착한 군단이 가까운 동료의 합류를 엄호하게 한다. 보병·기병은 자기 자리에서 최대 56 전장 단위 안에 실제 접근 가능한 차단점이 있을 때 움직인다. 궁병은 사거리와 탄약을 확인한다. 위협이 사라지면 각자 자리로 돌아간다.
+- 같은 시험에서 양 진영의 궁병과 적 기병 사이에 장수를 배치할 수 있는 공간을 남기고 옆에는 약한 적을 놓았다. 이전판은 두 진영 모두 약한 적을 추격했다. 수정판은 양측 모두 원래 열려 있던 사격 전면의 차단 조건을 실제 이동으로 충족했다. 촉군 위임 장수와 위군 자동 지휘 모두 보병과 접촉한 적을 직접 볼 때 기병 연계를 맺었고, 시야에서 사라져 유효 시간이 지나자 연계를 해제했다. [같은 시각의 지형 시험장 비교](docs/mutual-guard.jpg)
+- 엄호 지시와 동떨어진 거점을 함께 지정한 시험에서 이전판 왕평은 마속으로부터 350 떨어진 거점을 목표로 삼았다. 수정판은 접근 중인 적을 보고 마속으로부터 90 떨어진 차단점으로 향했다. 별도 집결 시험에서도 왕평은 자기 자리에서 39 떨어진 차단점을 정하고, 적이 시야에서 벗어나자 원래 자리로 복귀했다. [공동 집결 시험 화면](docs/mutual-arrival.jpg)
+- 11장 무공에서 왕평·마속·위연에게 같은 거점 사수를 지정한 뒤 종료까지 개입하지 않았다. 이전판은 세 군단 중 최대 두 군단, 수정판은 세 군단이 동시에 배정된 자리 22 이내에 도달했다. 수정판에서 합류 엄호는 군단별 0.1초 스텝 합계 231회였다. 같은 장에서 왕평에게 마속 엄호를 지정하고 위연·강유에게 자유 재량을 준 별도 실행에서는 촉군 한 군단과 위군 열한 군단이 자동 연계 역할을 채택했다. 두 설정 모두 무공 작전 목표 미달로 패배했다. 각 설정 1회 재생이며 이는 승률 측정이 아니다. 다음 검증 대상은 두 설정에서 본대가 거점을 비운 시각과 연계 공격이 멈춘 이유다.
+- 재현 명령은 `godot --headless --path . --script res://tests/mutual_roles.gd`와 `godot --headless --path . --script res://tests/rally_field_playtest.gd`다. 후자에 `-- roles`를 붙이면 엄호·자유 재량을 시험한다. 시각 재생은 `xvfb-run -a -s '-screen 0 1280x800x24' godot --rendering-driver opengl3 --path . --script res://tests/mutual_roles.gd -- /tmp/roles`다.
+- Windows x64 ZIP은 Wine, Linux x86_64 ZIP은 Linux에서 각각 풀어 타이틀 → 편성 → 작전 지도 → 전투 → 타이틀을 실행했다. Windows 단일 ZIP 크기는 51,095,884바이트이며 SHA-256은 `ba552dc3fcf7d54a4413095b81978da3de9bbc8aab6dd02e36f5482483ebed63`다. 무공 근접 카메라 144프레임을 CPU 두 개로 제한한 Mesa 소프트웨어 렌더러에서 각 1회 측정했다. 이전 8.0 FPS, 수정 8.1 FPS였으며 실물 GPU는 미측정이다.
+- `python3 tools_check_structure.py` 통과. `python3 tools_run_engine_tests.py --godot /usr/local/bin/godot --project . --timeout 700`에서 Godot 4.7.2 회귀 24개가 모두 통과했다. `tests/screenshot.gd` 75장과 `tests/northern_screen.gd` 5장, 이번 역할 시험의 실화면 2장을 1280×800 PNG로 검증했다. 거점 경계·본진 경계·위수 및 무공 전령의 별도 화면 검사도 통과했다. 왕평의 엄호를 2배속으로 재생한 10초 비교 영상은 같은 카메라·49틱에서 이전판은 공격 지속, 수정판은 아군 보호로 끝났다. 파일은 `/workspace/shared/downloads/gunryak-f4fc3a0/`에 있다.
