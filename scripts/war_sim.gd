@@ -4,6 +4,8 @@ const FormationDrill = preload("res://scripts/formation_drill.gd")
 ## Intentionally bounded fixed-step updates; safe for headless simulation tests.
 
 const FieldJudgment = preload("res://scripts/field_judgment.gd")
+const RallyOrders = preload("res://scripts/rally_orders.gd")
+const BreakContact = preload("res://scripts/break_contact.gd")
 const LinkedMarch = preload("res://scripts/linked_march.gd")
 const GeneralMind = preload("res://scripts/general_mind.gd")
 const FieldGeometry=preload("res://scripts/field_geometry.gd")
@@ -328,6 +330,7 @@ func select_unit_mission(unit_id: int, mission: String, policy: String, partner:
     unit["has_destination"]=false
     unit["destination_reached"]=false
     _reset_cooperation(unit,partner)
+    if unit.erase("rally_origin"): RallyOrders.refresh(self)
     _apply_policy(unit, policy)
     if policy.ends_with(" 유지") and policy.replace(" 유지","") in LARGE_FORMATIONS:
         unit["formation"] = policy.replace(" 유지", "")
@@ -381,6 +384,7 @@ func step(dt: float) -> void:
     # We use a shallow fixed unit pool and never mutate it during these loops.
     for unit in units:
         if float(unit["troops"]) <= 0.0:
+            if unit.erase("rally_origin"): RallyOrders.refresh(self)
             continue
         if unit.has("skill_ids"): Skills.tick(self,unit)
         _update_general_conditions(unit, dt)
@@ -494,6 +498,7 @@ func _update_couriers(dt: float) -> void:
             target["has_destination"]=destination.x>=0.0 and destination.y>=0.0
             target["order_destination"]=_field_point(destination) if bool(target["has_destination"]) else Vector2.ZERO
             target["destination_reached"]=false
+            _received_rally_pin(target,letter.get("map_dispatch",false))
             target["ai_cooldown"] = 0.0
             GeneralMind.order(target,"수령: "+str(letter["mission"]),battle_time)
             _resolve_map_dispatch(letter,"도착")
@@ -1167,6 +1172,14 @@ func _decide(unit: Dictionary) -> void:
             reason="본진 수비선에 집결" if pos.distance_to(home)>GUARD_RADIUS else "본진에 주둔하며 진입로 경계"
         action="본진 수비"
         unit["field_choice"]={}
+    if long_operation:
+        var local_order := BreakContact.decision(self,unit)
+        if local_order.is_empty(): local_order = RallyOrders.decision(self,unit,nearest,action)
+        if not local_order.is_empty():
+            action = local_order["action"]
+            reason = local_order["reason"]
+            goal = local_order["goal"]
+            unit["field_choice"] = {}
     if action != str(unit["last_timeline_action"]):
         unit["last_timeline_action"] = action
         if int(unit["side"]) == 0 and timeline.size() < 1200:
@@ -1350,7 +1363,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
             goal = pos
             meeting_contact = true
     var dressing_line: bool=long_operation and not enemy.is_empty() and unit["action"] in ["후열 정렬","엄호 사격","전열 유지","거리 유지","궁병 보호","협동 엄호"]
-    if not enemy.is_empty() and not (unit["action"]=="본진 수비" and unit["has_destination"]) and str(unit["action"]) not in ["거점 차단","거점 엄호 사격","수레 공격", "후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호","아군 보호","후열 정렬","엄호 사격","전열 유지"]:
+    if not enemy.is_empty() and not (unit["action"]=="본진 수비" and unit["has_destination"]) and str(unit["action"]) not in ["포위 이탈","거점 차단","거점 엄호 사격","수레 공격", "후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호","아군 보호","후열 정렬","엄호 사격","전열 유지"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
@@ -1369,7 +1382,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     if march.is_empty() and unit.has("skill_ids"):
         var skill: Dictionary=unit["field_skill"]
         if not skill.is_empty() and Skills.mission(unit,battle_time) in skill["missions"]:
-            if skill["effect"]=="feint" and not enemy.is_empty() and not meeting_contact:
+            if skill["effect"]=="feint" and not enemy.is_empty() and not meeting_contact and unit["action"]!="포위 이탈":
                 goal=_field_point(Vector2(skill["anchor"])+Vector2(enemy["pos"]).direction_to(skill["anchor"])*62.0)
             elif skill["effect"]=="stride" or (skill["effect"]=="pursue" and not enemy.is_empty() and enemy["routed"] and pos.direction_to(goal).dot(pos.direction_to(enemy["pos"]))>0.65):
                 rate*=1.0+float(skill["power"])
@@ -1411,6 +1424,9 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
             if not dressing_line: unit["facing"] = moved.normalized()
     if not march.is_empty() and (march["phase"]=="연계 행군" or pos.distance_to(goal)<5):
         unit["facing"]=march["forward"]
+    if unit.has("rally_station") and unit["destination_reached"] and march.is_empty() and unit["action"] in ["지정 지역 사수","예비 대기"]:
+        if enemy.is_empty() or pos.distance_to(enemy["pos"])>168.0 or _river_separates(pos,enemy["pos"]):
+            unit["facing"]=unit["rally_station"]["forward"]
     unit["motion_speed"] = actual_move.length()/maxf(dt,0.001)
     if six_armies:
         if str(unit["action"])=="협동 우회": unit["maneuver_distance"]+=actual_move.length()
@@ -1421,7 +1437,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     unit["walking_step"] = actual_move
     if str(unit["type"]) == "기병":
         _update_charge(unit, actual_move, dt, running_in)
-    if not enemy.is_empty() and (dressing_line or pos.distance_to(enemy["pos"]) < 168.0) and (dressing_line or str(unit["action"]) not in ["후퇴", "패주", "재집결", "측면 우회", "기지 습격", "보급 복귀", "탄약 보충", "매복","협동 우회","협동 엄호"]):
+    if not enemy.is_empty() and (dressing_line or pos.distance_to(enemy["pos"]) < 168.0) and (dressing_line or str(unit["action"]) not in ["포위 이탈", "후퇴", "패주", "재집결", "측면 우회", "기지 습격", "보급 복귀", "탄약 보충", "매복","협동 우회","협동 엄호"]):
         var front: Vector2 = (enemy["pos"] as Vector2) - (unit["pos"] as Vector2)
         if front.length_squared() > 1.0:
             if dressing_line:
@@ -1788,7 +1804,7 @@ func visual_contact_pair(attacker: Dictionary,defender: Dictionary) -> Array[Vec
 
 func _can_answer_rear(unit: Dictionary) -> bool:
     return unit["type"] == "보병" and _can_attack_troops(unit) and unit["action"] not in [
-        "후퇴", "재집결", "전술 철수", "전술 재집결", "보급 복귀", "탄약 보충", "거리 유지"]
+        "포위 이탈", "후퇴", "재집결", "전술 철수", "전술 재집결", "보급 복귀", "탄약 보충", "거리 유지"]
 
 func _in_melee(unit: Dictionary, other: Dictionary) -> bool:
     if other.is_empty() or other["routed"] or not _locally_observed(unit, other): return false
@@ -2844,12 +2860,12 @@ func _charge_impact(unit: Dictionary, enemy: Dictionary) -> float:
         impact *= 0.45
     return maxf(0.0, impact)
 
-func _encirclement(unit: Dictionary) -> bool:
+func _encirclement(unit: Dictionary, observed: Array = []) -> bool:
     var p: Vector2 = unit["pos"]
     var rear: Vector2 = Vector2.LEFT if int(unit["side"]) == 0 else Vector2.RIGHT
     var bearings: Array[Vector2] = []
     var retreat_blocked: bool = false
-    for enemy in units:
+    for enemy in (units if observed.is_empty() else observed):
         if int(enemy["side"]) == int(unit["side"]) or float(enemy["troops"]) < 12.0 or bool(enemy["routed"]):
             continue
         var offset: Vector2 = (enemy["pos"] as Vector2) - p
@@ -4515,6 +4531,7 @@ func _valid_partner(unit: Dictionary,partner: int) -> bool:
 
 func _reset_cooperation(unit: Dictionary,partner: int) -> void:
     unit.erase("opening_screen")
+    unit.erase("escape_step")
     for other in units:
         if other.get("opening_screen",-1)==unit["id"]: other.erase("opening_screen")
     unit["field_choice"]={}
@@ -4600,8 +4617,15 @@ func issue_map_order(id: int,mission: String,destination: Vector2,partner: int=-
     unit["waypoints"].clear()
     unit["waypoint_index"]=0
     unit["defense_set"]=false
+    _received_rally_pin(unit,true)
     GeneralMind.order(unit,"사전 작전: "+mission,battle_time)
     return true
+
+func _received_rally_pin(unit: Dictionary, is_map_order: bool) -> void:
+    unit.erase("rally_origin")
+    if long_operation and is_map_order and unit["has_destination"] and unit["mission"] in RallyOrders.MISSIONS:
+        unit["rally_origin"] = unit["pos"]
+    RallyOrders.refresh(self)
 
 func _resolve_map_dispatch(letter: Dictionary, status: String) -> void:
     if not bool(letter.get("map_dispatch",false)): return

@@ -375,6 +375,9 @@ func _update_destination()->void:
                 destination_label.text = "%s  ·  %s" % [_grid_ref(destination),sim.terrain_at(destination)]
                 break
     march_preview.text=march_diagram.get("caption","")
+    if _shows_rally(officer):
+        var station: Dictionary=officer["rally_station"]
+        march_preview.text="공동 집결 %d개 군단 · %s %s" % [station["count"],officer["name"],station["role"]]
     _refresh_map_hint()
     _refresh_route_summary()
     _refresh_survey()
@@ -570,6 +573,9 @@ func _launch()->void:
     hide()
     if in_battle: game.call("_return_to_battle")
     else: game.call("_start")
+
+func _shows_rally(unit: Dictionary) -> bool:
+    return not draft_dirty and has_destination and unit.has("rally_station") and unit["mission"]==_map_mission() and destination.round()==Vector2(unit["order_destination"]).round()
 
 func _point(p:Vector2)->Vector2:
     return MAP.position+p/sim.field_size*MAP.size
@@ -836,6 +842,16 @@ func _draw()->void:
         draw_rect(stamp_area,Color("#f0dfbc"))
         draw_rect(stamp_area,ink,false,1.3)
         _ink(stamp,label_pos+Vector2(4,14),12,ink)
+    var rally_leader: Dictionary=sim.find_unit(selected_id)
+    if _shows_rally(rally_leader):
+        for ally in sim.units:
+            if ally["side"]!=rally_leader["side"] or ally["troops"]<=0 or not _shows_rally(ally): continue
+            var station: Dictionary=ally["rally_station"]
+            var point:=_point(station["point"])
+            var end:=_point(Vector2(station["point"])+Vector2(station["forward"])*22.0)
+            var wing:=(end-point).normalized().orthogonal()*5.0
+            draw_line(point-wing,point+wing,BLUE,2.0,true)
+            if ally["id"]==selected_id: draw_line(point,end,BLUE,2.0,true)
     for u in sim.units:
         if float(u["troops"])<=0: continue
         if not game.call("_visible_unit",u): continue

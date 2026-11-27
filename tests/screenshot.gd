@@ -408,11 +408,12 @@ func _capture() -> void:
         return
     # Validate all 18 atlas cells and all four facing choices without mutating units.
     var atlas: Texture2D = load("res://assets/art/soldier_sprites.svg")
-    if atlas==null or atlas.get_width()!=288 or atlas.get_height()!=576:
+    if atlas==null or atlas.get_size()!=Vector2(288,576)*game.TROOP_ATLAS_SCALE:
         push_error("VISUAL_CAPTURE_FAIL: soldier atlas dimensions invalid")
         quit(1)
         return
     var atlas_pixels: Image = atlas.get_image()
+    atlas_pixels.resize(288,576,Image.INTERPOLATE_NEAREST)
     for side in range(2):
         for kind in range(3):
             for column in range(3):
@@ -481,11 +482,12 @@ func _capture() -> void:
     game.map_layer.queue_redraw()
     print("SCENERY_ATLAS_PASS: six populated atlas regions and real bridge capture")
     var motion_atlas: Texture2D=load("res://assets/art/soldier_motion.svg")
-    if motion_atlas==null or motion_atlas.get_size()!=Vector2(1728,576):
+    if motion_atlas==null or motion_atlas.get_size()!=Vector2(1728,576)*game.TROOP_ATLAS_SCALE:
         push_error("VISUAL_CAPTURE_FAIL: motion atlas dimensions invalid")
         quit(1)
         return
     var motion_pixels: Image=motion_atlas.get_image()
+    motion_pixels.resize(1728,576,Image.INTERPOLATE_NEAREST)
     for row in range(6):
         for col in range(18):
             var cell:=Rect2i(col*96,row*96,96,96)

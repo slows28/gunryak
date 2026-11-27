@@ -19,7 +19,7 @@ def use(parent, key, transform):
     element(parent, "use", **{f"{{{XLINK}}}href": f"#{key}", "transform": transform})
 
 
-def path(parent, shape, fill, stroke="#302923", width="1.8"):
+def path(parent, shape, fill, stroke="#4a483e", width="1.8"):
     element(parent, "path", d=shape, fill=fill, stroke=stroke, **{
         "stroke-width": width, "stroke-linecap": "round", "stroke-linejoin": "round"})
 
@@ -41,11 +41,11 @@ def spear(group, hand, tip):
     tx, ty = tip
     length = math.hypot(tx-hx, ty-hy)
     ux, uy = (tx-hx)/length, (ty-hy)/length
-    path(group, f"M{hx-ux*21:.1f} {hy-uy*21:.1f} L{tx:.1f} {ty:.1f}", "none", "#523d2c", "3.2")
+    path(group, f"M{hx-ux*21:.1f} {hy-uy*21:.1f} L{tx:.1f} {ty:.1f}", "none", "#615541", "3.2")
     bx, by = tx-ux*10, ty-uy*10
     path(group, f"M{tx:.1f} {ty:.1f} L{bx-uy*2.5:.1f} {by+ux*2.5:.1f} "
                 f"L{bx-ux*3:.1f} {by-uy*3:.1f} L{bx+uy*2:.1f} {by-ux*2:.1f}Z",
-         "#e0d6b8", "#524c42", "1")
+         "#a8a99a", "#524c42", "1")
 
 
 def draw_pose(tile, side, facing, pose):
@@ -78,8 +78,8 @@ def draw_pose(tile, side, facing, pose):
         tx,ty=hx+math.cos(rad)*reach, hy+math.sin(rad)*reach
     if facing==2: spear(tile,(hx,hy),(tx,ty))
     shoulder_x, shoulder_y=57+dx,40+dy
-    path(tile, f"M{shoulder_x} {shoulder_y} Q{hx-12} {hy+5} {hx} {hy}", "none", "#352d27","8")
-    path(tile, f"M{shoulder_x} {shoulder_y} Q{hx-12} {hy+5} {hx} {hy}", "none", "#b9976d","4.5")
+    path(tile, f"M{shoulder_x} {shoulder_y} Q{hx-12} {hy+5} {hx} {hy}", "none", "#504a40","8")
+    path(tile, f"M{shoulder_x} {shoulder_y} Q{hx-12} {hy+5} {hx} {hy}", "none", "#ae9475","4.5")
     if facing!=2: spear(tile,(hx,hy),(tx,ty))
     use(tile, f"shield{key}", f"translate({sx} {sy}) rotate({shield_angle}) translate(-28 -50)")
 

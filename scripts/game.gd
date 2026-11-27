@@ -31,6 +31,8 @@ const FIELD_SITES=preload("res://assets/art/field_sites.svg")
 const PORTRAIT_NAMES=["왕평","마속","위연","강유","관흥","장익","장합","손례","대릉","곽회","비요","왕쌍"]
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const TITLE_ART = preload("res://assets/art/title_art.webp")
+# The field atlas is rasterized at 24 px per 96-unit source cell.
+const TROOP_ATLAS_SCALE := 0.25
 const SOLDIER_SCALE: float = 0.72
 const MAP_TOP_LEFT: Vector2 = Vector2(16, 142)
 const MAP_SIZE: Vector2 = Vector2(934, 532)
@@ -3435,6 +3437,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
         art=INFANTRY_CONTACT
         source=Rect2((exchange_pose*3+column)*128,int(unit["side"])*96,128,96)
         extent.x=extent.y*128.0/96.0
+    source = Rect2(source.position*TROOP_ATLAS_SCALE,source.size*TROOP_ATLAS_SCALE)
     map_layer.draw_texture_rect_region(art,Rect2(Vector2(-extent.x*0.5,-extent.y*0.90),extent),source,shade)
     if aiming==FrontView.BowPhase.DRAW and column==0 and camera_zoom>=1.35:
         var draw: float=smoothstep(0.08,FrontView.VOLLEY_RELEASE,bow_age)

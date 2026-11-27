@@ -2,7 +2,7 @@ extends RefCounted
 ## March orders for one movement tick, calculated before any corps takes its step.
 ## Local offsets use forward / right coordinates, independent of the faction.
 const COOPERATIVE_MISSIONS = ["전열 엄호","측후방 기동","구원 지원","궁병 보호"]
-const INTERRUPTS = ["거점 차단","거점 엄호 사격","후퇴","패주","재집결","전술 재집결","휴식","탄약 보충","보급 복귀","전술 철수","거리 유지","측면 방어","긴급 방어","긴급 지원","아군 보호","공격 지속","궁병 보호","교전","반격","전열 유지","후열 정렬","엄호 사격"]
+const INTERRUPTS = ["포위 이탈","거점 차단","거점 엄호 사격","후퇴","패주","재집결","전술 재집결","휴식","탄약 보충","보급 복귀","전술 철수","거리 유지","측면 방어","긴급 방어","긴급 지원","아군 보호","공격 지속","궁병 보호","교전","반격","전열 유지","후열 정렬","엄호 사격"]
 
 static func _partner(unit: Dictionary, now: float) -> int:
     if int(unit["assigned_link"])>=0: return unit["assigned_link"]
@@ -59,29 +59,35 @@ static func _guide(group: Array[Dictionary], now: float) -> Dictionary:
             best=unit
     return best
 
-static func _slots(group: Array[Dictionary]) -> Dictionary:
+static func _slots(group: Array[Dictionary], max_files: int = 0) -> Dictionary:
     var ranks: Dictionary={}
     for unit in group:
         var kind: String=unit["type"]
         if not ranks.has(kind): ranks[kind]=[]
         ranks[kind].append(unit["id"])
     var slots: Dictionary={}
-    var width: float=maxi(ranks.get("보병",[]).size(),ranks.get("궁병",[]).size())*45.0+60.0
+    var frontage := maxi(ranks.get("보병",[]).size(),ranks.get("궁병",[]).size())
+    var width: float=(mini(max_files,frontage) if max_files>0 else frontage)*45.0+60.0
     for kind: String in ranks:
         var line: Array=ranks[kind]
         for i in range(line.size()):
-            var offset:=Vector2(0.0,(i-(line.size()-1)*0.5)*90.0)
+            var files := mini(max_files,line.size()) if max_files>0 else line.size()
+            var rank := floori(float(i)/files)
+            var across := (i%files - (mini(files,line.size()-rank*files)-1)*0.5)*90.0
+            var offset := Vector2(-rank*85.0,across)
             var role: String="나란히"
             if ranks.size()>1:
                 match kind:
                     "보병":
-                        offset.x=45.0
+                        offset.x=45.0+rank*85.0
                         role="전열"
                     "궁병":
-                        offset.x=-62.0
+                        offset.x=-62.0-rank*85.0
                         role="후열"
                     "기병":
-                        offset.y=(width+floori(i/2.0)*90.0)*(1.0 if i%2==0 else -1.0)
+                        var pair := floori(i/2.0)
+                        offset.x = -pair*85.0 if max_files>0 else 0.0
+                        offset.y = (width if max_files>0 else width+pair*90.0)*(1.0 if i%2==0 else -1.0)
                         role="우익" if offset.y>0 else "좌익"
             slots[line[i]]={"offset":offset,"role":role}
     return slots
@@ -142,6 +148,9 @@ static func _plan_group(sim, group: Array[Dictionary], previous: Dictionary, dt:
     if guide["action"]!="계획 경유":
         if guide["has_destination"]: target=guide["order_destination"]
         elif _partner(guide,sim.battle_time)>=0: target=sim._mission_point(guide["side"],guide["mission"])
+    if guide.has("rally_station") and origin.distance_to(target)<200.0 and not sim._river_separates(origin,target):
+        # Switch from marching offsets to the permanent stations at this pin.
+        if group.all(func(u): return u.has("rally_station") and u["order_destination"]==target): return
     var slowest:=guide
     var pace: float=INF
     for unit in group:
