@@ -74,15 +74,22 @@ static func describe(id: String) -> String:
     if not CATALOG.has(id): return "장착 없음"
     var item: Array=CATALOG[id]
     var rule: Array=RULES[item[2]]
-    return "%s · %s\n%s → %s\n지속 %g초 · 재사용 %g초" % [item[0],item[1],rule[9],EFFECT_TEXT[rule[1]],rule[6]*4.0,rule[7]*4.0]
+    return "%s · %s\n%s → %s\n지속 %.0f초 · 재사용 %.0f초" % [item[0],item[1],rule[9],EFFECT_TEXT[rule[1]],rule[6]*4.0,rule[7]*4.0]
 
-static func mission(u: Dictionary) -> String:
+static func mission(u: Dictionary,now: float) -> String:
+    if u.get("tactical_until",0.0)>now:
+        match u["tactical_order"]:
+            "철수","재집결": return "withdraw"
+            "사수": return "guard"
+            "지원": return "support"
+    if u["action"] in ["패주","후퇴","전술 철수"]: return "withdraw"
     var order: String=u["mission"]
     if order in ["철수","후퇴"]: return "withdraw"
     if order in ["지역 사수","지정 지역 사수","본진 방어","예비 대기"]: return "guard"
     if order in ["구원 지원","전열 엄호"]: return "support"
     if order in ["지정 위치 이동","측후방 기동","남측 우회"]: return "march"
-    if order=="자유 재량":
+    if order in ["자유 재량","북측 확보","중앙 진격","남측 확보"]:
+        if u["action"] in ["방어","방어선 사수","지정 지역 사수"]: return "guard"
         if u["action"] in ["궁병 보호","전열 유지","거점 방어"]: return "guard"
         if u["action"] in ["구원 지원","전열 지원"]: return "support"
     return "attack"
@@ -101,7 +108,7 @@ static func ready(sim,u: Dictionary,rule: Array) -> bool:
         "defend_hit": return hurt
         "morale": return u["morale"]<=24
         "disorder": return u["cohesion"]<=55
-        "moving": return u["motion_speed"]>6 and Vector2(u["goal"]).distance_to(u["pos"])>22
+        "moving": return not sim.march_plans.has(u["id"]) and u["motion_speed"]>6 and Vector2(u["goal"]).distance_to(u["pos"])>22
         "volley": return u["type"]=="궁병" and u["ammo"]>0 and own.get("kind","")=="화살"
         "run": return u["type"]=="기병" and u["charge"]>32
         "cover": return sim._in_forest(u["pos"]) and not own.is_empty()
@@ -118,18 +125,20 @@ static func ready(sim,u: Dictionary,rule: Array) -> bool:
             for gate in sim.structures:
                 if gate["hp"]>0 and gate["side"]!=u["side"] and Rect2(gate["rect"]).grow(rule[4]).has_point(u["pos"]): return true
         "ford","bridge_guard":
+            if rule[0]=="ford" and (sim.march_plans.has(u["id"]) or u["motion_speed"]<=6): return false
             if rule[0]=="bridge_guard" and not hurt: return false
             return absf(u["pos"].x-sim.river_x(u["pos"].y))<float(rule[4]) and sim.near_crossing(u["pos"].y)
         "bait","pursuit":
             var foe: Dictionary=sim._nearest_visible_enemy(u)
             if foe.is_empty() or Vector2(u["pos"]).distance_to(foe["pos"])>float(rule[4]): return false
             if rule[0]=="bait": return not foe["routed"] and u["assigned_link"]<0
-            return foe["routed"] and Vector2(u["pos"]).direction_to(foe["pos"]).dot(Vector2(u["pos"]).direction_to(u["goal"]))>0.65
+            return not sim.march_plans.has(u["id"]) and foe["routed"] and Vector2(u["pos"]).direction_to(foe["pos"]).dot(Vector2(u["pos"]).direction_to(u["goal"]))>0.65
     return false
 
 static func attach(u: Dictionary,innate: String,gear: String) -> void:
     u["skill_ids"]=[innate]
     if gear!="" and gear!=innate: u["skill_ids"].append(gear)
+    u.erase("skill_scan")
     u["skill_ready"]={}
     u["skill_stats"]={}
     u["field_skill"]={}
@@ -139,7 +148,7 @@ static func tick(sim,u: Dictionary) -> void:
         u["field_skill"]={}
         return
     var active: Dictionary=u["field_skill"]
-    var task:=mission(u)
+    var task:=mission(u,sim.battle_time)
     if not active.is_empty() and (sim.battle_time>=active["end"] or task not in active["missions"]):
         active.clear()
     if u.get("skill_scan",0.0)>sim.battle_time: return
@@ -204,7 +213,7 @@ static func effect_stat(id: String,value: float) -> String:
     var effect: String=RULES[CATALOG[id][2]][1]
     match effect:
         "stand": return "패주 억제 %d초" % roundi(value)
-        "pursue","stride": return "이동 %d" % roundi(value)
+        "pursue","stride": return "추가 이동 %d" % roundi(value)
         "break","reform": return "응집 %d" % roundi(value)
         "rally": return "사기 %d" % roundi(value)
         "guard","feint": return "피해 억제 %d" % roundi(value)

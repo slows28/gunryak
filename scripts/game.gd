@@ -3794,7 +3794,7 @@ func _build_outcome_dialog() -> void:
     outcome_cards = VBoxContainer.new()
     outcome_cards.add_theme_constant_override("separation",7)
     var scroll := ScrollContainer.new()
-    scroll.custom_minimum_size = Vector2(724,300)
+    scroll.custom_minimum_size = Vector2(724,268)
     scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
     layout.add_child(scroll)
     outcome_cards.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3893,7 +3893,11 @@ func _show_outcome() -> void:
     if reward_options.visible:
         for id: String in campaign.choices():
             var choice:=Button.new()
-            choice.text="%s · %s" % [WarSim.Skills.CATALOG[id][0],WarSim.Skills.CATALOG[id][1]]
+            var item: Array=WarSim.Skills.CATALOG[id]
+            var effect: String=WarSim.Skills.RULES[item[2]][1]
+            choice.text="%s · %s\n%s" % [item[0],item[1],WarSim.Skills.EFFECT_TEXT[effect]]
+            choice.add_theme_font_size_override("font_size",14)
+            choice.size_flags_horizontal=Control.SIZE_EXPAND_FILL
             choice.tooltip_text=WarSim.Skills.describe(id)
             choice.pressed.connect(func():
                 if campaign.claim(id): _show_outcome()

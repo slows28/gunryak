@@ -403,9 +403,8 @@ func step(dt: float) -> void:
         var walking: Vector2 = unit["walking_step"]
         var net: Vector2 = unit["pos"] - start
         var walked := clampf(net.dot(walking.normalized()), 0.0, walking.length())
-        if unit.has("skill_ids") and not march_plans.has(unit["id"]):
-            var mobile:=Skills.current(unit,["stride","pursue"])
-            if not mobile.is_empty(): mobile["stat"]["effect"]+=walked
+        if unit.get("skill_step_share",0.0)>0.0:
+            unit["field_skill"]["stat"]["effect"]+=walked*unit["skill_step_share"]
         unit["stride_step"] = walked
         unit["stride_distance"] += walked
         if six_armies: _emit_march_dust(unit, start, walking.normalized() * walked)
@@ -1311,6 +1310,7 @@ func _movement_rate(unit: Dictionary, enemy: Dictionary) -> float:
 
 func _move_unit(unit: Dictionary, dt: float) -> void:
     unit["walking_step"] = Vector2.ZERO
+    if unit.has("skill_ids"): unit["skill_step_share"]=0.0
     var prior_heading: Vector2 = unit["facing"]
     if battle_time<float(unit.get("panic_until",-1.0)) or (command_confused(unit["side"]) and not unit["routed"]):
         unit["motion_speed"]=0.0
@@ -1347,11 +1347,12 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
             unit["bridge_bank"]=march["bank"]
     if march.is_empty() and unit.has("skill_ids"):
         var skill: Dictionary=unit["field_skill"]
-        if not skill.is_empty() and Skills.mission(unit) in skill["missions"]:
+        if not skill.is_empty() and Skills.mission(unit,battle_time) in skill["missions"]:
             if skill["effect"]=="feint" and not enemy.is_empty() and not meeting_contact:
                 goal=_field_point(Vector2(skill["anchor"])+Vector2(enemy["pos"]).direction_to(skill["anchor"])*62.0)
             elif skill["effect"]=="stride" or (skill["effect"]=="pursue" and not enemy.is_empty() and enemy["routed"] and pos.direction_to(goal).dot(pos.direction_to(enemy["pos"]))>0.65):
                 rate*=1.0+float(skill["power"])
+                unit["skill_step_share"]=float(skill["power"])/(1.0+float(skill["power"]))
     var running_in := false
     if str(unit["type"]) == "기병":
         unit["charge_cooldown"] = maxf(0.0, float(unit["charge_cooldown"]) - dt)
@@ -2007,8 +2008,9 @@ func _combat(dt: float) -> void:
         var allocation: float=float(requested_losses[entry["defender_id"]])
         var actual_damage: float=minf(remaining,float(entry["damage"])*allocation)
         if remaining-actual_damage<0.000001: actual_damage=remaining
-        var actual_source: Dictionary=find_unit(entry["attacker_id"])
-        if entry["skill_bonus"]>0.0: actual_source["field_skill"]["stat"]["effect"]+=float(entry["skill_bonus"])*allocation
+        if entry["skill_bonus"]>0.0:
+            var officer: Dictionary=find_unit(entry["attacker_id"])
+            officer["field_skill"]["stat"]["effect"]+=float(entry["skill_bonus"])*allocation
         if entry["skill_saved"]>0.0: defender["field_skill"]["stat"]["effect"]+=minf(remaining,float(entry["skill_saved"])*allocation)
         entry["damage"]=actual_damage
         combat_contacts[int(entry["attacker_id"])]=entry

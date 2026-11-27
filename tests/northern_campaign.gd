@@ -33,7 +33,7 @@ func _initialize():
         sim.battle_time=sim.scenario_limit
         sim.turn=15
         for post in sim.outposts: post.owner=0;post.hold=60
-        sim.find_unit(0).flank_hits=180
+        sim.find_unit(0).flank_damage=180
         sim.find_unit(0).linked_hits=180
         for id in sim.command_ids(0).slice(0,2):
             sim.find_unit(id).bridge_crossings=1
@@ -80,6 +80,10 @@ func _skills():
     Skills.attach(u,"iron","pursue")
     Skills.tick(sim,u)
     check(u.field_skill.get("id","")=="iron" and Skills.absorb(u,10)<10 and u.mission=="지역 사수","hold takes priority over pursuit")
+    u.tactical_order="철수"
+    u.tactical_until=sim.battle_time+4
+    Skills.tick(sim,u)
+    check(u.field_skill.is_empty(),"urgent withdrawal ends defensive or offensive skills")
     sim.battle_time+=6
     u.morale=10
     Skills.attach(u,"last","")
@@ -93,6 +97,7 @@ func _skills():
     u.routed=false
     u.morale=75
     u.mission="지정 위치 이동"
+    u.action="지정 위치 이동"
     u.goal=u.pos+Vector2(150,0)
     u.motion_speed=20
     sim.battle_time+=6

@@ -169,7 +169,8 @@ func refresh() -> void:
     officer_choice.select(idx)
     type_choice.select(["보병","궁병","기병"].find(s.types[slot]))
     army.text="%s · %s · 출전 병력 %s명" % [campaign.officers[idx].name,campaign.officers[idx].personality,campaign.TROOPS[slot]]
-    innate.text="고유 전술   "+Skills.describe(campaign.INNATE[idx]).get_slice(" · ",1)
+    var innate_lines:=Skills.describe(campaign.INNATE[idx]).split("\n")
+    innate.text="고유 전술   %s\n%s\n%s" % [Skills.CATALOG[campaign.INNATE[idx]][1],innate_lines[1],innate_lines[2]]
     var gear: String=s.gear.get(str(idx),"")
     equipped.text="장착 장비   "+("없음" if gear=="" else str(Skills.CATALOG[gear][0]))
     equip_choice.clear()

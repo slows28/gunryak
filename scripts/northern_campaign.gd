@@ -74,6 +74,7 @@ func prepare(target: int,sim) -> bool:
         if target>=3:
             var role: String=("rapid" if u["type"]=="궁병" else ("charge" if u["type"]=="기병" else "square"))
             Skills.attach(u,role,["","counter","wing","rally"][mini(3,target/4)])
+    Field.opening_orders(sim)
     sim.chapter["enemy_initial"]=sim.total_troops(1)
     state["pending"]=target
     return true
