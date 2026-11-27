@@ -12,7 +12,7 @@ const CHAPTERS := [
     ["미현 공략전",1,"line","미현의 외곽 방어선과 안쪽 거점을 함께 장악하십시오.",Vector2(1700,855),Rect2(1430,620,175,230),["charge","pursue","enclose"]],
     ["오장원 전투",0,"duel","오장원에서 적의 가용 전력을 줄이십시오. 18분 이후 병력 우세와 중앙 거점이 필요합니다.",Vector2(1430,875),Rect2(945,505,245,180),["chain","bastion","war_drum"]],
     ["위수 도하전",0,"river","두 군단 이상이 위수를 건너고 동쪽 교두보를 확보하십시오.",Vector2(1690,847),Rect2(1740,960,220,150),["ford","bridge","surprise"]],
-    ["무공 전투",1,"link","같은 적을 향한 군단 협동 타격으로 누적 피해 120명을 내고 무공을 확보하십시오.",Vector2(1530,855),Rect2(1310,1050,210,165),["cascade","reshape","reverse"]],
+    ["무공 전투",1,"link","협동 대상을 지정하거나 장수의 자율 연계를 활용하십시오. 연계한 두 군단이 같은 적에 피해 120명을 내고 무공을 확보해야 합니다.",Vector2(1530,855),Rect2(1310,1050,210,165),["cascade","reshape","reverse"]],
     ["장안 외곽 전투",0,"decisive","위군 주력의 병력을 개전 대비 30% 이상 줄이고 거점 두 곳을 확보하십시오.",Vector2(1630,870),Rect2(1600,1050,260,185),["tiger","thunder","ram"]],
     ["장안 함락전",4,"capital","장안 성문을 열고 궁성 앞을 2분간 유지하십시오.",Vector2(2190,865),Rect2(1590,545,245,160),[]]
 ]
@@ -185,7 +185,7 @@ static func victory(sim) -> void:
         if u["side"]==0:
             if u["troops"]>0 and not u["routed"] and Vector2(u["pos"]).distance_to(site["pos"])<=sim.OUTPOST_RADIUS: garrison=true
             flank+=float(u["flank_damage"])
-            linked+=float(u["linked_hits"])
+            linked+=float(u.get("joint_credit",0.0))
             if on_east_bank(sim,u): crossed+=1
     if standing[0]==0 and sim.reinforcements_used[0]>=sim.reserve_limit[0]:
         sim._finish("아군 전투 불능 — 패배")
@@ -224,7 +224,7 @@ static func victory(sim) -> void:
             "lure": detail+=" · 위군 점령 "+("확인" if c["baited"] else "미달")+" · 촉군 탈환 "+("완료" if won else "미달")
             "hold": detail+=" · 고갯길 수비대 "+("주둔" if garrison else "부재")
             "flank": detail+=" · 측후방 피해 %d / 150명" % roundi(flank)
-            "link": detail+=" · 협동 피해 %d / 120명" % floori(linked)
+            "link": detail+=" · 연계 협공 피해 %d / 120명" % floori(linked)
             "river": detail+=" · 건넌 군단 %d / 2" % crossed
             "siege","capital": detail+=" · 성문 내구도 %d%% · 성내 유지 %d / 120초" % [ceili(100.0*sim.structures[0]["hp"]/sim.structures[0]["max_hp"]),floori(site["hold"]*sim.operation_scale()) if site["owner"]==0 else 0]
             "decisive": detail+=" · 위군 잔여 %d%%" % ceili(100.0*sim.total_troops(1)/float(c["enemy_initial"]))
@@ -276,10 +276,10 @@ static func _link_report(sim,u: Dictionary) -> Array:
     if u.has("joint_time"):
         var ally: Dictionary=sim.find_unit(u["joint_partner"])
         var partner: String=ally.get("name","협동 군단")
-        var credit: int=floori(u["linked_hits"])
+        var credit: int=floori(u.get("joint_credit",0.0))
         if elapsed<=3.0:
             var kind: String="협공 성과" if credit>=120 and sim.chapter["metrics"].has("협공 성립"+str(u["id"])) else "협공 성립"
-            return [kind,"%s군과 %s군이 같은 적을 쳤습니다. 우리 군단의 누적 협공 피해는 %d명입니다. 전군이 120명을 채우고 무공 집결지를 확보해야 합니다." % [u["name"],partner,credit]]
+            return [kind,"%s군과 %s군이 같은 적을 쳤습니다. 우리 군단의 누적 협공 피해는 %d명입니다. 연계 군단이 합계 120명을 채우고 무공 집결지를 확보해야 합니다." % [u["name"],partner,credit]]
         if elapsed>=6.0:
             return ["협공 중단","%s군과 마지막으로 협공한 뒤 %d초 동안 추가 협동 타격이 없었습니다. 우리 군단의 누적 기여는 %d명입니다." % [partner,floori(elapsed*sim.operation_scale()),credit]]
     var other: Dictionary=sim.find_unit(u["assigned_link"])

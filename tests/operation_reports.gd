@@ -46,12 +46,38 @@ func _initialize():
     sim.battle_time+=8
     u.joint_partner=ally.id
     u.joint_time=sim.battle_time
-    u.linked_hits=42.2
+    u.linked_hits=3000.0
+    u.joint_credit=42.2
     Field.report_progress(sim)
-    check(sim.incoming_reports.back().kind=="협공 성립" and ally.name in sim.incoming_reports.back().objective_account and "42명" in sim.incoming_reports.back().objective_account,"credit belongs to the real combat partner")
+    check(sim.incoming_reports.back().kind=="협공 성립" and ally.name in sim.incoming_reports.back().objective_account and "42명" in sim.incoming_reports.back().objective_account and is_equal_approx(sim.incoming_reports.back().joint_credit,42.2),"credit belongs to the real combat partner")
     sim.incoming_reports.clear()
     sim.battle_time+=8
     Field.report_progress(sim)
     check(sim.incoming_reports.back().kind=="협공 중단","commander reports sustained loss of contact")
+    # Controlled combat uses the actual target and slot contact calculation.
+    var battle:=Sim.new()
+    battle.set_six_armies(true)
+    var front:=battle.find_unit(0)
+    var bow:=battle.find_unit(1)
+    var foe:=battle.find_unit(3)
+    for corps in battle.units: corps.pos=Vector2(1900,400)
+    front.pos=Vector2(635,880)
+    bow.pos=Vector2(520,880)
+    foe.pos=Vector2(650,880)
+    front.type="보병"
+    bow.type="궁병"
+    front.facing=Vector2.RIGHT
+    bow.facing=Vector2.RIGHT
+    foe.facing=Vector2.LEFT
+    battle.chapter={"mode":"link","metrics":{}}
+    battle._combat(0.1)
+    check(front.linked_hits>0 and not front.has("joint_credit"),"incidental support deals damage but gives no mission credit")
+    bow.assigned_link=front.id
+    battle._combat(0.1)
+    check(front.get("joint_credit",0.0)>0 and front.joint_partner==bow.id,"the actual cooperating formation earns objective credit")
+    var earned: float=front.get("joint_credit",0)
+    bow.pos=Vector2(1900,400)
+    battle._combat(0.1)
+    check(is_equal_approx(earned,front.get("joint_credit",0.0)),"a selected but absent partner earns no credit")
     print("GUNRYAK_OPERATION_REPORTS_PASS" if errors==0 else "GUNRYAK_OPERATION_REPORTS_FAIL")
     quit(0 if errors==0 else 1)

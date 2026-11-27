@@ -43,6 +43,7 @@ func _initialize():
         for post in sim.outposts: post.owner=0;post.hold=60
         sim.find_unit(0).flank_damage=180
         sim.find_unit(0).linked_hits=180
+        sim.find_unit(0).joint_credit=180
         for id in sim.command_ids(0).slice(0,2):
             sim.find_unit(id).bridge_crossings=1
             sim.find_unit(id).pos=Vector2(1705,847)

@@ -2073,7 +2073,8 @@ func _combat(dt: float) -> void:
             if six_armies:
                 if bool(entry["linked"]):
                     source["linked_hits"] += actual_damage
-                    if chapter.get("mode","")=="link" and source["side"]==0 and actual_damage>0:
+                    if chapter.get("mode","")=="link" and source["side"]==0 and actual_damage>0 and _working_pair(source,find_unit(entry["partner_id"])):
+                        source["joint_credit"]=float(source.get("joint_credit",0.0))+actual_damage
                         source["joint_partner"]=entry["partner_id"]
                         source["joint_time"]=battle_time
                 if float(entry["counter"])>1.01: source["counter_damage"] += actual_damage
@@ -3715,7 +3716,7 @@ func _send_situation(unit: Dictionary,kind: String,proposal: String,urgent: bool
     if not account.is_empty():
         report["objective_account"]=account
         if chapter["mode"]=="river": report["east_bank"]=NorthernField.on_east_bank(self,unit)
-        else: report["joint_credit"]=unit["linked_hits"]
+        else: report["joint_credit"]=unit.get("joint_credit",0.0)
     if side==0:
         if unit.has("last_skill_report"):
             report["skill_report"]=unit["last_skill_report"]
@@ -4328,9 +4329,16 @@ func tactical_matchup(attacker: Dictionary,defender: Dictionary,side_attack: boo
 func _has_combined_arms(unit: Dictionary,enemy: Dictionary,targets: Dictionary = {}) -> bool:
     return _combined_arms_partner(unit,enemy,targets)>=0
 
+func _working_pair(unit: Dictionary, ally: Dictionary) -> bool:
+    return LinkedMarch._partner(unit,battle_time)==ally["id"] or LinkedMarch._partner(ally,battle_time)==unit["id"]
+
 func _combined_arms_partner(unit: Dictionary,enemy: Dictionary,targets: Dictionary) -> int:
     var p: Vector2=unit["pos"]
     var ep: Vector2=enemy["pos"]
+    # In Mugong, credit the active partner when several allied corps hit the
+    # same target. Incidental combined arms still receives its combat bonus.
+    var objective_pair: bool=chapter.get("mode","")=="link" and unit["side"]==0
+    var fallback: int=-1
     for ally in units:
         if int(ally["side"])!=int(unit["side"]) or int(ally["id"])==int(unit["id"]) or bool(ally["routed"]) or float(ally["troops"])<600.0 or float(ally["cohesion"])<35.0: continue
         if str(ally["type"])==str(unit["type"]) or p.distance_to(ally["pos"])>245.0: continue
@@ -4342,8 +4350,10 @@ func _combined_arms_partner(unit: Dictionary,enemy: Dictionary,targets: Dictiona
         if formation_contacts(ally,enemy,ally_reach)<=0: continue
         var a: Vector2=(p-ep).normalized()
         var b: Vector2=((ally["pos"] as Vector2)-ep).normalized()
-        if str(ally["type"])=="궁병" or str(unit["type"])=="궁병" or a.dot(b)<0.45: return ally["id"]
-    return -1
+        if str(ally["type"])!="궁병" and str(unit["type"])!="궁병" and a.dot(b)>=0.45: continue
+        if not objective_pair or _working_pair(unit,ally): return ally["id"]
+        if fallback<0: fallback=ally["id"]
+    return fallback
 
 # Cooperation uses a friendly anchor and local observation, not an omniscient
 # enemy position. A flank waypoint stays committed until reached or timed out.
