@@ -173,6 +173,16 @@ func constraints() -> void:
     officer.surrounded=sim._encirclement(officer)
     sim._decide(officer)
     check(officer.surrounded and officer.action!="포위 이탈","a closed ring has no traversable exit")
+    # Two fit allies at this front keep a healthy commander in an even fight.
+    var nearby_allies: Array = sim.command_ids(officer.side).filter(func(id): return id != officer.id)
+    for i in 2: sim.find_unit(nearby_allies[i]).pos=p+Vector2(-25+i*45,-59)
+    count=0
+    for u in sim.units:
+        if u.side==officer.side: continue
+        u.troops=3000.0 if count in [0,2,4] else 0.0
+        count+=1
+    sim._decide(officer)
+    check(officer.surrounded and officer.action!="포위 이탈","a supported formation holds its side of a shared front")
     # Turn the one open sector towards the river, away from any bridge.
     var coast := Vector2(sim.river_x(610)-39,610)
     officer.pos=coast

@@ -13,12 +13,14 @@ static func decision(sim, unit: Dictionary) -> Dictionary:
     if not unit["surrounded"] and previous.is_empty(): return {}
     var threats := PackedVector2Array()
     var observed: Array[Dictionary] = []
+    var close_foes := 0
     for other in sim.units:
         if other["side"] == unit["side"] or other["troops"] <= 0 or other["routed"]: continue
         var pos: Vector2 = other["pos"]
         if p.distance_squared_to(pos) < 160.0*160.0 and sim._locally_observed(unit,other) and not sim._river_separates(p,pos):
             threats.append(pos)
             observed.append(other)
+            if p.distance_squared_to(pos) <= 95.0*95.0: close_foes += 1
     var stalled_axis := Vector2.ZERO
     if not previous.is_empty():
         var target: Vector2 = previous["goal"]
@@ -26,11 +28,15 @@ static func decision(sim, unit: Dictionary) -> Dictionary:
         if moved < 5.0 and sim.battle_time - previous["checked_at"] >= 1.2:
             stalled_axis = p.direction_to(target)
         elif sim.battle_time < previous["until"] and p.distance_to(target) > 12.0 and _clearance(p,target,threats) > 16.0:
-            previous["last_pos"] = p
-            previous["checked_at"] = sim.battle_time
+            if moved >= 5.0:
+                previous["last_pos"] = p
+                previous["checked_at"] = sim.battle_time
             return previous
         unit.erase("escape_step")
     if not unit["surrounded"] or observed.size() < 2 or not sim._encirclement(unit,observed): return {}
+    # Nearby formed corps can hold a shared front. Do not peel a healthy
+    # formation out of an even engagement simply because two foes are visible.
+    if sim._nearby_corps(unit["side"],p,95.0,true) >= close_foes and unit["cohesion"] >= 48.0 and unit["morale"] >= 45.0: return {}
     var home: Vector2 = sim._home_point(unit["side"])
     var desired := p.direction_to(home)
     var best := Vector2.INF

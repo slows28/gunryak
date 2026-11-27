@@ -74,11 +74,16 @@ func _play():
     # Complete the first chapter through the same objective resolver used during play.
     sim.battle_time=sim.LONG_OBJECTIVE_OPEN+1
     sim.turn=12
-    for post in sim.outposts:
-        post.owner=0
-        post.hold=60.0
+    # Exercise the real capture and occupancy rules before the result screen.
+    for u in sim.units: u.pos=sim._home_point(u.side)
+    var columns: Array=sim.command_ids(0)
+    for i in 2: sim.find_unit(columns[i]).pos=sim.outposts[i].pos
+    for tick in ceili((sim.capture_duration()+46.0)*10): sim._update_outposts(0.1)
     sim._check_victory()
     expect(sim.finished and sim.winning_side==0,"actual first-stage objective")
+    if failed:
+        game._quit_game(1)
+        return
     game._show_outcome()
     expect(game.reward_options.visible and game.reward_options.get_child_count()==3 and game.campaign_next.disabled,"three result options")
     await frame("04-rewards")
