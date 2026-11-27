@@ -6,13 +6,15 @@ const Sim=preload("res://scripts/war_sim.gd")
 func _initialize() -> void:
     var args:=OS.get_cmdline_user_args()
     var n:=int(args[0]) if not args.is_empty() else 1
-    var assault:=args.size()==2 and args[1]=="assault"
-    if n<1 or n>North.Field.CHAPTERS.size() or (args.size()>1 and not assault):
-        push_error("Use -- CHAPTER [assault]")
+    var options:=args.slice(1)
+    var assault: bool="assault" in options
+    var equipped: bool="equipped" in options
+    if n<1 or n>North.Field.CHAPTERS.size() or options.size()!=int(assault)+int(equipped):
+        push_error("Use -- CHAPTER [assault] [equipped]")
         quit(2)
         return
     var campaign:=North.new()
-    campaign.save_path="user://north-playtest-%d-%s.json" % [n,assault]
+    campaign.save_path="user://north-playtest-%d-%s-%s.json" % [n,assault,equipped]
     # A legal inventory obtained by choosing the first reward at each preceding chapter.
     for prior in range(1,n):
         campaign.state.reward=prior
@@ -22,6 +24,13 @@ func _initialize() -> void:
     campaign.equip(0,"pace")
     campaign.equip(2,"shield")
     campaign.equip(3,"regroup")
+    if equipped:
+        var kit: Dictionary={1:"inspire",2:"breach",3:"iron",4:"ford",5:"siege",9:"strike",10:"tiger",11:"ambush",12:"charge",13:"cascade",6:"link"}
+        for officer: int in kit:
+            if kit[officer] in campaign.state["items"] and not campaign.equip(officer,kit[officer]):
+                push_error("Illegal item assignment")
+                quit(1)
+                return
     var sim:=Sim.new()
     sim.set_long_operation(true)
     sim.tactical_enabled=true
@@ -56,5 +65,5 @@ func _initialize() -> void:
         for key in u.get("skill_stats",{}):
             uses[key]=uses.get(key,0)+int(u.skill_stats[key].uses)
     for site in sim.outposts: sites.append({"name":site.name,"owner":site.owner,"held":roundi(site.hold*sim.operation_scale())})
-    print("CHAPTER_RUN ",JSON.stringify({"chapter":n,"plan":"assault" if assault else "brief","title":sim.scenario_title,"elapsed":roundi(sim.operation_elapsed()),"blue_start":start_blue,"red_start":start_red,"blue":sim.total_troops(0),"red":sim.total_troops(1),"winner":sim.winning_side,"why":sim.result,"uses":uses,"sites":sites,"gate_hp":roundi(sim.structures[0].hp) if sim.chapter.mode in ["siege","capital"] else -1}))
+    print("CHAPTER_RUN ",JSON.stringify({"chapter":n,"plan":"assault" if assault else "brief","gear":"earned" if equipped else "starters","title":sim.scenario_title,"elapsed":roundi(sim.operation_elapsed()),"blue_start":start_blue,"red_start":start_red,"blue":sim.total_troops(0),"red":sim.total_troops(1),"winner":sim.winning_side,"why":sim.result,"uses":uses,"sites":sites,"gate_hp":roundi(sim.structures[0].hp) if sim.chapter.mode in ["siege","capital"] else -1}))
     quit(0 if sim.finished and sim.validate_state().is_empty() else 1)
