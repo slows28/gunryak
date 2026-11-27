@@ -1,4 +1,5 @@
 extends RefCounted
+const March = preload("res://scripts/linked_march.gd")
 ## Model seconds. Orders classify eligibility only. Skills consume real contacts and never issue orders.
 const ALL := ["attack","guard","march","support","withdraw"]
 const OFFENSE := ["attack"]
@@ -83,9 +84,10 @@ static func mission(u: Dictionary,now: float) -> String:
             "사수": return "guard"
             "지원": return "support"
     if u["action"] in ["패주","후퇴","전술 철수"]: return "withdraw"
-    var order: String=u["mission"]
+    var order: String=March.role(u,now)
     if order in ["철수","후퇴"]: return "withdraw"
     if order in ["지역 사수","지정 지역 사수","본진 방어","예비 대기"]: return "guard"
+    if order=="궁병 보호": return "guard"
     if order in ["구원 지원","전열 엄호"]: return "support"
     if order in ["지정 위치 이동","측후방 기동","남측 우회"]: return "march"
     if order in ["자유 재량","북측 확보","중앙 진격","남측 확보"]:

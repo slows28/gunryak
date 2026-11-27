@@ -13,9 +13,7 @@ static func choose(sim, unit: Dictionary, enemy: Dictionary, action: String) -> 
         return {}
     if sim.battle_time<unit["tactical_until"] or unit["defense_set"] or unit["reserve"]:
         return {}
-    var role: String=unit["mission"]
-    if sim.battle_time<unit["ai_role_until"] and unit["ai_role"]!="":
-        role=unit["ai_role"]
+    var role: String=sim.LinkedMarch.role(unit,sim.battle_time)
     if role=="측후방 기동" or (sim.scenario_id==3 and role not in GUARD_ORDERS): return {}
     var guard: bool=role in GUARD_ORDERS
     var strict: bool=unit["obedience"]=="명령 엄수"
@@ -34,7 +32,6 @@ static func choose(sim, unit: Dictionary, enemy: Dictionary, action: String) -> 
         if role=="공격": opening+=6.0
     var best_score:=45.0
     var result: Dictionary={}
-    var guard_in_reach:=false
     var partner: int=sim.LinkedMarch._partner(unit,sim.battle_time)
     for ally in sim.units:
         if ally["side"]!=unit["side"] or ally["id"]==unit["id"] or ally["troops"]<600 or ally["routed"]: continue
@@ -42,7 +39,6 @@ static func choose(sim, unit: Dictionary, enemy: Dictionary, action: String) -> 
         var ap: Vector2=ally["pos"]
         var separation:=p.distance_to(ap)
         if separation>195 or sim._river_separates(p,ap): continue
-        if guard and ally["id"]==partner and ap.distance_to(ep)<=140: guard_in_reach=true
         var threat: Dictionary=sim._observed_threat_to(unit,ally)
         if threat.is_empty(): continue
         var tp: Vector2=threat["pos"]
@@ -61,7 +57,7 @@ static func choose(sim, unit: Dictionary, enemy: Dictionary, action: String) -> 
         var intercept:=ap+ap.direction_to(tp)*clampf(gap*0.5,0.0,65.0)
         var reason: String="%s에 %s 접근 · %s" % [ally["name"],threat["name"],"엄호 사격" if archer else "사이에 진입"]
         result={"action":"아군 보호","reason":reason,"goal":p if archer else intercept,"ally":ally["id"],"target":threat["id"]}
-    if opening>best_score and (not strict or role=="공격") and (not guard or guard_in_reach):
+    if opening>best_score and (not strict or role=="공격") and not guard:
         var reason: String="%s %s · 공격 지속" % [enemy["name"],"대형 흐트러짐" if enemy["cohesion"]<55 else ("사기 저하" if enemy["morale"]<54 else "병력 우세")]
         return {"action":"공격 지속","reason":reason,"goal":p if archer else ep,"ally":-1,"target":enemy["id"]}
     return result

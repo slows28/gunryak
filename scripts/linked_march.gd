@@ -4,9 +4,15 @@ extends RefCounted
 const COOPERATIVE_MISSIONS = ["전열 엄호","측후방 기동","구원 지원","궁병 보호"]
 const INTERRUPTS = ["포위 이탈","거점 차단","거점 엄호 사격","후퇴","패주","재집결","전술 재집결","휴식","탄약 보충","보급 복귀","전술 철수","거리 유지","측면 방어","긴급 방어","긴급 지원","아군 보호","공격 지속","궁병 보호","교전","반격","전열 유지","후열 정렬","엄호 사격"]
 
+static func has_field_role(unit: Dictionary, now: float) -> bool:
+    return unit.get("assigned_link",-1)<0 and now<float(unit.get("ai_role_until",0.0)) and unit.get("ai_role","") in COOPERATIVE_MISSIONS
+
+static func role(unit: Dictionary, now: float) -> String:
+    return unit["ai_role"] if has_field_role(unit,now) else unit["mission"]
+
 static func _partner(unit: Dictionary, now: float) -> int:
     if int(unit["assigned_link"])>=0: return unit["assigned_link"]
-    if now<float(unit["ai_role_until"]) and unit["ai_role"] in COOPERATIVE_MISSIONS:
+    if has_field_role(unit,now):
         return unit["ai_partner"]
     return unit["link_id"] if unit["mission"] in COOPERATIVE_MISSIONS else int(unit.get("opening_screen",-1))
 

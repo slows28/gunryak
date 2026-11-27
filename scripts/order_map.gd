@@ -1027,7 +1027,7 @@ func _choose_action(index:int)->void:
 
 func _sync_actions()->void:
     partner_choice.disabled=ACTIONS[action_choice.selected]=="자유 재량"
-    var descriptions:Array[String]=["동행 군단과 느린 쪽의 보속으로 이동","목표 지역의 적을 공격","지정 구역을 확보하고 방어","위협이 접근하면 지정 아군을 우선 보호","적의 측후방으로 기동","위기에 처한 연계 군단을 지원","지정 지점에서 투입을 대기","목표 지점으로 철수","장수가 지형과 전황을 보고 목표와 행동을 결정"]
+    var descriptions:Array[String]=["동행 군단과 느린 쪽의 보속으로 이동","목표 지역의 적을 공격","지정 구역을 확보하고 방어","지정 아군을 따라 엄호하고 가까운 위협을 차단","적의 측후방으로 기동","위기에 처한 연계 군단을 지원","지정 지점에서 투입을 대기","목표 지점으로 철수","현지 상황에 따라 장수가 연계 상대와 역할을 선택"]
     for i in range(action_buttons.size()):
         action_buttons[i].set_pressed_no_signal(i==action_choice.selected)
     if action_choice.selected>=0 and action_choice.selected<descriptions.size():

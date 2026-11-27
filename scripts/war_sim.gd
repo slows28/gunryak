@@ -378,9 +378,10 @@ func step(dt: float) -> void:
     _update_reserves()
     _update_couriers(dt)
     _supply_logic(dt)
-    if long_operation and enemy_strategy_enabled and not commander_captured(1) and battle_time>=next_enemy_strategy:
+    if long_operation and battle_time>=next_enemy_strategy:
         next_enemy_strategy=battle_time+8.0
-        _enemy_strategy()
+        if enemy_strategy_enabled and not commander_captured(1): _enemy_strategy()
+        if not commander_captured(0) and scenario_id not in [2,3]: _plan_local_roles(0)
     # We use a shallow fixed unit pool and never mutate it during these loops.
     for unit in units:
         if float(unit["troops"]) <= 0.0:
@@ -1175,11 +1176,12 @@ func _decide(unit: Dictionary) -> void:
     if long_operation:
         var local_order := BreakContact.decision(self,unit)
         if local_order.is_empty(): local_order = RallyOrders.decision(self,unit,nearest,action)
+        unit["rally_covering"]=local_order.get("arrival_cover",false)
         if not local_order.is_empty():
             action = local_order["action"]
             reason = local_order["reason"]
             goal = local_order["goal"]
-            unit["field_choice"] = {}
+            unit["field_choice"] = local_order if local_order.has("target") else {}
     if action != str(unit["last_timeline_action"]):
         unit["last_timeline_action"] = action
         if int(unit["side"]) == 0 and timeline.size() < 1200:
@@ -3978,7 +3980,11 @@ func _tactical_decision(unit: Dictionary, enemy: Dictionary, action: String, rea
         if order == "지원":
             var ally: Dictionary = find_unit(int(unit["tactical_target"]))
             if not ally.is_empty() and float(ally["troops"]) > 0.0:
+                if long_operation and LinkedMarch._partner(unit,battle_time)==ally["id"] and LinkedMarch.role(unit,battle_time) in FieldJudgment.GUARD_ORDERS and action=="궁병 보호":
+                    return {"action":"긴급 지원","reason":str(ally["name"])+"군 구원 · 접근 중인 적 차단","goal":goal}
                 return {"action":"긴급 지원","reason":("현지 구원 수락 · " if unit.get("local_relief",false) else "전령 명령: ")+str(ally["name"])+" 지원","goal":_relief_position(ally)}
+    if long_operation and LinkedMarch.role(unit,battle_time) in FieldJudgment.GUARD_ORDERS and LinkedMarch._partner(unit,battle_time)>=0:
+        return result_order
     # Autonomous initiative: an aggressive low-loyalty commander may exploit
     # an observed weak enemy, while strict or cautious commanders retain orders.
     if enemy.is_empty() or distance > 180.0 or strength < (GeneralMind.initiative_threshold(unit) if long_operation else 1.30) or float(unit["morale"]) < 65.0 or str(unit["obedience"]) == "명령 엄수" or action in ["후퇴","패주","재집결","휴식","거리 유지","측면 방어","보급 호위","탄약 보충","보급 복귀"]:
@@ -4376,7 +4382,7 @@ func _combined_arms_partner(unit: Dictionary,enemy: Dictionary,targets: Dictiona
 func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason: String,goal: Vector2) -> Dictionary:
     var original: Dictionary={"action":action,"reason":reason,"goal":goal}
     var mission: String=str(unit["mission"])
-    var tactical_role:bool=long_operation and int(unit["side"])==1 and battle_time<float(unit.get("ai_role_until",0.0)) and str(unit.get("ai_role",""))!=""
+    var tactical_role:bool=long_operation and LinkedMarch.has_field_role(unit,battle_time)
     if tactical_role: mission=str(unit["ai_role"])
     if mission not in ["전열 엄호","측후방 기동","구원 지원","궁병 보호"]: return original
     if action in ["후퇴","패주","재집결","휴식","탄약 보충","보급 복귀","거리 유지","측면 방어"]: return original
@@ -4396,7 +4402,8 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
     var assigned: Dictionary=find_unit(int(unit.get("ai_partner",-1)) if tactical_role else int(unit.get("assigned_link",-1)))
     if not assigned.is_empty() and _valid_partner(unit,int(assigned["id"])):
         ally=assigned
-    elif tactical_role:
+    elif tactical_role or unit["assigned_link"]>=0:
+        unit["link_id"]=-1
         return original
     if ally.is_empty():
         unit["link_id"]=-1
@@ -4532,6 +4539,10 @@ func _valid_partner(unit: Dictionary,partner: int) -> bool:
 func _reset_cooperation(unit: Dictionary,partner: int) -> void:
     unit.erase("opening_screen")
     unit.erase("escape_step")
+    unit.erase("rally_covering")
+    unit["ai_role"]=""
+    unit["ai_partner"]=-1
+    unit["ai_role_until"]=0.0
     for other in units:
         if other.get("opening_screen",-1)==unit["id"]: other.erase("opening_screen")
     unit["field_choice"]={}
@@ -4659,6 +4670,14 @@ func _destination_order(unit: Dictionary,enemy: Dictionary,action: String,reason
     if mission=="철수": return {"action":"전술 철수","reason":"책사의 철수 지시","goal":dest}
     if p.distance_to(dest)<=65.0: unit["destination_reached"]=true
     if action=="거리 유지" and distance<110.0: return original
+    if long_operation and mission in FieldJudgment.GUARD_ORDERS and action in ["협동 엄호","궁병 보호","구원 지원"]:
+        var partner := find_unit(unit["link_id"])
+        if not partner.is_empty() and _valid_partner(unit,partner["id"]):
+            var partner_pos: Vector2=partner["pos"]
+            # Follow the rendezvous on the march. In the assignment area, or
+            # when the partner is under local pressure, stay with the partner.
+            if partner_pos.distance_to(dest)<=175.0 or (p.distance_to(partner_pos)<=205.0 and not _observed_threat_to(unit,partner).is_empty()):
+                return original
     if mission == "공격" and not enemy.is_empty() and Vector2(enemy["pos"]).distance_to(dest) < 240.0:
         # A defender at the edge of the order area can block the last few
         # steps. Engage the observed target without declaring the area secured.
@@ -4726,8 +4745,12 @@ func _observed_threat_to(observer:Dictionary,ally:Dictionary)->Dictionary:
 func _enemy_strategy()->void:
     if scenario_id in [2,3]: return
     NorthernField.review_pressure(self)
+    _plan_local_roles(1)
+
+func _plan_local_roles(side: int)->void:
     for unit in units:
-        if int(unit["side"])!=1 or float(unit["troops"])<600.0 or bool(unit["routed"]) or bool(unit["reserve"]) or str(unit["mission"])=="본진 방어": continue
+        if unit["assigned_link"]>=0 or unit["has_destination"] or (side==0 and unit["mission"]!="자유 재량"): continue
+        if int(unit["side"])!=side or float(unit["troops"])<600.0 or bool(unit["routed"]) or bool(unit["reserve"]) or str(unit["mission"])=="본진 방어": continue
         if float(unit["morale"])<40.0 or float(unit["cohesion"])<35.0 or float(unit["rations"])<20.0:
             unit["ai_role_until"]=0.0
             continue
@@ -4738,9 +4761,9 @@ func _enemy_strategy()->void:
         var best:float=INF
         var p:Vector2=unit["pos"]
         for ally in units:
-            if int(ally["side"])!=1 or int(ally["id"])==int(unit["id"]) or float(ally["troops"])<600.0 or bool(ally["routed"]) or str(ally["mission"])=="본진 방어": continue
+            if int(ally["side"])!=side or int(ally["id"])==int(unit["id"]) or float(ally["troops"])<600.0 or bool(ally["routed"]) or str(ally["mission"])=="본진 방어": continue
             var distance:float=p.distance_to(ally["pos"])
-            if distance>310.0: continue
+            if distance>310.0 or _river_separates(p,ally["pos"]): continue
             var threat:Dictionary=_observed_threat_to(unit,ally)
             var candidate:String=""
             if str(unit["type"])=="보병" and str(ally["type"])=="궁병" and not threat.is_empty() and str(threat["type"])=="기병":
@@ -4764,7 +4787,7 @@ func _enemy_strategy()->void:
             continue
         if old_role!=role or old_partner!=partner:
             unit["ai_replans"]+=1
-            enemy_replans+=1
+            if side==1: enemy_replans+=1
             unit["flank_target"]=-1
             unit["flank_phase"]=0
             unit["flank_until"]=0.0
