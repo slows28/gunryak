@@ -2111,10 +2111,12 @@ func _step_infantry_feet(dt: float) -> void:
                     feet[i] = dry
             state["end"] = feet
         state["proposal"] = state["end"]
+        var mix := 0.0
         for front: Dictionary in fronts_by_unit.get(id,[]):
-            if float(front.get("mix",0.0))*float(front["strength"]) > 0.2:
-                state["bins"] = InfantryMotion.bins_for(state["proposal"])
-                break
+            mix = maxf(mix, float(front.get("mix",0.0))*float(front["strength"]))
+        state["mix"] = mix
+        state["from_mix"] = old.get("mix",mix)
+        if mix > 0.2: state["bins"] = InfantryMotion.bins_for(state["proposal"])
         state["raw"] = raw
         state["target_id"] = unit["contact_target_id"]
         state["fog"] = fog_enabled
@@ -2453,6 +2455,10 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         var local_owners: PackedInt32Array = contact_cache.get(id, {}).get("local_owners", PackedInt32Array())
         var scatter: float=(100.0-float(unit["cohesion"]))*0.045
         if bool(unit["routed"]): scatter+=6.5
+        elif tracked:
+            # Spacing is already resolved at the feet inside a scrum. Adding
+            # the formation's cohesion scatter again would stack sprites.
+            scatter *= 1.0 - lerpf(feet["from_mix"],feet["mix"],1.0-blend)
         var incoming: Array = impacts.get(id, [])
         var two_fronts: bool = sim.rear_responses.get(id, {}).get("front", -1) >= 0
         var swing_times: Dictionary = unit.get("melee_visual_times", {})
