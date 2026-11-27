@@ -1253,3 +1253,17 @@ Godot 4.7.2 정적 구조 및 엔진 검사 20개가 통과했다. 실행 명령
 - 동일한 무공 근접 카메라의 144프레임 소프트웨어 렌더링 단회 측정은 이전 14.0 FPS, 수정 후 13.3 FPS이고 첫 타이틀 프레임은 각각 10.7초와 11.2초였다. 하드웨어 성능 및 플레이어 승률은 미측정이다.
 
 상규는 개전 집중만으로도 자율 기동에 따른 측후방 피해 24,005명으로 기준 150명을 넘었다. 기산에서는 실제 위군 손실 25,320명으로 야전 목표를 달성했다. 기본 준비 배치만으로 무공을 돌파하기는 여전히 어렵다. 다음 실전 검증에서는 협공 성공 후 집결지가 비는 시점과 방어 임무를 맡긴 군단이 도착하기까지 걸리는 시간을 비교한다. 실행 ZIP과 스크린샷 원본은 `/workspace/shared/downloads/gunryak-acfd0bf/`에 있다.
+
+## 2026-11-27 무공 보병 접전과 교대
+
+실행판 `8998ca8`, 이전 실행판 `acfd0bf`, 작업 브랜치 `work/demo-field-intent`. 11장 무공 전투에서 문빙·장포군의 첫 주간 보병 접촉을 비교했다. 비교 영상은 두 버전 모두 전장의 안개를 켜고 같은 시작 배치, 1배속, 같은 시각과 카메라에서 기록했다.
+
+- 이전에는 창을 내민 병사와 방패를 맞댄 상대의 반응, 그 뒤 병사의 발걸음이 서로 이어지지 않았다. 이제 양측 보병의 위치와 방향, 실제 근접 피해 사건을 사용해 맞닿은 두 병사의 동작을 결정한다. 앞줄은 방패로 버티거나 어깨 쪽으로 물러나고 같은 열에 실제로 가까운 병사가 있을 때 뒤에서 자리를 채운다. 교대하는 두 병사가 한쪽 어깨로 겹치던 첫 구현의 결함을 회귀 검사에서 발견해 수정했다.
+- `scripts/infantry_exchange.gd`가 접촉 쌍, 역할, 발 위치와 시간차를 맡고 `scripts/game.gd`가 기존 고정 스텝 이동·간격 및 화면 보간에 연결한다. 보병의 기존 투구·갑옷·방패 원화로 촉·위 각각 세 방향, 여섯 자세를 만들었다. 생성 원본은 `art_source/render_infantry_contact.py`, 런타임 자산은 `assets/art/infantry_contact.svg`다. 전장 휠 확대는 커서 위치를 중심으로 최대 4.25배까지 가능하다.
+- 무공 3일차 295~340틱을 18초간 재생했다. 이 두 부대에서 기록한 동작은 밀고 들어감 34회, 제자리 버티기 15회, 물러서기 19회, 뒤 병사의 교대 12회였다. 이전판과 수정판 모두 마지막 병력은 문빙 4,655명, 장포 3,769명이었다. 이 수치는 화면에 표시하는 보병의 동작 횟수다. [같은 카메라의 이전·수정 화면](docs/mugong-infantry-contact.jpg) · [한 번의 교대를 세 프레임으로 추적](docs/mugong-infantry-relief.jpg)
+- 재생 명령은 `godot --headless --path . --fixed-fps 24 --script res://tests/infantry_contact_replay.gd`다. 녹화는 `xvfb-run -a -s '-screen 0 1280x800x24' godot --rendering-driver opengl3 --path . --fixed-fps 24 --write-movie /tmp/mugong.avi --script res://tests/infantry_contact_replay.gd -- close`를 사용한다. `-- close`를 생략하면 비교 영상의 2.55배 시점이다. `tests/combat_upgrades.gd`는 사거리, 화살, 피해 없는 사건, 교대 충돌을 구분한다.
+- 정적 검사는 `python3 tools_check_structure.py`, Godot 4.7.2 회귀는 `python3 tools_run_engine_tests.py --godot /usr/local/bin/godot --project . --timeout 700`로 실행해 22개를 통과했다. Xvfb와 Mesa OpenGL에서 `tests/screenshot.gd` 75장 및 `tests/northern_screen.gd` 5장을 확인했다. 밀집 교전 회귀에서 깊이 들어간 보병 19명, 양측이 섞인 보병 35명, 겹침 판정 0명이었다. 거점 경계, 본진 구원, 위수·무공 전령 재생도 통과했다.
+- 두 ZIP의 압축·SHA-256을 확인하고 풀어 타이틀 → 장수 편성 → 작전 지도 → 전투 → 타이틀 복귀를 실행했다. Windows x64는 Wine에서, Linux x86_64는 Linux에서 검증했다. 영상과 ZIP은 `/workspace/shared/downloads/gunryak-8998ca8/`에 있다.
+- 동일한 무공 근접 카메라의 144프레임을 Mesa 소프트웨어 렌더러로 측정했다. CPU 제한을 추가하지 않은 단회 기록은 이전 10.8 FPS, 수정 후 13.7 FPS였다. 타이틀 첫 프레임은 11.5초와 11.1초였다. CPU 2개로 고정한 교차 측정 각 2회는 이전 8.2~9.7 FPS, 수정 후 8.8~9.7 FPS였다. 병행 검사 부하에 따라 값이 변했고 실물 GPU 성능은 미측정이다.
+
+확대해서 볼 때는 방패를 맞대고 밀리는 쪽을 따라갈 수 있다. 전장 전체 시점에서는 한쪽 전열이 얼마나 오래 밀렸는지 읽기 어렵다. 다음 검증 대상은 같은 구간에서 누적된 압박과 열의 후퇴가 기본 배율에서도 보이는지다.
