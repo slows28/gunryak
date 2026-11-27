@@ -375,9 +375,12 @@ func _update_destination()->void:
                 destination_label.text = "%s  ·  %s" % [_grid_ref(destination),sim.terrain_at(destination)]
                 break
     march_preview.text=march_diagram.get("caption","")
+    march_preview.tooltip_text=""
     if _shows_rally(officer):
         var station: Dictionary=officer["rally_station"]
-        march_preview.text="공동 집결 %d개 군단 · %s %s" % [station["count"],officer["name"],station["role"]]
+        var caption := "공동 집결 %d개 군단 · %s %s" % [station["count"],officer["name"],station["role"]]
+        if march_diagram.is_empty(): march_preview.text=caption
+        else: march_preview.tooltip_text=caption
     _refresh_map_hint()
     _refresh_route_summary()
     _refresh_survey()
