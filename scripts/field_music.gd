@@ -54,22 +54,33 @@ func select(key: String) -> void:
     origins=weights.duplicate()
     elapsed=0.0
     var player: AudioStreamPlayer=players[key]
-    if not player.playing:
+    AudioServer.lock()
+    if not player.playing and not player.stream_paused:
         player.play()
         player.stream_paused=not enabled
+    AudioServer.unlock()
 
 func set_enabled(value: bool) -> void:
     enabled=value
+    AudioServer.lock()
     for player: AudioStreamPlayer in players.values():
         if player.playing or player.stream_paused: player.stream_paused=not enabled
+    AudioServer.unlock()
 
 func _process(delta: float) -> void:
     if not enabled or elapsed>=FADE_SECONDS: return
     elapsed=minf(FADE_SECONDS,elapsed+delta)
     var blend:=smoothstep(0,FADE_SECONDS,elapsed)
+    # The audio driver mixes on its own thread. Apply each frame's gains and
+    # release outgoing playbacks together between mix buffers.
+    AudioServer.lock()
     for key: String in players:
+        var player: AudioStreamPlayer=players[key]
+        if key!=selected and origins[key]==0.0:
+            if player.playing: player.stop()
+            continue
         var weight:=lerpf(origins[key],1.0 if key==selected else 0.0,blend)
         weights[key]=weight
-        var player: AudioStreamPlayer=players[key]
         player.volume_db=LEVEL[key]+linear_to_db(maxf(0.0001,sqrt(weight)))
         if elapsed>=FADE_SECONDS and key!=selected and player.playing: player.stop()
+    AudioServer.unlock()
