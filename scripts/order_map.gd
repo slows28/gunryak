@@ -23,7 +23,7 @@ var survey: OptionButton
 var survey_detail: Label
 var survey_sites: Dictionary={}
 var survey_key: String=""
-const COMMAND_SKIN=preload("res://assets/art/command_skin.svg")
+const CorpsStandard=preload("res://scripts/corps_standard.gd")
 var game: Control
 var sim
 var font: Font
@@ -894,9 +894,10 @@ func _piece(u:Dictionary,p:Vector2,selected:bool)->void:
     if selected:
         draw_circle(p,19,Color(0.98,0.75,0.22,0.18))
         draw_arc(p,19,0,TAU,40,Color("#edc56b"),2.2,true)
-    draw_texture_rect_region(COMMAND_SKIN,Rect2(p-Vector2(25,37),Vector2(50,50)),Rect2(512+int(u["side"])*128,0,128,128))
+    CorpsStandard.paint(self,u,p+Vector2(-10,1),1.0,font,1.0)
     var kind:String="步" if str(u["type"])=="보병" else ("弓" if str(u["type"])=="궁병" else "騎")
-    _ink(kind,p+Vector2(-6,-9),14,Color("#f1ddb1"))
+    draw_circle(p+Vector2(3,1),6.8,c)
+    _ink(kind,p+Vector2(-2,5),10,Color("#f4e9ca"))
     _plate(str(u["name"]),p+Vector2(0,12),13,Color("#f0ce84") if selected else Color("#ded2b0"))
 
 func _art(tile:int,rect:Rect2,tint:Color=Color.WHITE)->void:

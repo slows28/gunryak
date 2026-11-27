@@ -185,8 +185,8 @@ func reset() -> void:
     _add_unit(0, "마속", "궁병", "균형", 55.0, Vector2(105, 278), "중앙 진격", 108.0)
     _add_unit(0, "위연", "기병", "공격", 79.0, Vector2(133, 431), "남측 우회", 95.0)
     _add_unit(1, "장합", "보병", "신중", 86.0, Vector2(760, 158), "북측 확보", 152.0)
-    _add_unit(1, "위군 궁대", "궁병", "균형", 65.0, Vector2(787, 294), "중앙 진격", 102.0)
-    _add_unit(1, "위군 기병", "기병", "공격", 66.0, Vector2(755, 437), "남측 우회", 96.0)
+    _add_unit(1, "손례", "궁병", "균형", 65.0, Vector2(787, 294), "중앙 진격", 102.0)
+    _add_unit(1, "대릉", "기병", "공격", 66.0, Vector2(755, 437), "남측 우회", 96.0)
     if six_armies:
         _add_unit(0,"강유","궁병","균형",83.0,Vector2(175,215),"북측 확보",120.0)
         _add_unit(0,"관흥","기병","공격",78.0,Vector2(180,375),"남측 우회",110.0)
@@ -1410,7 +1410,29 @@ func _body_distance(a: Dictionary, b: Dictionary) -> float:
     if six_armies:
         var direction: Vector2 = ((b["pos"] as Vector2)-(a["pos"] as Vector2)).normalized()
         if direction.length_squared()<0.01: direction=Vector2.RIGHT
-        return _formation_extent(a,direction)+_formation_extent(b,-direction)+5.0
+        var slots_a := formation_slots(a)
+        var slots_b := formation_slots(b)
+        var edge_a := _leading_offset(a,slots_a,direction)
+        var edge_b := _leading_offset(b,slots_b,-direction)
+        var nominal := maxf(10.0,edge_a.dot(direction)+8.0)+maxf(10.0,edge_b.dot(-direction)+8.0)+5.0
+        if a["side"] == b["side"] or a["type"] == "궁병" or b["type"] == "궁병": return nominal
+        var range_sq: float = Vector2(a["pos"]).distance_squared_to(b["pos"])
+        if range_sq > (nominal+12.0)*(nominal+12.0): return nominal
+        if (direction*nominal+edge_b-edge_a).length_squared() <= 900.0: return nominal
+        # Extremes on opposite wings need not be opposite each other. At the
+        # proposed separation check actual file pairs, then close only the gap
+        # needed to bring one pair within the model's existing melee reach.
+        var tangent := direction.orthogonal()
+        var contact_distance := 0.0
+        var offset: Vector2 = direction*nominal - (Vector2(b["pos"])-Vector2(a["pos"]))
+        for left in slots_a:
+            for right in slots_b:
+                var gap := right-left+offset
+                if gap.length_squared() <= 900.0: return nominal
+                var across := gap.dot(tangent)
+                if absf(across) >= 29.0: continue
+                contact_distance = maxf(contact_distance,nominal-gap.dot(direction)+sqrt(841.0-across*across))
+        return minf(nominal, maxf(12.0,contact_distance))
     if str(a["type"]) == "궁병" or str(b["type"]) == "궁병":
         return 25.0
     return 34.0
@@ -2684,6 +2706,9 @@ func _charge_impact(unit: Dictionary, enemy: Dictionary) -> float:
     var impact: float = minf(9.0, distance_run * 0.075) * (float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"])))
     if long_operation:
         impact *= lerpf(1.0, 1.4, smoothstep(72.0, 150.0, unit["charge_speed"]))
+    if six_armies and unit["formation"] == "봉시진" and unit["next_formation"] == "":
+        var alignment: float = Vector2(unit["facing"]).dot(target_dir)
+        impact *= 1.0+0.16*smoothstep(0.72,0.96,alignment)*smoothstep(40.0,90.0,unit["cohesion"])
     impact *= 0.3 if str(enemy["formation"]) == "방진" else 1.0
     if _in_forest(enemy["pos"]):
         impact *= 0.45
@@ -4068,12 +4093,13 @@ func army_slots(unit: Dictionary,count: int,spacing: float,shape_override: Strin
         points.append(_dry_formation_slot(unit["pos"],pos) if long_operation else pos)
     return points
 
-func _formation_extent(unit: Dictionary,direction: Vector2) -> float:
-    var p: Vector2=unit["pos"]
-    var extent: float=10.0
-    for slot in formation_slots(unit):
-        extent=maxf(extent,(slot-p).dot(direction)+8.0)
-    return extent
+func _leading_offset(unit: Dictionary, slots: Array[Vector2], direction: Vector2) -> Vector2:
+    var center: Vector2 = unit["pos"]
+    var leading := Vector2.ZERO if slots.is_empty() else slots[0]-center
+    for point in slots:
+        var offset := point-center
+        if offset.dot(direction) > leading.dot(direction): leading = offset
+    return leading
 
 # Soil classification is deliberately independent of the army's order or animation.
 # A walking column can lift loose dirt here without already churning the ground.

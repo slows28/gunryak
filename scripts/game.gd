@@ -22,11 +22,11 @@ const VOLLEY_ARROW_SPREAD: Array[Vector2] = [
     Vector2(-0.98,-0.15),Vector2(0.94,0.78),Vector2(0.19,0.43),Vector2(-0.50,-0.81),Vector2(0.65,0.12),
 ]
 const SCENERY_ART = preload("res://assets/art/battlefield_detail.svg")
-const CORPS_STANDARDS = preload("res://assets/art/corps_standards.webp")
+const CorpsStandard = preload("res://scripts/corps_standard.gd")
 const SHU_COMMANDERS=preload("res://assets/art/shu_commanders.webp")
 const GENERAL_PORTRAITS=preload("res://assets/art/general_portraits.svg")
 const FIELD_SITES=preload("res://assets/art/field_sites.svg")
-const PORTRAIT_NAMES=["왕평","마속","위연","강유","관흥","장익","장합","위군 궁대","위군 기병","곽회","비요","왕쌍"]
+const PORTRAIT_NAMES=["왕평","마속","위연","강유","관흥","장익","장합","손례","대릉","곽회","비요","왕쌍"]
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const TITLE_ART = preload("res://assets/art/title_art.webp")
 const SOLDIER_SCALE: float = 0.72
@@ -2608,27 +2608,9 @@ func _draw_formation_footprint(slots: Array[Vector2], fill: Color, outline: Colo
     map_layer.draw_polyline(hull,Color(Color("#21292b"),outline.a*0.82),width+1.8/camera_zoom,true)
     map_layer.draw_polyline(hull, outline, width, true)
 
-# Each strip shares its free edge with the next so the woven emblem follows the cloth.
 func _draw_corps_standard(unit: Dictionary, p: Vector2, opacity: float) -> void:
-    var scale_factor: float=0.71 if unit.has("parent_id") else 1.0
-    var foot: Vector2=p+Vector2(-6,-2)*scale_factor
-    var top: Vector2=foot+Vector2(0,-34)*scale_factor
-    map_layer.draw_line(foot,top,Color(Color("#554537"),opacity),2.0*scale_factor,true)
-    map_layer.draw_line(foot+Vector2(-0.6,0),top+Vector2(-0.6,0),Color(Color("#ceb485"),opacity),0.8*scale_factor,true)
-    map_layer.draw_circle(top,1.35*scale_factor,Color(Color("#e4c078"),opacity))
-    var phase: float=2.1*render_clock+float(unit["id"])
-    var last: Vector2=top+Vector2(0,2)*scale_factor
-    var drop := Vector2(0,22)*scale_factor
-    var first_u: float=0.5*float(unit["side"])
-    for i in range(1,5):
-        var t: float=float(i)*0.25
-        var wave: float=sin(phase-t*4.4)*t
-        var edge: Vector2=top+Vector2(18.0*t,2.0+1.8*wave)*scale_factor
-        var color:=Color(1,1,1,opacity)
-        var u0: float=first_u+(t-0.25)*0.5
-        var u1: float=first_u+t*0.5
-        map_layer.draw_polygon(PackedVector2Array([last,edge,edge+drop,last+drop]),PackedColorArray([color]),PackedVector2Array([Vector2(u0,0),Vector2(u1,0),Vector2(u1,1),Vector2(u0,1)]),CORPS_STANDARDS)
-        last=edge
+    var scale_factor := 0.71 if unit.has("parent_id") else 1.0
+    CorpsStandard.paint(map_layer,unit,p+Vector2(-6,-2)*scale_factor,scale_factor,korean_font,opacity,2.1*render_clock+float(unit["id"]),true)
 
 func _draw_unit(unit: Dictionary) -> void:
     var side: int = int(unit["side"])
@@ -2640,8 +2622,7 @@ func _draw_unit(unit: Dictionary) -> void:
     elif float(unit["ambush_ready"]) >= 3.0:
         accent = Color(accent, 0.64)
     if camera_zoom < 0.65:
-        # Draw the actual formation footprint in overview, not a flag pile or a
-        # scaled copy of slot positions that expands beyond its real area.
+        # Preserve the actual footprint under the small overview standard.
         var k:float=1.0/camera_zoom
         var slots: Array[Vector2]=_contact_slots(unit,sim.formation_slots(unit))
         if slots.size()>=3:
@@ -2657,6 +2638,7 @@ func _draw_unit(unit: Dictionary) -> void:
         map_layer.draw_circle(p,3.0*k,center_color,false,1.1*k,true)
         var front: Vector2=(unit["facing"] as Vector2).normalized()
         map_layer.draw_line(p+front*4*k,p+front*8*k,center_color,1.4*k,true)
+        CorpsStandard.paint(map_layer,unit,p-Vector2(3,4)*k,(0.47 if unit.has("parent_id") else 0.61)*k,korean_font,accent.a)
         return
     var id: int=int(unit["id"])
     var selected: bool=id==(observed_enemy_id if observing_enemy else selected_id)
@@ -4008,6 +3990,34 @@ func _build_demo_help() -> void:
     tutorial_dialog.title = "군략 · 첫 출전 안내"
     tutorial_dialog.ok_button_text = "확인"
     tutorial_dialog.dialog_text = "0. 기본 전체 시야: 아군/적군 탭에서 양 진영 활동과 병력을 확인합니다. C: 최근 교전 위치, V: 정찰 시야 전환.\n1. 전략 지도에서 인접 지역을 선택합니다. 군량 55가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 작전 지도에서 거점과 담당 군단을 골라 행동을 지정합니다. 필요한 곳에 임시 거점을 세울 수 있습니다. 본진과 책사는 함께 이전합니다.\n4. 기본 배속 전투는 약 25분. 장수는 자율적으로 판단하며 5일차와 10일차에 중간회의가 열립니다. 밤에는 시야가 줄고 본진과 기지에 불이 켜집니다. 좌측 전령 보고에서 건의에 허가·불허를 회신하세요.\n5. 숫자 1~6 장수 선택, Space 일시정지, 휠 확대, 방향키/가운데 마우스 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
+    var guide := tutorial_dialog.dialog_text
+    tutorial_dialog.dialog_text = ""
+    var content := VBoxContainer.new()
+    var instructions := Label.new()
+    instructions.text = guide
+    instructions.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    instructions.custom_minimum_size.x = 700
+    content.add_child(instructions)
+    var key := Label.new()
+    key.text = "군기 읽기   ·   글자는 장수의 성, 바탕색은 현재 진형입니다. 아군은 평평한 깃단, 적군은 제비꼬리입니다."
+    key.add_theme_color_override("font_color",COL_GOLD)
+    content.add_child(key)
+    var flags := HBoxContainer.new()
+    flags.add_theme_constant_override("separation",9)
+    for shape: String in CorpsStandard.DYES:
+        var tile := AtlasTexture.new()
+        tile.atlas = CorpsStandard.ATLAS
+        tile.region = CorpsStandard.tile({"formation":shape,"side":0,"name":"왕평"})
+        var icon := TextureRect.new()
+        icon.texture = tile
+        icon.custom_minimum_size = Vector2(23,29)
+        icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+        flags.add_child(icon)
+        var label := Label.new()
+        label.text = shape
+        flags.add_child(label)
+    content.add_child(flags)
+    tutorial_dialog.add_child(content)
     add_child(tutorial_dialog)
     retreat_dialog = ConfirmationDialog.new()
     retreat_dialog.title = "전투 철수"

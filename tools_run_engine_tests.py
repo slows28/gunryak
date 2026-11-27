@@ -23,6 +23,7 @@ TESTS = [
     ("simulation", ["--headless", "--path", "{project}", "--script", "res://tests/smoke.gd"], "GUNRYAK_TEST_SUMMARY"),
     ("campaign_demo", ["--headless", "--path", "{project}", "--script", "res://tests/demo_smoke.gd"], "GUNRYAK_DEMO_PASS"),
     ("unit_combat", ["--headless", "--path", "{project}", "--script", "res://tests/combat_upgrades.gd"], "GUNRYAK_COMBAT_PASS"),
+    ("formation_efficiency", ["--headless", "--path", "{project}", "--script", "res://tests/formation_efficiency.gd"], "GUNRYAK_FORMATION_EFFICIENCY_PASS"),
     ("tactics_playtest", ["--headless", "--path", "{project}", "--script", "res://tests/tactics_playtest.gd"], "GUNRYAK_TACTICS_PASS"),
     ("balance_matrix", ["--headless", "--path", "{project}", "--script", "res://tests/balance_matrix.gd"], "GUNRYAK_BALANCE_PASS"),
     ("field_operations", ["--headless", "--path", "{project}", "--script", "res://tests/field_operations.gd"], "GUNRYAK_FIELD_OPERATIONS_PASS"),

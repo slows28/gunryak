@@ -32,7 +32,7 @@ static func role_text(shape: String) -> String:
         "종대": return "빠른 이동 · 좁은 전열"
         "어린진": return "근접 공격 강화"
         "학익진": return "측후방 공격 강화"
-        "봉시진": return "기병 공격 강화 · 빠른 이동"
+        "봉시진": return "기병 정렬 돌격 강화 · 빠른 이동"
         "안행진": return "궁병 사격 강화"
     return ""
 

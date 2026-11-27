@@ -6,6 +6,7 @@ var failures: int=0
 func _initialize() -> void:
     _bows()
     _charge_and_rear()
+    _ordered_charge()
     _running_charge()
     _contact_footwork()
     _planted_feet()
@@ -158,6 +159,23 @@ func _bows() -> void:
     recovery._update_battle_condition(0.1)
     _check(float(recovering["fatigue"])<40.0 and float(recovering["cohesion"])>40.0,
         "regrouping resumes once incoming volleys cease")
+
+func _ordered_charge() -> void:
+    var sim := _field()
+    var rider := _place(sim.find_unit(2),Vector2(800,750),"기병","횡대")
+    var target := _place(sim.find_unit(3),Vector2(840,750),"보병")
+    rider.merge({"charge":80.0,"charge_speed":80.0,"charge_dir":Vector2.RIGHT,"cohesion":90.0},true)
+    var reference := sim._charge_impact(rider,target)
+    rider["formation"] = "봉시진"
+    _check(reference>0 and sim._charge_impact(rider,target)>reference*1.1,"an aligned, formed cavalry wedge concentrates the first impact")
+    rider["next_formation"] = "횡대"
+    _check(is_equal_approx(sim._charge_impact(rider,target),reference),"reforming cavalry loses the wedge impact")
+    rider["next_formation"] = ""
+    rider["facing"] = Vector2.DOWN
+    _check(is_equal_approx(sim._charge_impact(rider,target),reference),"an off-axis charge gets no wedge impact")
+    rider["facing"] = Vector2.RIGHT
+    rider["cohesion"] = 35.0
+    _check(is_equal_approx(sim._charge_impact(rider,target),reference),"a disordered wedge loses the concentrated impact")
 
 func _charge_and_rear() -> void:
     var front: Array[float]=_charge_loss(false)

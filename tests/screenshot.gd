@@ -568,11 +568,21 @@ func _capture() -> void:
             push_error("VISUAL_CAPTURE_FAIL: bridge deck missing from minimap terrain")
             quit(1)
             return
-    var cloth: Image=game.CORPS_STANDARDS.get_image()
-    var crane: Color=cloth.get_pixel(18,33)
-    var tiger: Color=cloth.get_pixel(146,33)
-    if cloth.get_size()!=Vector2i(256,160) or crane.b<=crane.r or tiger.r<=tiger.b or minf(crane.a,tiger.a)<0.9:
-        push_error("VISUAL_CAPTURE_FAIL: faction standards must have distinct dyed cloth")
+    var cloth: Image=game.CorpsStandard.ATLAS.get_image()
+    var dyes_seen: Array[Color]=[]
+    for shape: String in game.sim.LARGE_FORMATIONS:
+        var friendly: Rect2i=game.CorpsStandard.tile({"name":"왕평","formation":shape,"side":0})
+        var enemy: Rect2i=game.CorpsStandard.tile({"name":"왕쌍","formation":shape,"side":1})
+        var field: Color=cloth.get_pixelv(friendly.position+Vector2i(8,55))
+        var header_a: Color=cloth.get_pixelv(friendly.position+Vector2i(7,8))
+        var header_b: Color=cloth.get_pixelv(enemy.position+Vector2i(7,8))
+        if dyes_seen.has(field) or not field.is_equal_approx(cloth.get_pixelv(enemy.position+Vector2i(8,55))) or header_a.b<=header_a.r or header_b.r<=header_b.b or cloth.get_pixelv(friendly.position+Vector2i(32,72)).a<0.9 or cloth.get_pixelv(enemy.position+Vector2i(32,72)).a>0.1:
+            push_error("VISUAL_CAPTURE_FAIL: formation dye, faction ribbon or forked hem missing for "+shape)
+            quit(1)
+            return
+        dyes_seen.append(field)
+    if game.CorpsStandard.insignia({"name":"위연 별동대"})!="魏" or game.CorpsStandard.insignia({"name":"장합"})!="張" or game.CorpsStandard.insignia({"name":"왕실 예비대 1"})!="備":
+        push_error("VISUAL_CAPTURE_FAIL: commander or reserve insignia mismatch")
         quit(1)
         return
     if not game.commander_scroll.visible or game.enemy_list.visible or game.commander_scroll.get_global_rect().intersects(game.live_order_button.get_global_rect()):
