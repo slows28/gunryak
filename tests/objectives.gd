@@ -34,11 +34,36 @@ func check_headquarters_watch() -> void:
     check(not s.home_approach_seen(),"report expires when contact is lost")
     check(s.issue_map_order(scout.id,"본진 방어",Vector2.ZERO) and scout.order_destination==home,"headquarters order anchors to current camp")
     check(not s.LinkedMarch._available(scout),"another corps cannot pull the headquarters guard into a linked march")
+    var opposite:=Vector2(s.river_x(645)+85,645)
+    s.headquarters[0].pos=opposite-Vector2(170,0)
+    raider.pos=opposite
+    scout.pos=opposite+Vector2(20,0)
+    s.battle_time+=2.0
+    s._update_headquarters(0.1)
+    check(s.player_sees_enemy(raider) and not s.home_approach_seen(),"an unbridged river separates the observed raider from headquarters")
+    s.headquarters[0].pos=home
+    raider.pos=s.field_size-Vector2(30,30)
     var next:=home+Vector2(0,120)
     check(s.place_post("본진",next) and scout.order_destination==next and not s.home_approach_seen(),"headquarters duty follows relocation")
     scout["pos"]=next
     scout["routed"]=true
     check(s.headquarters_state(0)=="주둔군 없음" and not s.home_guard_roster().contains("전담"),"a routed guard cannot block occupation")
+    s.start()
+    var ids:=s.command_ids(0)
+    var disabled: Dictionary={}
+    for id in ids: disabled[id]=true
+    var nearby:=s.find_unit(ids[1])
+    var mobile:=s.find_unit(ids[2])
+    for u in [nearby,mobile]:
+        disabled.erase(u.id)
+        u.mission="예비 대기"
+        u.morale=85.0
+        u.cohesion=95.0
+    nearby.pos=next+Vector2(110,0)
+    nearby.action="재집결"
+    mobile.pos=next+Vector2(200,0)
+    mobile.action="예비 대기"
+    check(s.home_relief_candidate(disabled)==mobile.id,"a regrouping neighbor yields to a ready reinforcement")
 
 func _initialize() -> void:
     check_headquarters_watch()
