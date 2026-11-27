@@ -142,7 +142,7 @@ func _process(_dt: float) -> bool:
             push_error("GUNRYAK_SCENE_FAIL: visual contact range incorrect")
             quit(1)
             return false
-        if view_model.advance_toward_contact(Vector2.ZERO,Vector2(18,0),1.0,"보병")!=Vector2(9,0):
+        if view_model.advance_toward_contact(Vector2.ZERO,Vector2(18,0),1.0,"기병")!=Vector2(9,0) or view_model.advance_toward_contact(Vector2.ZERO,Vector2(18,0),1.0,"보병")!=Vector2.ZERO:
             push_error("GUNRYAK_SCENE_FAIL: visual contact displacement incorrect")
             quit(1)
             return false

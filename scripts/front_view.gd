@@ -95,7 +95,7 @@ static func hit_reaction(point: Vector2, index: int, impacts: Array) -> Vector2:
     return reaction
 
 static func advance_toward_contact(point: Vector2,target: Vector2,phase: float,kind: String) -> Vector2:
-    if target==Vector2.INF or kind=="궁병": return point
+    if target==Vector2.INF or kind!="기병": return point
     var gap: float=point.distance_to(target)
     if gap<0.1: return point
     # Move just the representative foot position within the existing melee frontage.

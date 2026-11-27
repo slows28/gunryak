@@ -8,6 +8,7 @@ func _initialize() -> void:
     _charge_and_rear()
     _running_charge()
     _contact_footwork()
+    _planted_feet()
     _change_ranks()
     _aftermath()
     _targeting()
@@ -359,3 +360,37 @@ func _rear_pressure() -> void:
     for i in range(2): sim._combat(0.1)
     _check(sim.combat_contacts.get(rear["id"],{}).get("kind","") == "화살" and not sim.rear_responses.has(unit["id"]),
         "arrows from behind do not invent a rear melee")
+
+func _planted_feet() -> void:
+    var motion = preload("res://scripts/infantry_motion.gd")
+    var stations: Array[Vector2] = [Vector2.ZERO,Vector2(10,0),Vector2(20,0),Vector2(0,4),Vector2(10,4),Vector2(20,4)]
+    var before: Dictionary = motion.plant({},stations,3,Vector2.ZERO,10,0.1,true)
+    var compressed: Array[Vector2] = [Vector2(0.5,0),Vector2(10,0),Vector2(0,4.5),Vector2(10,4)]
+    var replanted: Dictionary = motion.plant(before,compressed,2,Vector2.ZERO,11,0.1,true)
+    _check(replanted.start[2] == Vector2(0,4) and replanted.end[2] == Vector2(0,4),
+        "a casualty keeps the remaining files and their planted feet in place")
+    compressed[2]=Vector2(20,4)
+    var moved: Dictionary = motion.plant(replanted,compressed,2,Vector2.ZERO,12,0.1,true)
+    _check(is_equal_approx(moved.start[2].distance_to(moved.end[2]),2.9) and is_equal_approx(moved.walked[2],2.9),
+        "a displaced file walks to its new spot at a bounded pace")
+    var deterministic := true
+    var during := 0
+    var guarding := 0
+    for person in 60:
+        var age: float = motion.swing_age(0,person,12.21,12.0)
+        if motion.contact_pose(age) == 3: during+=1
+        if motion.contact_pose(age) == 2: guarding+=1
+        deterministic = deterministic and age == motion.swing_age(0,person,12.21,12.0)
+    _check(deterministic and during>0 and guarding>0 and motion.swing_age(0,2,11.9,12.0)<0.0,
+        "only part of a contacted line strikes on a real event and paused frames keep their pose")
+    var pair := PackedVector2Array([Vector2(9,-2),Vector2(9,2)])
+    _check(motion.opponent_for(Vector2(0,-2),Vector2.RIGHT,pair,0,1,-1)==0 and motion.opponent_for(Vector2(0,2),Vector2.RIGHT,pair,0,1,-1)==1,
+        "two adjacent soldiers face opponents in their own lane")
+    _check(motion.opponent_for(Vector2(0,-0.2),Vector2.RIGHT,pair,0,1,24)==1,
+        "a near tie retains the current opponent")
+
+    var left: Vector2 = motion.stop_at_contact(Vector2.ZERO,Vector2(4,1),Vector2(8,0),Vector2(4,0))
+    var right: Vector2 = motion.stop_at_contact(Vector2(8,0),Vector2(4,0),Vector2.ZERO,Vector2(4,1))
+    _check(is_equal_approx(right.x-left.x,4.5) and left.y==1.0, "approaching opponents stop at contact and retain lateral movement")
+    _check(motion.stop_at_contact(Vector2.ZERO,Vector2(-3,0),Vector2(4,0),Vector2(2,0)) == Vector2(-3,0),
+        "separating opponents can leave the contact")
