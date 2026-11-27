@@ -10,8 +10,9 @@ func _initialize() -> void:
     var assault: bool="assault" in options
     var equipped: bool="equipped" in options
     var relief: bool="relief" in options
-    if n<1 or n>North.Field.CHAPTERS.size() or options.size()!=int(assault)+int(equipped)+int(relief) or (relief and n not in [7,13]):
-        push_error("Use -- CHAPTER [assault] [equipped] [relief, siege chapters only]")
+    var receipts: bool="receipts" in options
+    if n<1 or n>North.Field.CHAPTERS.size() or options.size()!=int(assault)+int(equipped)+int(relief)+int(receipts) or (relief and n not in [7,13]) or (receipts and n not in [10,11]):
+        push_error("Use -- CHAPTER [assault] [equipped] [relief (7/13) | receipts (10/11)]")
         quit(2)
         return
     var campaign:=North.new()
@@ -59,9 +60,19 @@ func _initialize() -> void:
                 return
     sim.start()
     var dispatched: Dictionary={}
+    var receipt_orders: Dictionary={}
     while not sim.finished and sim.step_count<3800:
         sim.step(0.1)
-        if not relief or sim.turn<sim.COURIER_TURN or sim.step_count%20!=0 or sim.finished: continue
+        if sim.turn<sim.COURIER_TURN or sim.step_count%20!=0 or sim.finished: continue
+        if receipts:
+            for letter in sim.chapter.get("receipts",{}).values():
+                var id: int=letter.unit_id
+                if receipt_orders.has(id): continue
+                if not (letter.get("east_bank",false) or letter.get("joint_credit",0.0)>0.0): continue
+                var mission: String="지역 사수" if n==10 else "공격"
+                if sim.issue_map_order(id,mission,sim.outposts[0].pos):
+                    receipt_orders[id]=[letter.sender,letter.kind,sim.turn,mission]
+        if not relief: continue
         if sim.chapter.mode not in ["siege","capital"] or sim.structures[0].hp>0: continue
         var inside: Vector2=sim.outposts[0].pos
         for id in sim.command_ids(0):
@@ -71,6 +82,7 @@ func _initialize() -> void:
             var dest:=inside
             if u.type=="궁병": dest+=Vector2(-28,-18)
             if sim.issue_map_order(id,"지역 사수",dest): dispatched[id]=true
+    if receipts: print("COUNCIL_ORDERS ",JSON.stringify(receipt_orders.values()))
     var uses: Dictionary={}
     var sites: Array=[]
     for u in sim.units:
