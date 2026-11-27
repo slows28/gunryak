@@ -1,5 +1,5 @@
 extends SceneTree
-## Each run starts a real battle at normal difficulty. Only the opening orders are scripted.
+## Run a real battle at normal difficulty. Optional relief orders are carried by live couriers.
 const North=preload("res://scripts/northern_campaign.gd")
 const Sim=preload("res://scripts/war_sim.gd")
 
@@ -9,8 +9,9 @@ func _initialize() -> void:
     var options:=args.slice(1)
     var assault: bool="assault" in options
     var equipped: bool="equipped" in options
-    if n<1 or n>North.Field.CHAPTERS.size() or options.size()!=int(assault)+int(equipped):
-        push_error("Use -- CHAPTER [assault] [equipped]")
+    var relief: bool="relief" in options
+    if n<1 or n>North.Field.CHAPTERS.size() or options.size()!=int(assault)+int(equipped)+int(relief) or (relief and n not in [7,13]):
+        push_error("Use -- CHAPTER [assault] [equipped] [relief, siege chapters only]")
         quit(2)
         return
     var campaign:=North.new()
@@ -57,7 +58,19 @@ func _initialize() -> void:
                 quit(1)
                 return
     sim.start()
-    while not sim.finished and sim.step_count<3800: sim.step(0.1)
+    var dispatched: Dictionary={}
+    while not sim.finished and sim.step_count<3800:
+        sim.step(0.1)
+        if not relief or sim.turn<sim.COURIER_TURN or sim.step_count%20!=0 or sim.finished: continue
+        if sim.chapter.mode not in ["siege","capital"] or sim.structures[0].hp>0: continue
+        var inside: Vector2=sim.outposts[0].pos
+        for id in sim.command_ids(0):
+            if dispatched.has(id): continue
+            var u:=sim.find_unit(id)
+            if u.troops<600 or u.routed: continue
+            var dest:=inside
+            if u.type=="궁병": dest+=Vector2(-28,-18)
+            if sim.issue_map_order(id,"지역 사수",dest): dispatched[id]=true
     var uses: Dictionary={}
     var sites: Array=[]
     for u in sim.units:
@@ -65,5 +78,5 @@ func _initialize() -> void:
         for key in u.get("skill_stats",{}):
             uses[key]=uses.get(key,0)+int(u.skill_stats[key].uses)
     for site in sim.outposts: sites.append({"name":site.name,"owner":site.owner,"held":roundi(site.hold*sim.operation_scale())})
-    print("CHAPTER_RUN ",JSON.stringify({"chapter":n,"plan":"assault" if assault else "brief","gear":"earned" if equipped else "starters","title":sim.scenario_title,"elapsed":roundi(sim.operation_elapsed()),"blue_start":start_blue,"red_start":start_red,"blue":sim.total_troops(0),"red":sim.total_troops(1),"winner":sim.winning_side,"why":sim.result,"uses":uses,"sites":sites,"gate_hp":roundi(sim.structures[0].hp) if sim.chapter.mode in ["siege","capital"] else -1}))
+    print("CHAPTER_RUN ",JSON.stringify({"chapter":n,"plan":"assault" if assault else "brief","post_breach_orders":dispatched.size(),"gear":"earned" if equipped else "starters","title":sim.scenario_title,"elapsed":roundi(sim.operation_elapsed()),"blue_start":start_blue,"red_start":start_red,"blue":sim.total_troops(0),"red":sim.total_troops(1),"winner":sim.winning_side,"why":sim.result,"uses":uses,"sites":sites,"gate_hp":roundi(sim.structures[0].hp) if sim.chapter.mode in ["siege","capital"] else -1}))
     quit(0 if sim.finished and sim.validate_state().is_empty() else 1)
