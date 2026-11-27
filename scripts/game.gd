@@ -450,7 +450,7 @@ func _build_interface() -> void:
     _ensure_cards(strip,WarSim.FIELD_CORPS)
     _build_sector_board()
     situation_btn = _button("긴급 보고",Vector2(830,58),Vector2(120,45),_open_situations)
-    dispatch_headline=_button("",Vector2(417,675),Vector2(395,21),func(): _frame_milestone({"point":sim.headquarters[0]["pos"]}))
+    dispatch_headline=_button("",Vector2(417,675),Vector2(395,21),_review_home_alert)
     dispatch_headline.add_theme_font_size_override("font_size",13)
     dispatch_headline.alignment=HORIZONTAL_ALIGNMENT_LEFT
     dispatch_headline.add_theme_stylebox_override("normal",_ui_box(Color("#372e23"),Color("#836b44")))
@@ -1042,9 +1042,13 @@ func _refresh_hud() -> void:
         _refresh_messenger_card(pending)
         _refresh_arrival_rows()
         var count: int=pending.size()
-        dispatch_headline.visible=active and sim.scenario_id!=2 and sim.headquarters[0]["occupation"]>0
+        var under_raid: bool=sim.headquarters[0]["occupation"]>0
+        dispatch_headline.visible=active and sim.scenario_id!=2 and (under_raid or sim.home_approach_seen())
         notice_label.size.x=284.0 if dispatch_headline.visible else 685.0
-        if dispatch_headline.visible: dispatch_headline.text="본진 피습 · "+sim.headquarters_state(0)+"   ›"
+        if dispatch_headline.visible:
+            var alarm: String="본진 피습 · "+sim.headquarters_state(0) if under_raid else "본진 인근 적 관측 · 주둔 %d개 군단" % sim._nearby_corps(0,sim.headquarters[0]["pos"],sim.GUARD_RADIUS)
+            var can_order: bool=sim.turn>=sim.COURIER_TURN and not captured
+            dispatch_headline.text=alarm+("   수비 지시 ›" if can_order else "   위치 ›")
         situation_btn.text="받은 전령 %d" % count if count>0 else "받은 전령"
         situation_btn.disabled=not active
         situation_btn.theme_type_variation=&"UrgentReport" if pending.any(_urgent_situation) else &""
@@ -1350,6 +1354,19 @@ func _visit_journal_event(index: int) -> void:
                 _open_situations(event["report_id"])
                 return
     _frame_milestone(event)
+
+func _review_home_alert() -> void:
+    if not sim.started or sim.finished: return
+    _frame_milestone({"point":sim.headquarters[0]["pos"]})
+    if sim.turn<sim.COURIER_TURN or sim.commander_captured(0): return
+    _open_order_map()
+    var id: int=sim.home_relief_candidate(order_view.drafts)
+    if id<0:
+        order_view.feedback.text="현재 증원 가능한 군단이 없습니다. 본진 주둔과 전령 상태를 확인하십시오."
+        return
+    order_view._select(id)
+    order_view.prepare_home_guard()
+    order_view.feedback.text="%s군 수비 초안 · 기동 가능한 군단 중 예상 복귀가 가장 빠릅니다. 지시 확정 시 전령을 보냅니다." % sim.find_unit(id)["name"]
 
 func _frame_milestone(event: Dictionary) -> void:
     var id: int=int(event.get("unit_id",-1))

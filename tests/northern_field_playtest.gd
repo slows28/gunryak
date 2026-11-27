@@ -11,8 +11,10 @@ func _initialize() -> void:
     var equipped: bool="equipped" in options
     var relief: bool="relief" in options
     var receipts: bool="receipts" in options
-    if n<1 or n>North.Field.CHAPTERS.size() or options.size()!=int(assault)+int(equipped)+int(relief)+int(receipts) or (relief and n not in [7,13]) or (receipts and n not in [10,11]):
-        push_error("Use -- CHAPTER [assault] [equipped] [relief (7/13) | receipts (10/11)]")
+    var watch: bool="watch" in options
+    var garrison: bool="garrison" in options
+    if n<1 or n>North.Field.CHAPTERS.size() or options.size()!=int(assault)+int(equipped)+int(relief)+int(receipts)+int(watch)+int(garrison) or ((watch or garrison) and n!=11) or (watch and garrison) or (relief and n not in [7,13]) or (receipts and n not in [10,11]):
+        push_error("Use -- CHAPTER [assault] [equipped] [relief (7/13) | receipts (10/11)] [watch | garrison (11)]")
         quit(2)
         return
     var campaign:=North.new()
@@ -58,16 +60,29 @@ func _initialize() -> void:
                 push_error("Illegal opening order for "+unit.name)
                 quit(1)
                 return
+    var guard_id: int=-1
+    if garrison:
+        guard_id=sim.home_relief_candidate()
+        if guard_id<0 or not sim.issue_map_order(guard_id,"본진 방어",sim.headquarters[0]["pos"]):
+            push_error("Opening assignment failed")
+            quit(1)
+            return
+        print("GARRISON ",sim.find_unit(guard_id).name," day 1")
     sim.start()
     var dispatched: Dictionary={}
     var receipt_orders: Dictionary={}
     while not sim.finished and sim.step_count<3800:
         sim.step(0.1)
         if sim.turn<sim.COURIER_TURN or sim.step_count%20!=0 or sim.finished: continue
+        if watch and guard_id<0 and (sim.home_approach_seen() or sim.headquarters[0].occupation>0):
+            var candidate:=sim.home_relief_candidate()
+            if candidate>=0 and sim.issue_map_order(candidate,"본진 방어",sim.headquarters[0]["pos"]):
+                guard_id=candidate
+                print("WATCH_ORDER ",sim.find_unit(guard_id).name," at ",sim.operation_elapsed())
         if receipts:
             for letter in sim.chapter.get("receipts",{}).values():
                 var id: int=letter.unit_id
-                if receipt_orders.has(id): continue
+                if id==guard_id or receipt_orders.has(id): continue
                 if not (letter.get("east_bank",false) or letter.get("joint_credit",0.0)>0.0): continue
                 var mission: String="지역 사수" if n==10 else "공격"
                 if sim.issue_map_order(id,mission,sim.outposts[0].pos):
@@ -82,6 +97,7 @@ func _initialize() -> void:
             var dest:=inside
             if u.type=="궁병": dest+=Vector2(-28,-18)
             if sim.issue_map_order(id,"지역 사수",dest): dispatched[id]=true
+    if guard_id>=0: print("GUARD_RESULT ",sim.find_unit(guard_id).name," ",sim.map_dispatches.get(guard_id,{})," ",sim.headquarters_state(0))
     if receipts: print("COUNCIL_ORDERS ",JSON.stringify(receipt_orders.values()))
     var uses: Dictionary={}
     var sites: Array=[]

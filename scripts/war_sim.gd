@@ -32,6 +32,7 @@ const RAID_SECONDS: float = 6.0
 const HQ_CAPTURE_SECONDS: float = 12.0
 const RAID_RADIUS: float = 46.0
 const GUARD_RADIUS: float = 76.0
+const HQ_APPROACH_RADIUS: float = 280.0
 var next_supply_survey: float=0.0
 const MARCH_LEG := 320.0
 const MORALE_NEWS_DISTANCE := 280.0
@@ -488,6 +489,8 @@ func _update_couriers(dt: float) -> void:
             target["waypoint_index"] = 0
             target["defense_set"] = false
             var destination: Vector2=letter.get("destination",Vector2(-1,-1))
+            if target["mission"]=="본진 방어" and letter.get("map_dispatch",false):
+                destination=_home_point(target["side"])
             target["has_destination"]=destination.x>=0.0 and destination.y>=0.0
             target["order_destination"]=_field_point(destination) if bool(target["has_destination"]) else Vector2.ZERO
             target["destination_reached"]=false
@@ -1146,6 +1149,18 @@ func _decide(unit: Dictionary) -> void:
             action = "수레 공격" if gap <= 42.0 else "차단"
             reason = "군량 수레에 접근해 파손" if action == "수레 공격" else "호위 수레의 진로를 막기 위해 접근"
             goal = wagon
+    # An explicit headquarters assignment follows the camp. The commander can
+    # meet a local attack but keeps the center of the corps within guard range.
+    if unit["mission"]=="본진 방어" and unit["has_destination"] and not unit["routed"] and action not in ["후퇴","패주","재집결","휴식","보급 복귀","탄약 보충","전술 철수","사기 혼란"]:
+        var home:=_home_point(side)
+        if not nearest.is_empty() and (nearest["pos"] as Vector2).distance_to(home)<=GUARD_RADIUS and not _river_separates(home,nearest["pos"]):
+            goal=home+home.direction_to(nearest["pos"])*32.0
+            reason="본진 수비선에서 접근한 적을 저지"
+        else:
+            goal=home
+            reason="본진 수비선에 집결" if pos.distance_to(home)>GUARD_RADIUS else "본진에 주둔하며 진입로 경계"
+        action="본진 수비"
+        unit["field_choice"]={}
     if action != str(unit["last_timeline_action"]):
         unit["last_timeline_action"] = action
         if int(unit["side"]) == 0 and timeline.size() < 1200:
@@ -1329,7 +1344,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
             goal = pos
             meeting_contact = true
     var dressing_line: bool=long_operation and not enemy.is_empty() and unit["action"] in ["후열 정렬","엄호 사격","전열 유지","거리 유지","궁병 보호","협동 엄호"]
-    if not enemy.is_empty() and str(unit["action"]) not in ["수레 공격", "후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호","아군 보호","후열 정렬","엄호 사격","전열 유지"]:
+    if not enemy.is_empty() and not (unit["action"]=="본진 수비" and unit["has_destination"]) and str(unit["action"]) not in ["수레 공격", "후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호","아군 보호","후열 정렬","엄호 사격","전열 유지"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
@@ -2300,8 +2315,62 @@ func _check_command_capture() -> void:
             u["ai_cooldown"]=0.0
             if u["troops"]>0 and not u["routed"]: _decide(u)
 
+# The watch samples only an enemy actually sighted on this side of the river.
+# Its short memory bridges gaps between sightings without following a hidden raider.
+func _scan_home_approach() -> void:
+    var home:=headquarters[0]
+    if chapter.is_empty() or battle_time<float(home.get("next_watch",0.0)): return
+    home["next_watch"]=battle_time+1.0
+    var point: Vector2=home["pos"]
+    for enemy in units:
+        if enemy["side"]!=1 or enemy["troops"]<=0 or enemy["routed"]: continue
+        if point.distance_squared_to(enemy["pos"])>HQ_APPROACH_RADIUS*HQ_APPROACH_RADIUS: continue
+        if (long_operation and _river_separates(point,enemy["pos"])) or not player_sees_enemy(enemy): continue
+        if not home_approach_seen() and battle_time>=float(home.get("next_watch_notice",0.0)) and home["occupation"]==0:
+            _field_notice("본진 경계 · 아군이 진입로 인근에서 적을 관측",point)
+            home["next_watch_notice"]=battle_time+18.0
+        home["watch_until"]=battle_time+3.0
+        return
+
+func home_approach_seen() -> bool:
+    return battle_time<float(headquarters[0].get("watch_until",-1.0))
+
+func home_guard_roster() -> String:
+    var assigned:=PackedStringArray()
+    var pending:=PackedStringArray()
+    for id in command_ids(0):
+        var u:=find_unit(id)
+        if u["troops"]>0 and not u["routed"] and u["mission"]=="본진 방어" and u["has_destination"]:
+            assigned.append(u["name"])
+    for letter in couriers:
+        if letter.get("map_dispatch",false) and letter["mission"]=="본진 방어":
+            pending.append(find_unit(letter["unit_id"]).get("name","군단"))
+    var text:="본진 주둔 %d개 군단" % _nearby_corps(0,_home_point(0),GUARD_RADIUS)
+    if not assigned.is_empty(): text+="  ·  전담 "+", ".join(assigned)
+    if not pending.is_empty(): text+="  ·  전령 이동 중 "+", ".join(pending)
+    return text
+
+func home_relief_candidate(exclude: Dictionary={}) -> int:
+    var best:=-1
+    var fastest:=INF
+    var home:=_home_point(0)
+    for id in command_ids(0):
+        var u:=find_unit(id)
+        if exclude.has(id) or u["troops"]<=0 or u["routed"] or u["reserve"] or has_pending_courier(id): continue
+        if u["mission"]=="본진 방어" and u["has_destination"]: continue
+        if started:
+            if (u["pos"] as Vector2).distance_to(home)<=GUARD_RADIUS and (not long_operation or not _river_separates(u["pos"],home)): continue
+            if u["surrounded"] or u["morale"]<38 or u["cohesion"]<35 or u["tactical_until"]>battle_time: continue
+            if u["action"] in ["패주","후퇴","재집결","휴식","보급 복귀","탄약 보충","전술 철수","사기 혼란"]: continue
+        var travel_time:=_relief_travel_distance(u,home)/_movement_rate(u,_nearest_visible_enemy(u))
+        if travel_time<fastest:
+            fastest=travel_time
+            best=id
+    return best
+
 # Occupation is measured at the current headquarters.
 func _update_headquarters(dt: float) -> void:
+    _scan_home_approach()
     for home in headquarters:
         if home["occupied"]: continue
         var side: int=home["side"]
@@ -2319,6 +2388,7 @@ func headquarters_state(side: int) -> String:
     var home:=headquarters[side]
     if home["occupied"]: return "함락"
     if home["occupation"]>0: return "함락까지 %d초" % ceili((HQ_CAPTURE_SECONDS-home["occupation"])*operation_scale()-0.00001)
+    if side==0 and _nearby_corps(side,home["pos"],GUARD_RADIUS)==0: return "주둔군 없음"
     return "수비 중"
 
 func _check_victory() -> void:
@@ -3096,10 +3166,14 @@ func place_post(post: String, point: Vector2) -> bool:
         temporary_sites.append({"name":"임시 거점 %d" % (temporary_sites.size()+1),"pos":point})
     elif post in ["본진","책사"]:
         headquarters[0]["pos"] = point
+        for key in ["watch_until","next_watch","next_watch_notice"]: headquarters[0].erase(key)
+        for dispatch in map_dispatches.values():
+            if dispatch["mission"]=="본진 방어": dispatch["destination"]=point
         commanders[0]["pos"] = point
         commanders[0]["goal"] = point
         for unit in units:
             if unit["side"] != 0 or unit["mission"] != "본진 방어": continue
+            if unit["has_destination"]: unit["order_destination"]=point
             if unit["defense_set"] and unit.has("hq_defense_offset"):
                 unit["defense_anchor"] = _field_point(point + Vector2(unit["hq_defense_offset"]))
             unit["ai_cooldown"] = 0.0
@@ -3515,7 +3589,7 @@ func _relief_decision(ally: Dictionary, sender: Dictionary) -> String:
     if sender.get("local_relief",false) and sender["tactical_until"]>battle_time and sender["tactical_target"]==ally["id"]: return "상대 부대가 이쪽으로 합류 중"
     if command_confused(ally["side"]): return "지휘 혼란으로 현 위치 방어"
     if ally["tactical_until"]>battle_time or has_pending_courier(ally["id"]): return "기존 전령 지시 수행 중"
-    if ally["mission"]=="본진 방어" and (ally["obedience"]=="명령 엄수" or headquarters[ally["side"]]["occupation"]>0):
+    if ally["mission"]=="본진 방어" and (ally["has_destination"] or ally["obedience"]=="명령 엄수" or headquarters[ally["side"]]["occupation"]>0):
         return "본진 수비를 우선"
     var threat:=_nearest_visible_enemy(ally)
     var engaged: bool=not threat.is_empty() and (ally["pos"] as Vector2).distance_to(threat["pos"])<130
@@ -4458,17 +4532,21 @@ func _physical_screen(protected: Dictionary,attacker: Dictionary) -> Dictionary:
 
 # Public map orders contain an intent, location and optional partner. Formation
 # remains under the general's field judgment.
-const MAP_MISSIONS = ["지정 위치 이동","공격","지역 사수","전열 엄호","측후방 기동","구원 지원","예비 대기","철수","자유 재량"]
+const MAP_MISSIONS = ["본진 방어","지정 위치 이동","공격","지역 사수","전열 엄호","측후방 기동","구원 지원","예비 대기","철수","자유 재량"]
 
 func map_order_issue(id: int, mission: String, destination: Vector2, partner: int = -1) -> String:
     if finished: return "전투가 종료되었습니다."
     if commander_captured(0): return "책사 생포 · 장수들이 자율 지휘합니다."
+    if mission=="본진 방어":
+        destination=_home_point(0)
+        partner=-1
     if mission not in MAP_MISSIONS: return "행동을 선택하십시오."
     if mission!="자유 재량" and not Rect2(Vector2.ZERO,field_size).has_point(destination): return "전장 안의 목적지를 선택하십시오."
     if mission!="자유 재량" and long_operation and in_open_water(destination): return "하천에는 지시할 수 없습니다. 교량이나 강둑을 선택하십시오."
     var unit := find_unit(id)
     if unit.is_empty() or int(unit["side"])!=0 or float(unit["troops"])<=0.0:
         return "지시할 수 있는 아군 군단을 선택하십시오."
+    if mission=="본진 방어" and (unit["routed"] or unit["reserve"]): return "현재 출전 중인 군단에 수비를 지시하십시오."
     if not _valid_partner(unit,partner): return "현재 협동 대상에 지시를 연결할 수 없습니다."
     if started and turn < COURIER_TURN: return "%d일차부터 전령을 파견할 수 있습니다." % COURIER_TURN
     if started:
@@ -4477,7 +4555,10 @@ func map_order_issue(id: int, mission: String, destination: Vector2, partner: in
     return ""
 
 func issue_map_order(id: int,mission: String,destination: Vector2,partner: int=-1) -> bool:
-    if mission=="자유 재량":
+    if mission=="본진 방어":
+        partner=-1
+        destination=_home_point(0)
+    elif mission=="자유 재량":
         partner=-1
         destination=Vector2(-1,-1)
     if not map_order_issue(id,mission,destination,partner).is_empty(): return false

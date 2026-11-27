@@ -11,6 +11,7 @@ static func _partner(unit: Dictionary, now: float) -> int:
     return unit["link_id"] if unit["mission"] in COOPERATIVE_MISSIONS else int(unit.get("opening_screen",-1))
 
 static func _available(unit: Dictionary) -> bool:
+    if unit["mission"]=="본진 방어" and unit.get("has_destination",false): return false
     return unit["troops"]>0 and not unit["routed"] and unit["mission"]!="철수" and unit["action"] not in INTERRUPTS
 
 static func _companies(sim, edit_id: int=-1, partner_override: int=-1) -> Array:

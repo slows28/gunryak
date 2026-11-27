@@ -9,7 +9,39 @@ func check(ok: bool, message: String) -> void:
         failures+=1
         push_error(message)
 
+func check_headquarters_watch() -> void:
+    var s:=War.new()
+    s.set_long_operation(true)
+    var home:=s._home_point(0)
+    var scout:=s.find_unit(s.command_ids(0)[0])
+    var raider:=s.find_unit(s.command_ids(1)[0])
+    s.chapter={"mode":"link"}
+    for unit in s.units: unit["pos"]=s.field_size-Vector2(30,30)
+    raider["pos"]=home+Vector2(267,0)
+    s._update_headquarters(0.1)
+    check(not s.home_approach_seen() and s.headquarters_state(0)=="주둔군 없음","unseen raider and empty camp")
+    scout["pos"]=raider["pos"]+Vector2(35,0)
+    s.battle_time+=1.1
+    s._update_headquarters(0.1)
+    check(s.home_approach_seen() and s.headquarters[0]["occupation"]==0,"observed approach precedes occupation")
+    var notices:=s.field_notices.size()
+    s.battle_time+=1.1
+    s._update_headquarters(0.1)
+    check(s.field_notices.size()==notices,"one notice for a continuing sighting")
+    raider["pos"]=s.field_size-Vector2(30,30)
+    s.battle_time+=4.0
+    s._update_headquarters(0.1)
+    check(not s.home_approach_seen(),"report expires when contact is lost")
+    check(s.issue_map_order(scout.id,"본진 방어",Vector2.ZERO) and scout.order_destination==home,"headquarters order anchors to current camp")
+    check(not s.LinkedMarch._available(scout),"another corps cannot pull the headquarters guard into a linked march")
+    var next:=Vector2(690,1050)
+    check(s.place_post("본진",next) and scout.order_destination==next and not s.home_approach_seen(),"headquarters duty follows relocation")
+    scout["pos"]=next
+    scout["routed"]=true
+    check(s.headquarters_state(0)=="주둔군 없음" and not s.home_guard_roster().contains("전담"),"a routed guard cannot block occupation")
+
 func _initialize() -> void:
+    check_headquarters_watch()
     var s:=War.new()
     s.set_long_operation(true)
     for scenario in range(6):

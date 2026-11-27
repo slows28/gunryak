@@ -61,6 +61,8 @@ var has_destination: bool=false
 var draft_dirty: bool=false
 var drafts: Dictionary={}
 var in_battle: bool=false
+var guard_summary: Label
+var guard_button: Button
 
 func configure(owner_game: Control,used_font: Font) -> void:
     game=owner_game
@@ -70,12 +72,17 @@ func configure(owner_game: Control,used_font: Font) -> void:
     mouse_filter=Control.MOUSE_FILTER_STOP
     _label("軍略",Vector2(20,8),Vector2(82,39),24,GOLD)
     title=_label("",Vector2(111,7),Vector2(555,38),24,Color("#f3ecdc"))
+    guard_summary=_label("",Vector2(112,35),Vector2(510,21),13,Color("#e1cf99"))
+    guard_summary.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
     goal_label=_label("",Vector2(630,4),Vector2(630,25),16,Color("#eadbb7"))
     goal_label.horizontal_alignment=HORIZONTAL_ALIGNMENT_RIGHT
     progress_label=_label("",Vector2(630,30),Vector2(630,20),13,Color("#cdd8d9"))
     progress_label.horizontal_alignment=HORIZONTAL_ALIGNMENT_RIGHT
     progress_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
     _label("아군 군단",Vector2(1082,86),Vector2(160,29),20,Color("#f3ecdc"))
+    guard_button=_button("본진 수비",Vector2(1164,86),Vector2(89,29),prepare_home_guard)
+    guard_button.add_theme_font_size_override("font_size",14)
+    guard_button.tooltip_text="선택한 군단을 본진 수비에 배치하는 초안을 작성합니다."
     roster=ItemList.new()
     roster.position=Vector2(1077,126)
     roster.size=Vector2(178,285)
@@ -285,7 +292,7 @@ func _select(id:int)->void:
     for i in range(roster.item_count):
         if int(roster.get_item_metadata(i))==id: roster.select(i)
     info.text="%s · %s %s명\n사기 %d  /  응집 %d\n현재 · %s"%[u["name"],u["type"],_troop_text(int(u["troops"])),int(u["morale"]),int(u["cohesion"]),u["mission"]]
-    var idx:int=ACTIONS.find(str(u["mission"]))
+    var idx:int=ACTIONS.find("지역 사수" if u["mission"]=="본진 방어" and u["has_destination"] else str(u["mission"]))
     action_choice.select(maxi(0,idx))
     partner_choice.clear()
     partner_choice.add_item("자동 / 없음")
@@ -311,7 +318,7 @@ func _select(id:int)->void:
     if incoming:
         has_destination=dispatch["mission"]!="자유 재량"
         destination=dispatch["destination"] if has_destination else u["pos"]
-        action_choice.select(maxi(0,ACTIONS.find(str(dispatch["mission"]))))
+        action_choice.select(maxi(0,ACTIONS.find("지역 사수" if dispatch["mission"]=="본진 방어" else str(dispatch["mission"]))))
     if not focus_site.is_empty() and ACTIONS[action_choice.selected]!="자유 재량":
         has_destination = true
         destination = focus_site["pos"]
@@ -347,8 +354,14 @@ func _refresh_draft_roster() -> void:
 
 func _update_destination()->void:
     _refresh_draft_roster()
+    guard_summary.text=sim.home_guard_roster()
+    guard_summary.tooltip_text=guard_summary.text
+    var officer: Dictionary=sim.find_unit(selected_id)
+    guard_button.disabled=sim.commander_captured(0) or officer.get("routed",false) or officer.get("troops",0)<=0
+    var home_task:=_map_mission()=="본진 방어"
+    partner_choice.disabled=home_task or ACTIONS[action_choice.selected]=="자유 재량"
     march_diagram={}
-    if ACTIONS[action_choice.selected] not in ["철수","자유 재량"]:
+    if not home_task and ACTIONS[action_choice.selected] not in ["철수","자유 재량"]:
         var unit: Dictionary=sim.find_unit(selected_id)
         var projected: Vector2=destination if has_destination else unit["goal"]
         march_diagram=sim.LinkedMarch.preview(sim,unit,_selected_partner(),projected)
@@ -370,7 +383,10 @@ func _update_destination()->void:
         destination_label.text="장수가 전황에 따라 목표를 선택"
         route_summary.text="독립 작전 · 고정 경로 없음"
     if has_destination or ACTIONS[action_choice.selected]=="자유 재량":
-        problem=sim.map_order_issue(selected_id,ACTIONS[action_choice.selected],destination,_selected_partner())
+        problem=sim.map_order_issue(selected_id,_map_mission(),destination,_selected_partner())
+    if not home_task and ACTIONS[action_choice.selected]=="지역 사수": action_description.text="지정 구역을 확보하고 방어"
+    if home_task:
+        action_description.text="본진에 주둔해 점거를 막고 본진 이전 시 따라갑니다."
     apply.disabled=not problem.is_empty()
     apply.tooltip_text=problem
     var dispatch: String=game.dispatch_line(selected_id)
@@ -507,12 +523,29 @@ func _refresh_survey() -> void:
         "점령 거점": note="성문 파괴 후 거점 확보"
     survey_detail.text = "%s  %s" % [_grid_ref(point),note]
 
+func _map_mission() -> String:
+    var action:=ACTIONS[action_choice.selected]
+    if action=="지역 사수" and has_destination and destination.is_equal_approx(sim.headquarters[0]["pos"]):
+        return "본진 방어"
+    return action
+
+func prepare_home_guard() -> void:
+    action_choice.select(ACTIONS.find("지역 사수"))
+    destination=sim.headquarters[0]["pos"]
+    focus_site={}
+    has_destination=true
+    partner_choice.select(0)
+    _sync_actions()
+    _mark_draft()
+    var officer: Dictionary=sim.find_unit(selected_id)
+    feedback.text="%s군 본진 수비 초안  ·  %s" % [officer["name"],apply.tooltip_text if apply.disabled else "지시 확정 시 전령 파견" if in_battle else "지시 확정 후 출전"]
+
 func _apply()->void:
     if not has_destination and ACTIONS[action_choice.selected]!="자유 재량":
         feedback.text="먼저 지도에서 목적지를 지정하십시오."
         return
-    var action:String=ACTIONS[action_choice.selected]
-    var partner:int=_selected_partner()
+    var action:String=_map_mission()
+    var partner:int=-1 if action=="본진 방어" else _selected_partner()
     var problem: String=sim.map_order_issue(selected_id,action,destination,partner)
     if not problem.is_empty():
         feedback.text=problem
@@ -572,6 +605,7 @@ func _gui_input(event:InputEvent)->void:
                 _choose_site(sim.temporary_sites.back())
             else:
                 _refresh_hq_button()
+                if mode=="본진": _select(selected_id)
                 survey_sites=sim.field_survey_sites()
                 _refresh_survey()
                 feedback.text=("본진·책사 이전 완료" if mode=="본진" else "첫 보급기지 지정")+"  ·  "+_grid_ref(point)
