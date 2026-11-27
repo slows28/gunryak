@@ -72,6 +72,33 @@ static func opponent_for(point: Vector2, heading: Vector2, positions: PackedVect
             target = i
     return target
 
+# Once formations mingle the closest opponent can belong to a different
+# file. Index only participants of actual infantry contacts on the fixed step.
+const NEIGHBOUR_RANGE := 12.0
+static func bins_for(feet: PackedVector2Array) -> Dictionary:
+    var bins := {}
+    for i in feet.size():
+        var cell := Vector2i((feet[i] / NEIGHBOUR_RANGE).floor())
+        if not bins.has(cell): bins[cell] = []
+        bins[cell].append(i)
+    return bins
+
+static func nearby_opponent(point: Vector2, feet: PackedVector2Array, bins: Dictionary, prior_index: int) -> int:
+    var cell := Vector2i((point/NEIGHBOUR_RANGE).floor())
+    var best := NEIGHBOUR_RANGE*NEIGHBOUR_RANGE
+    var match_index := -1
+    for y in range(-1,2):
+        for x in range(-1,2):
+            var bucket: Array = bins.get(cell+Vector2i(x,y),[])
+            for j: int in bucket:
+                var gap := point.distance_squared_to(feet[j])
+                if gap > NEIGHBOUR_RANGE*NEIGHBOUR_RANGE: continue
+                if j == prior_index: gap -= 6.0
+                if gap < best:
+                    best = gap
+                    match_index = j
+    return match_index
+
 # Share the remaining gap when two planted feet step towards each other.
 # Preserve lateral travel and steps away from the opposing person.
 static func stop_at_contact(start: Vector2, goal: Vector2, other_start: Vector2, other_goal: Vector2) -> Vector2:
@@ -84,3 +111,31 @@ static func stop_at_contact(start: Vector2, goal: Vector2, other_start: Vector2,
     var available := maxf(0.0, gap - 4.5 + maxf(0.0, -opposing))
     var share := clampf(available / (closing + maxf(0.0, opposing)), 0.0, 1.0)
     return goal - normal * closing * (1.0 - share)
+
+# Resolve simultaneous short-range crowding from frozen positions. Opposite
+# files may mingle, but no representative has to occupy another's footprint.
+static func spread_neighbours(points: PackedVector2Array, identities: PackedInt32Array) -> void:
+    const SPACE := 4.1
+    for pass_index in 3:
+        var cells := {}
+        var shifts := PackedVector2Array()
+        shifts.resize(points.size())
+        for i in points.size():
+            var cell := Vector2i((points[i]/SPACE).floor())
+            for y in range(-1,2):
+                for x in range(-1,2):
+                    var bucket: Array = cells.get(cell+Vector2i(x,y),[])
+                    for j: int in bucket:
+                        var gap := points[i]-points[j]
+                        var length_sq := gap.length_squared()
+                        if length_sq >= SPACE*SPACE: continue
+                        var dist := sqrt(length_sq)
+                        var normal := gap / dist if dist > 0.001 else Vector2.from_angle(float(identities[i]+identities[j])*2.39996)
+                        if dist <= 0.001 and identities[i] < identities[j]: normal = -normal
+                        var correction := normal * ((SPACE-dist)*0.5)
+                        shifts[i] += correction
+                        shifts[j] -= correction
+            if not cells.has(cell): cells[cell] = []
+            cells[cell].append(i)
+        for i in points.size():
+            points[i] += shifts[i].limit_length(SPACE*0.55)

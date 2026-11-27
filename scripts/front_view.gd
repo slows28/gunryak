@@ -121,6 +121,46 @@ static func contact_displacement(local: Vector2, front: Dictionary) -> Vector2:
     return (axis*axial+tangent*spill)*weight*float(front["strength"])
 
 
+# The two corps share a patch of ground. Project both occupied formations onto
+# the same axes so a change of the nearest single pair cannot move the patch.
+static func melee_patch(left: Array[Vector2], right: Array[Vector2], axis: Vector2) -> Dictionary:
+    var tangent := axis.orthogonal()
+    var edge := PackedFloat32Array([-INF, INF])
+    var lo := PackedFloat32Array([INF, INF])
+    var hi := PackedFloat32Array([-INF, -INF])
+    for side in 2:
+        var points := left if side == 0 else right
+        if points.is_empty(): return {}
+        for point in points:
+            var depth := point.dot(axis)
+            var across := point.dot(tangent)
+            edge[side] = maxf(edge[side], depth) if side == 0 else minf(edge[side], depth)
+            lo[side] = minf(lo[side], across)
+            hi[side] = maxf(hi[side], across)
+    var lower := maxf(lo[0], lo[1])
+    var upper := minf(hi[0], hi[1])
+    return {"center": axis * ((edge[0]+edge[1])*0.5) + tangent * ((lower+upper)*0.5),
+        "half_width": maxf(6.0, (upper-lower)*0.5) + 6.0}
+
+# Feed several ranks into the contact area. Neighbouring files fold together,
+# but people within each file keep different ground. No clock-based jitter.
+static func melee_displacement(local: Vector2, front: Dictionary, person: int) -> Vector2:
+    var normal: Vector2 = front["axis"]
+    var tangent: Vector2 = front["tangent"]
+    var delta: Vector2 = local - front["patch"]
+    var along := delta.dot(normal)
+    var across := delta.dot(tangent)
+    var width: float = front["half_width"]
+    var weight := smoothstep(-83.0, -34.0, along) * (1.0 - smoothstep(width, width+32.0, absf(across)))
+    if weight <= 0.0: return Vector2.ZERO
+    var phase: float = front["phase"]
+    var push := sin(across*0.12+phase)
+    var step := sin(float(person)*2.39996+phase)
+    var inward := clampf(17.0-along*0.40+push*7.0+step*4.0-float(front["pressure"])*7.0, -14.0, 40.0)
+    var sideways := -sin(across*0.21+phase)*2.7 + sin(along*0.14+phase)*4.0 + step*3.4
+    return (normal*inward+tangent*sideways)*weight
+
+
 # Only observed milestones are eligible for a player's next-highlight command.
 # This samples state, never changes it or skips fixed simulation steps.
 static func milestones(sim,limited: bool) -> Dictionary:

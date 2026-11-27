@@ -9,6 +9,7 @@ func _initialize() -> void:
     _running_charge()
     _contact_footwork()
     _planted_feet()
+    _melee_crowd()
     _change_ranks()
     _aftermath()
     _targeting()
@@ -394,3 +395,18 @@ func _planted_feet() -> void:
     _check(is_equal_approx(right.x-left.x,4.5) and left.y==1.0, "approaching opponents stop at contact and retain lateral movement")
     _check(motion.stop_at_contact(Vector2.ZERO,Vector2(-3,0),Vector2(4,0),Vector2(2,0)) == Vector2(-3,0),
         "separating opponents can leave the contact")
+
+func _melee_crowd() -> void:
+    var motion := preload("res://scripts/infantry_motion.gd")
+    var view := preload("res://scripts/front_view.gd")
+    var a: Array[Vector2] = [Vector2(-28,-14),Vector2(-10,14)]
+    var b: Array[Vector2] = [Vector2(10,-10),Vector2(28,20)]
+    var patch := view.melee_patch(a,b,Vector2.RIGHT)
+    var reverse := view.melee_patch(b,a,Vector2.LEFT)
+    _check(patch["center"].is_equal_approx(Vector2(0,2)) and patch["center"].is_equal_approx(reverse["center"]), "both corps use the same contact area from opposite sides")
+    var front := {"axis":Vector2.RIGHT,"tangent":Vector2.DOWN,"patch":Vector2.ZERO,"half_width":22.0,"pressure":0.0,"phase":0.4}
+    _check(view.melee_displacement(Vector2(-28,0),front,4).x > 15.0 and view.melee_displacement(Vector2(-28,80),front,4) == Vector2.ZERO, "supporting ranks join close combat while a distant wing keeps its ground")
+    var feet := PackedVector2Array([Vector2.ZERO,Vector2.ZERO,Vector2(0,1),Vector2(17,0)])
+    motion.spread_neighbours(feet,PackedInt32Array([1,2,3,4]))
+    _check(feet[0].distance_to(feet[1])>2.0 and feet[1].distance_to(feet[2])>2.0 and feet[3]==Vector2(17,0), "crowded neighbours make space without disturbing an isolated person")
+    _check(motion.nearby_opponent(feet[3],feet,motion.bins_for(feet),-1)==3 and motion.nearby_opponent(Vector2(72,0),feet,motion.bins_for(feet),-1)==-1, "local contact follows actual feet and respects reach")

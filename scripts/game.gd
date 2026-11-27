@@ -2031,6 +2031,9 @@ func _update_contact_fronts(dt: float) -> void:
         var anchors: Array[Vector2]=sim.visual_contact_pair(left,right)
         var shift: Dictionary=sim.front_shifts.get(key,{})
         var width: float=clampf(25.0+float(hit["contacts"])*2.0,28.0,59.0)
+        var patch := {}
+        if left["type"] == "보병" and right["type"] == "보병" and not left["routed"] and not right["routed"]:
+            patch = FrontView.melee_patch(sim.formation_slots(left), sim.formation_slots(right), axis)
         for side in range(2):
             var unit: Dictionary=left if side==0 else right
             var ordered:=Vector2i(a,b) if side==0 else Vector2i(b,a)
@@ -2051,6 +2054,12 @@ func _update_contact_fronts(dt: float) -> void:
             # Close part of the measured gap so the buckling files meet the
             # opposing line, including contact near the limit of melee reach.
             front["reach"]=clampf((anchors[1]-anchors[0]).dot(axis)*0.5,0.0,10.0)
+            if not patch.is_empty():
+                var local_center: Vector2 = patch["center"] - unit["pos"]
+                front["patch"] = Vector2(front.get("patch", local_center)).lerp(local_center, minf(1.0, dt*4.0))
+                front["half_width"] = patch["half_width"]
+                front["tangent"] = front["axis"].orthogonal() if side == 0 else -Vector2(front["axis"]).orthogonal()
+            front["mix"] = move_toward(float(front.get("mix",0.0)), 0.0 if patch.is_empty() else 1.0, dt*0.85)
             front["width"]=width
             front["phase"]=float(a*7+b*3)*0.8
             front["strength"]=move_toward(float(front.get("strength",0.0)),1.0,dt*2.6)
@@ -2088,6 +2097,7 @@ func _step_infantry_feet(dt: float) -> void:
         var raw := _visual_slots(unit)
         if raw.is_empty(): continue
         var desired := _contact_slots(unit, raw)
+        if fronts_by_unit.has(id): deformed_slot_cache[id] = desired
         var core := mini(raw.size(), clampi(ceili(float(unit["troops"]) / 180.0), 1, 24))
         var state := InfantryMotion.plant(old, desired, core, unit["pos"], sim.step_count, dt, fronts_by_unit.has(id) and not unit["routed"])
         # A bent line beside a bridge must remain on the bank or bridge deck.
@@ -2101,6 +2111,10 @@ func _step_infantry_feet(dt: float) -> void:
                     feet[i] = dry
             state["end"] = feet
         state["proposal"] = state["end"]
+        for front: Dictionary in fronts_by_unit.get(id,[]):
+            if float(front.get("mix",0.0))*float(front["strength"]) > 0.2:
+                state["bins"] = InfantryMotion.bins_for(state["proposal"])
+                break
         state["raw"] = raw
         state["target_id"] = unit["contact_target_id"]
         state["fog"] = fog_enabled
@@ -2108,6 +2122,54 @@ func _step_infantry_feet(dt: float) -> void:
         prior[id] = old if old.get("tick", -2) == sim.step_count - 1 else {}
     for id: int in prior:
         _turn_infantry(sim.find_unit(id), infantry_feet[id], prior[id], dt)
+    _space_melee_feet(prior)
+    for id: int in prior:
+        var state: Dictionary = infantry_feet[id]
+        var contact: Dictionary = state["contact"]
+        if not contact.has("local_owners"): continue
+        var owners: PackedInt32Array = contact["local_owners"]
+        var people: PackedVector2Array = contact["people"]
+        for i in owners.size():
+            var foe := owners[i]
+            if foe < 0: continue
+            var opponent: Dictionary = infantry_feet[foe]
+            var partner: int = state["partners"][i] - foe*4096
+            @warning_ignore("integer_division")
+            var index: int = (partner / 24)*int(opponent["core"]) + partner % 24
+            people[i] = opponent["end"][index]
+
+func _space_melee_feet(updated: Dictionary) -> void:
+    var points := PackedVector2Array()
+    var identities := PackedInt32Array()
+    var indices := PackedInt32Array()
+    var units := PackedInt32Array()
+    for id: int in updated:
+        var state: Dictionary = infantry_feet[id]
+        if not state.has("bins"): continue
+        var feet: PackedVector2Array = state["end"]
+        var raw: Array[Vector2] = state["raw"]
+        var core: int = state["core"]
+        for i in feet.size():
+            if feet[i].distance_squared_to(raw[i]) < 2.25: continue
+            points.append(feet[i])
+            indices.append(i)
+            units.append(id)
+            @warning_ignore("integer_division")
+            identities.append(id*4096 + (i / core)*24 + i % core)
+    if points.is_empty(): return
+    InfantryMotion.spread_neighbours(points,identities)
+    for k in points.size():
+        var i := indices[k]
+        var state: Dictionary = infantry_feet[units[k]]
+        var feet: PackedVector2Array = state["end"]
+        var start: Vector2 = state["start"][i]
+        var goal := feet[i]
+        # Bound side-steps by the same walking cadence as ordinary movement.
+        var next := start.move_toward(points[k], maxf(start.distance_to(goal), 2.4)).clamp(Vector2.ZERO,sim.field_size)
+        if next.distance_squared_to(goal) < 0.01: continue
+        if sim.long_operation and sim.in_open_water(next): continue
+        state["walked"][i] += start.distance_to(next) - start.distance_to(goal)
+        feet[i] = next
 
 func _file_aim(unit: Dictionary, slots: Array[Vector2], core: int, reach: float) -> Dictionary:
     var id: int = unit["id"]
@@ -2160,36 +2222,55 @@ func _turn_infantry(unit: Dictionary, state: Dictionary, old: Dictionary, dt: fl
         var choices: Array = [state["target_id"]]
         var reply: Dictionary = sim.rear_responses.get(unit["id"], {})
         if reply.get("front",-1) >= 0: choices = [reply["front"],reply["rear"]]
+        var local_owners := PackedInt32Array()
+        var other_origins := PackedVector2Array()
+        local_owners.resize(own.size())
+        local_owners.fill(-1)
+        other_origins.resize(own.size())
         for foe_id: int in choices:
             var foe := sim.find_unit(foe_id)
             if foe.is_empty() or foe["troops"] <= 0 or not _visible_unit(foe): continue
             var anchors := sim.formation_slots(foe)
+            if anchors.is_empty(): continue
             var opposing: Dictionary = infantry_feet.get(foe_id, {})
             var feet: PackedVector2Array = opposing.get("proposal", PackedVector2Array())
             var old_feet: PackedVector2Array = opposing.get("start", PackedVector2Array())
             if feet.is_empty(): feet = PackedVector2Array(_contact_slots(foe,_visual_slots(foe)))
             var normal := Vector2(unit["pos"]).direction_to(foe["pos"])
+            var front: Dictionary = contact_fronts.get(Vector2i(unit["id"],foe_id),{})
+            var bins: Dictionary = opposing.get("bins",{}) if float(front.get("mix",0.0))*float(front.get("strength",0.0)) > 0.2 else {}
             for file in core:
-                if aim["opponents"][file] != foe_id: continue
-                var other_file := anchors.find(aim["aim"][file])
-                if other_file < 0: continue
+                var other_file := anchors.find(aim["aim"][file]) if aim["opponents"][file] == foe_id else -1
+                if other_file < 0 and bins.is_empty(): continue
                 for i in range(file, own.size(), core):
                     @warning_ignore("integer_division")
                     var old_index: int = (i / core) * old_core + file
                     var prior := -1
                     if file < old_core and old_index < old_partners.size():
                         prior = old_partners[old_index] - foe_id * 4096
-                    var match_index := InfantryMotion.opponent_for(own[i],normal,feet,other_file,anchors.size(),prior)
-                    if match_index >= 0:
-                        var previous_foe := old_feet[match_index] if match_index < old_feet.size() else feet[match_index]
-                        var stop := InfantryMotion.stop_at_contact(origin[i],own[i],previous_foe,feet[match_index])
-                        if stop != own[i]:
-                            if terrain_edge and sim.in_open_water(stop): stop = origin[i]
-                            walked[i] += origin[i].distance_to(stop) - origin[i].distance_to(own[i])
-                            own[i] = stop
-                        people[i] = feet[match_index]
+                    var nearby := -1
+                    if not bins.is_empty():
                         @warning_ignore("integer_division")
-                        partners[i] = foe_id * 4096 + (match_index / anchors.size()) * 24 + other_file
+                        var prior_index := (prior / 24) * anchors.size() + prior % 24 if prior >= 0 and prior % 24 < anchors.size() else -1
+                        nearby = InfantryMotion.nearby_opponent(own[i],feet,bins,prior_index)
+                    var match_index := nearby
+                    if match_index < 0 and other_file >= 0:
+                        match_index = InfantryMotion.opponent_for(own[i],normal,feet,other_file,anchors.size(),prior)
+                    if match_index < 0: continue
+                    if people[i] != Vector2.INF and own[i].distance_squared_to(people[i]) <= own[i].distance_squared_to(feet[match_index]): continue
+                    people[i] = feet[match_index]
+                    other_origins[i] = old_feet[match_index] if match_index < old_feet.size() else feet[match_index]
+                    local_owners[i] = foe_id if nearby >= 0 else -1
+                    @warning_ignore("integer_division")
+                    partners[i] = foe_id * 4096 + (match_index / anchors.size()) * 24 + match_index % anchors.size()
+        for i in own.size():
+            if people[i] == Vector2.INF: continue
+            var stop := InfantryMotion.stop_at_contact(origin[i],own[i],other_origins[i],people[i])
+            if stop == own[i]: continue
+            if terrain_edge and sim.in_open_water(stop): stop = origin[i]
+            walked[i] += origin[i].distance_to(stop) - origin[i].distance_to(own[i])
+            own[i] = stop
+        aim["local_owners"] = local_owners
         aim["people"] = people
     var line_in_contact: bool = fronts_by_unit.has(unit["id"]) and not unit["routed"]
     var forward: float = Vector2(unit["facing"]).angle()
@@ -2217,11 +2298,29 @@ func _contact_slots(unit: Dictionary, slots: Array[Vector2]) -> Array[Vector2]:
     var center: Vector2=unit["pos"]
     var near_river: bool=sim.long_operation and absf(center.x-sim.river_x(center.y))<=150.0
     var result: Array[Vector2]=[]
-    for slot in slots:
-        var offset:=Vector2.ZERO
+    var core := clampi(ceili(float(unit["troops"]) / 180.0), 1, 24)
+    for i in slots.size():
+        var slot := slots[i]
+        var offset := Vector2.ZERO
+        var influence := 0.0
+        var unblended := Vector2.ZERO
+        var limit := 23.0
+        @warning_ignore("integer_division")
+        var person := (i / core) * 24 + i % core
         for front: Dictionary in fronts_by_unit[id]:
-            offset+=FrontView.contact_displacement(slot-center,front)
-        var p: Vector2=(slot+offset.limit_length(23.0)).clamp(Vector2.ZERO,sim.field_size)
+            var fold := FrontView.contact_displacement(slot-center,front)
+            var mix: float = front.get("mix",0.0)
+            unblended += fold
+            if mix > 0.0:
+                var press := FrontView.melee_displacement(slot-center,front,person) * float(front["strength"])
+                fold = fold.lerp(press,mix)
+                limit = maxf(limit, lerpf(23.0,40.0,mix))
+            # A file between two active contacts belongs to the closer fold.
+            if fold.length_squared() > influence:
+                influence = fold.length_squared()
+                offset = fold
+        if limit == 23.0: offset = unblended
+        var p: Vector2=(slot+offset.limit_length(limit)).clamp(Vector2.ZERO,sim.field_size)
         if near_river: p=sim._dry_formation_slot(center,p)
         result.append(p)
     return result
@@ -2254,17 +2353,18 @@ func _draw_contact_fronts(visible_units: Array[Dictionary],field_view: Rect2) ->
         var color: Color=COL_GOLD
         if pressure>0.12:
             color=COL_RED if int(pressed["side"])==0 else COL_BLUE
+        var mass: float = contact_fronts[key].get("mix",0.0)*contact_fronts[key]["strength"]
         var span: float=clampf(float(u.get("contact_troops",0))*3.0,16.0,60.0)
         for i in range(5):
             var p: Vector2=center+lateral*(float(i)-2.0)*span/2.0
             if sim.in_open_water(p): continue
-            map_layer.draw_line(p-lateral*span*0.16,p+lateral*span*0.16,Color(color,0.48),2.0/camera_zoom,true)
+            map_layer.draw_line(p-lateral*span*0.16,p+lateral*span*0.16,Color(color,0.48*(1.0-mass)),2.0/camera_zoom,true)
             if pressure>0.12:
                 var d: Vector2=shift["direction"]
                 var reach: float=clampf(pressure*18.0,5.0,15.0)/camera_zoom
                 var tip: Vector2=p+d*reach
                 var wing: Vector2=lateral*reach*0.48
-                map_layer.draw_polyline(PackedVector2Array([p+wing,tip,p-wing]),Color(color,0.78),1.8/camera_zoom,true)
+                map_layer.draw_polyline(PackedVector2Array([p+wing,tip,p-wing]),Color(color,0.78*(1.0-0.7*mass)),1.8/camera_zoom,true)
         if camera_zoom>=0.85 and detailed_map:
             var front_text: String="접전"
             if pressure>0.12:
@@ -2350,6 +2450,7 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         var b: PackedVector2Array = feet.get("end", PackedVector2Array())
         var walked: PackedFloat32Array = feet.get("walked", PackedFloat32Array())
         var people: PackedVector2Array = contact_cache.get(id, {}).get("people", PackedVector2Array())
+        var local_owners: PackedInt32Array = contact_cache.get(id, {}).get("local_owners", PackedInt32Array())
         var scatter: float=(100.0-float(unit["cohesion"]))*0.045
         if bool(unit["routed"]): scatter+=6.5
         var incoming: Array = impacts.get(id, [])
@@ -2378,12 +2479,16 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
                     local_target=Vector2.INF
             var swing_at: float = unit["last_visual"]
             if two_fronts and not file_opponents.is_empty(): swing_at = swing_times.get(file_opponents[index % core], -100.0)
+            var nearby: bool = index < local_owners.size() and local_owners[index] >= 0
+            if nearby:
+                local_target = people[index]
+                if two_fronts: swing_at = swing_times.get(local_owners[index],-100.0)
             var stroke_age := -INF
             if unit["type"] == "보병" and sim.started and not sim.finished and local_target != Vector2.INF:
                 if index < people.size(): local_target = people[index]
                 if local_target != Vector2.INF:
                     var direction := point.direction_to(local_target)
-                    var exposed := (slots[index] - slots[index % core]).dot(direction) >= -1.5
+                    var exposed := nearby or (slots[index] - slots[index % core]).dot(direction) >= -1.5
                     var facing_foe := look_angle == -INF or Vector2.from_angle(look_angle).dot(direction) >= 0.45
                     stroke_age = InfantryMotion.swing_age(id, person, render_clock, swing_at) if exposed and facing_foe and point.distance_squared_to(local_target) <= 13.0*13.0 else -1.0
             var event_age: float = render_clock - swing_at - float(index%5)*0.026
@@ -2458,10 +2563,15 @@ func _draw_formation_ink(units: Array[Dictionary], field_view: Rect2) -> void:
         var anchors: Array[Vector2]=slots.slice(0,count)
         var offset:=_render_offset(id,center)
         for i in range(count): anchors[i]+=offset
+        # Let the two occupied bodies read as one scrum. Keep the rear colour
+        # as an allegiance cue while the solid outlines fade at contact.
+        var mix := 0.0
+        for front: Dictionary in fronts_by_unit.get(id, []):
+            mix = maxf(mix, float(front["strength"])*float(front.get("mix",0.0)))
         var ink:=Color("#244d72") if unit["side"]==0 else Color("#8a383c")
         var edge: Color=COL_BLUE if unit["side"]==0 else COL_RED
         var opacity: float=0.48 if unit["routed"] else (0.64 if unit["ambush_ready"]>=3.0 else 1.0)
-        _draw_formation_footprint(anchors,Color(ink,0.30*opacity),Color(edge,0.83*opacity),1.15/camera_zoom)
+        _draw_formation_footprint(anchors,Color(ink,0.30*opacity*(1.0-0.75*mix)),Color(edge,0.83*opacity*(1.0-mix)),1.15/camera_zoom)
 
 func _draw_formation_footprint(slots: Array[Vector2], fill: Color, outline: Color, width: float) -> void:
     var hull: PackedVector2Array = Geometry2D.convex_hull(PackedVector2Array(slots))

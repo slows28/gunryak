@@ -1187,7 +1187,60 @@ func _capture_combat_drill() -> bool:
     if not _save_frame("combat_drill.png"):
         return false
     if not await _capture_bow_motion(archer,target): return false
-    return await _capture_contact_shape(rider,square)
+    if not await _capture_contact_shape(rider,square): return false
+    return await _capture_melee_ranks()
+
+func _capture_melee_ranks() -> bool:
+    game.queue_free()
+    await process_frame
+    game = MAIN_SCENE.instantiate()
+    root.add_child(game)
+    game.set_process(false)
+    game._leave_title(1)
+    game._start()
+    for tick in range(1,451):
+        game.sim.step(0.1)
+        if tick > 406: game._update_contact_fronts(0.1)
+    var leader: Dictionary = game.sim.find_unit(0)
+    var foe: Dictionary = game.sim.find_unit(9)
+    var front: Dictionary = game.contact_fronts.get(Vector2i(0,9),{})
+    if front.get("mix",0.0) < 0.6:
+        push_error("VISUAL_CAPTURE_FAIL: prolonged infantry contact did not develop")
+        return false
+    var axis: Vector2 = leader["pos"].direction_to(foe["pos"])
+    var state: Dictionary = game.infantry_feet[0]
+    var feet: PackedVector2Array = state["end"]
+    var opponents: PackedVector2Array = game.infantry_feet[9]["end"]
+    var leading := -INF
+    for point: Vector2 in state["raw"]: leading = maxf(leading,point.dot(axis))
+    var deep := 0
+    var mixed := 0
+    var stacked := 0
+    for i in feet.size():
+        var forward := false
+        var backward := false
+        var nearest := INF
+        for other in opponents:
+            var gap := other-feet[i]
+            nearest = minf(nearest,gap.length_squared())
+            if gap.length_squared() > 121.0: continue
+            if gap.dot(axis) > 0.8: forward = true
+            if gap.dot(axis) < -0.8: backward = true
+        if nearest < 121.0 and leading-state["raw"][i].dot(axis) > 16.0: deep += 1
+        if forward and backward: mixed += 1
+        if nearest < 2.25: stacked += 1
+    if deep < 15 or mixed < 15 or stacked*10 > mixed:
+        push_error("VISUAL_CAPTURE_FAIL: expected intermingled ranks with room for individual feet (%d deep, %d mixed, %d stacked)" % [deep,mixed,stacked])
+        return false
+    game.camera_zoom = 2.45
+    game.camera_center = leader["pos"]
+    game._clamp_camera()
+    game.render_clock = game.sim.battle_time
+    game.map_layer.queue_redraw()
+    await process_frame
+    await RenderingServer.frame_post_draw
+    print("MELEE_RANKS_PASS deep=%d mixed=%d stacked=%d" % [deep,mixed,stacked])
+    return _save_frame("melee_ranks.png")
 
 func _capture_contact_shape(rider: Dictionary,square: Dictionary) -> bool:
     game.camera_zoom=2.8
