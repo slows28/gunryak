@@ -62,13 +62,21 @@ func _engage(encounter: String, shape: String, opposing_shape: String, reverse: 
         own["charge_speed"] = 80.0
         own["charge_dir"] = axis
     var contacts := 0
+    var gave_ground := 0.0
+    var gained_ground := 0.0
     for tick in TICKS:
         sim.step_count += 1
         sim.battle_time += 0.1
+        # The live counter also triggers a report and resets above 18 units.
+        # Sample each push separately so long pressure is counted throughout.
+        own["pushed_distance"] = 0.0
+        foe["pushed_distance"] = 0.0
         sim._resolve_frontline(0.1)
+        gave_ground += float(own["pushed_distance"])
+        gained_ground += float(foe["pushed_distance"])
         sim._combat(0.1)
         contacts += int(own["contact_troops"])
     return {"case":encounter,"own":shape,"foe":opposing_shape,"reverse":reverse,
         "dealt":own["damage_dealt"],"lost":own["casualties_taken"],"files":float(contacts)/TICKS,
-        "yield":own["pushed_distance"],"push":foe["pushed_distance"],"charges":own["charges"],
+        "yield":gave_ground,"push":gained_ground,"charges":own["charges"],
         "valid":is_equal_approx(3600.0-float(foe["troops"]),float(own["damage_dealt"])) and is_equal_approx(3600.0-float(own["troops"]),float(own["casualties_taken"]))}
