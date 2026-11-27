@@ -108,6 +108,29 @@ func rally_cover() -> void:
     sim._decide(foot)
     expect(foot.field_choice.is_empty() and foot.goal.distance_to(station)<=12,"return to station once the hostile contact is gone")
 
+func wings(side: int) -> void:
+    reset_field()
+    var own: Array=sim.command_ids(side)
+    var opposing: Array=sim.command_ids(1-side)
+    var axis:=Vector2.RIGHT if side==0 else Vector2.LEFT
+    var p:=Vector2(780,890)
+    var foot:=deploy(own[0],p)
+    var horse:=deploy(own[2],p-axis*90+Vector2(0,45))
+    var foe:=deploy(opposing[0],p+axis*35)
+    horse.morale=85
+    horse.cohesion=85
+    if side==0: expect(sim.issue_map_order(horse.id,"자유 재량",Vector2.ZERO),"delegate the cavalry")
+    game._start()
+    sim.step(0.1)
+    var paired: bool=horse.ai_role=="측후방 기동" and horse.ai_partner==foot.id
+    expect(paired,"cavalry must link to the engaged infantry on either side")
+    expect(sim.Skills.mission(horse,sim.battle_time)=="march","delegated role sets skill eligibility")
+    foe.pos=Vector2(2370,1360)
+    sim.battle_time=horse.ai_role_until+1.0
+    sim._plan_local_roles(side)
+    expect(horse.ai_role.is_empty(),"a cavalry role expires after losing its observed contact")
+    print("WING side=",side," paired=",paired," expired=",horse.ai_role.is_empty())
+
 func named_escort() -> void:
     reset_field()
     var p:=Vector2(740,750)
@@ -156,6 +179,9 @@ func _run() -> void:
     sim=game.sim
     await partners(0)
     await partners(1)
+    if not baseline:
+        wings(0)
+        wings(1)
     named_escort()
     await rally_cover()
     print("MUTUAL_ROLES_REPRO" if baseline else ("MUTUAL_ROLES_FAIL" if failed else "MUTUAL_ROLES_PASS"))
