@@ -198,7 +198,8 @@ static func milestones(sim,limited: bool) -> Dictionary:
         var owner: int=int(site["owner"])
         if owner>=0:
             found["site:"+str(site["name"])+":"+str(owner)]={"label":str(site["name"])+" · "+("아군 확보" if owner==0 else "적군 확보"),"point":site["pos"]}
-    for report in sim.open_situations():
+    for report in sim.situation_reports:
+        if report["status"] not in ["미대응","작전 보고 수신"]: continue
         found["report:"+str(report["id"])]={"report_id":report["id"],"time":float(report.get("arrive",sim.battle_time))*sim.operation_scale(),"label":str(report["title"]),"point":report["pos"],"unit_id":int(report["unit_id"])}
     return found
 

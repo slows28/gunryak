@@ -1943,7 +1943,8 @@ func _combat(dt: float) -> void:
         attack *= (1.0 - 0.30 * float(unit["fatigue"]) / 100.0) * (0.55 + 0.45 * float(unit["cohesion"]) / 100.0)
         unit["fatigue"] = minf(100.0, float(unit["fatigue"]) + dt * 0.60)
         var counter: float = tactical_matchup(unit,enemy,flank or rear) if six_armies else 1.0
-        var link: bool = six_armies and _has_combined_arms(unit,enemy,targets)
+        var partner_id: int=_combined_arms_partner(unit,enemy,targets) if six_armies else -1
+        var link: bool=partner_id>=0
         attack *= counter*(1.15 if link else 1.0)
         var guard: Dictionary = _physical_screen(enemy,unit) if six_armies else {}
         var damage: float = attack * (float(unit["troops"]) / maxf(1.0, float(unit["initial_troops"]))) * (float(unit["morale"]) / 100.0) * exposure * supply_factor * dt
@@ -1982,7 +1983,7 @@ func _combat(dt: float) -> void:
         var attack_kind: String="돌격" if shock>0.0 else ("화살" if bow else "근접")
         var entry: Dictionary={
             "skill_bonus":bonus*(damage_requested/maxf(0.00001,adjusted)),"skill_saved":adjusted-damage_requested,"defender_id":target_id,"attacker_id":source_id,"damage":damage_requested,"flank":flank or rear,"rear":rear,
-            "shock":shock,"braced":braced,"screened":lane_screened or not guard.is_empty(),"linked":link,
+            "shock":shock,"braced":braced,"screened":lane_screened or not guard.is_empty(),"linked":link,"partner_id":partner_id,
             "ambush":ambush,"counter":counter,"guarding":guarding,"kind":attack_kind,"contacts":contacts,
             "from":pos,"to":ep,"time":battle_time,"side":unit["side"]
         }
@@ -2049,7 +2050,11 @@ func _combat(dt: float) -> void:
                 visual_effects.append(entry)
                 if visual_effects.size()>100: visual_effects.pop_front()
             if six_armies:
-                if bool(entry["linked"]): source["linked_hits"] += actual_damage
+                if bool(entry["linked"]):
+                    source["linked_hits"] += actual_damage
+                    if chapter.get("mode","")=="link" and source["side"]==0 and actual_damage>0:
+                        source["joint_partner"]=entry["partner_id"]
+                        source["joint_time"]=battle_time
                 if float(entry["counter"])>1.01: source["counter_damage"] += actual_damage
                 if bool(entry["flank"]): source["flank_damage"] += actual_damage
         var morale_loss: float = 0.11 if bool(entry["flank"]) else 0.07
@@ -3453,8 +3458,9 @@ func _move_reporting_messengers(dt: float) -> void:
         if not _advance_rider(report["rider"],destination,dt): continue
         report["arrive"]=battle_time
         report["expires"]=battle_time+26.0
-        report["status"]="미대응"
+        report["status"]="작전 보고 수신" if report.has("objective_account") else "미대응"
         report.erase("rider")
+        if report.has("objective_account"): NorthernField.receive(self,report)
         incoming_reports.remove_at(i)
         if side==0:
             if report["urgent"]: urgent_deliveries+=1
@@ -3558,6 +3564,8 @@ func _scan_situations() -> void:
         return
     var span:=battle_time-maxf(0.0,last_situation_scan)
     last_situation_scan = battle_time
+    if chapter.get("mode","") in ["river","link"] and not commander_captured(0):
+        NorthernField.report_progress(self)
     for report in situation_reports:
         if report["status"] == "미대응" and battle_time >= float(report["expires"]):
             report["status"] = "시간 경과"
@@ -3601,28 +3609,36 @@ func _scan_situations() -> void:
         if battle_time-float(situation_keys.get(key,-100.0)) < 30.0:
             continue
         situation_keys[key] = battle_time
-        situation_serial += 1
         if proposal.is_empty():
             proposal = "지원" if kind in ["포위 위험","전선 압박"] else ("사수" if kind == "명령 이탈" else "재집결")
-        var rider:=_field_rider(unit["pos"],side,-10-situation_serial*3)
-        var report: Dictionary={"id":situation_serial,"unit_id":unit["id"],"title":str(unit["name"])+" · "+kind+(" / "+proposal+" 건의" if not proposal.is_empty() else ""),
-            "kind":kind,"urgent":urgent,"side":side,"proposal":proposal,"pos":unit["pos"],"written_at":battle_time,"rider":rider,
-            "sender":str(unit["name"]),"troops":roundi(unit["troops"]),"push":push,"opponent":opponent,
-            "losses":recent_losses,"sample_seconds":roundi(span*operation_scale()),"status":"대기","mission":unit["mission"],"action":unit["action"],"reason":unit["reason"],
-            "morale":roundi(unit["morale"]),"cohesion":roundi(unit["cohesion"]),"rations":roundi(unit["rations"]),
-            "ammo":roundi(unit["ammo"]),"general_hp":roundi(unit["general_hp"]),"pressure":float(unit["front_pressure"])}
-        if side==0:
-            if unit.has("last_skill_report"):
-                report["skill_report"]=unit["last_skill_report"]
-            situation_reports.append(report)
-        incoming_reports.append(report)
-        if urgent and not unit.has("parent_id") and battle_time-float(unit.get("last_relief_request",-100.0))>=30.0:
-            _send_relief_request(unit,report)
-        if situation_reports.size() > 80:
-            for j in range(situation_reports.size()):
-                if str(situation_reports[j]["status"]) not in ["대기","미대응","전령 파견","명령 수령","실행 중"]:
-                    situation_reports.remove_at(j)
-                    break
+        _send_situation(unit,kind,proposal,urgent,push,opponent,recent_losses,span)
+
+func _send_situation(unit: Dictionary,kind: String,proposal: String,urgent: bool,push: Vector2,opponent: String,recent_losses: int,span: float,account: String="") -> void:
+    var side: int=unit["side"]
+    situation_serial+=1
+    var rider:=_field_rider(unit["pos"],side,-10-situation_serial*3)
+    var report: Dictionary={"id":situation_serial,"unit_id":unit["id"],"title":str(unit["name"])+" · "+kind+(" / "+proposal+" 건의" if not proposal.is_empty() else ""),
+        "kind":kind,"urgent":urgent,"side":side,"proposal":proposal,"pos":unit["pos"],"written_at":battle_time,"rider":rider,
+        "sender":str(unit["name"]),"troops":roundi(unit["troops"]),"push":push,"opponent":opponent,
+        "losses":recent_losses,"sample_seconds":roundi(span*operation_scale()),"status":"대기","mission":unit["mission"],"action":unit["action"],"reason":unit["reason"],
+        "morale":roundi(unit["morale"]),"cohesion":roundi(unit["cohesion"]),"rations":roundi(unit["rations"]),
+        "ammo":roundi(unit["ammo"]),"general_hp":roundi(unit["general_hp"]),"pressure":float(unit["front_pressure"])}
+    if not account.is_empty():
+        report["objective_account"]=account
+        if chapter["mode"]=="river": report["east_bank"]=NorthernField.on_east_bank(self,unit)
+        else: report["joint_credit"]=unit["linked_hits"]
+    if side==0:
+        if unit.has("last_skill_report"):
+            report["skill_report"]=unit["last_skill_report"]
+        situation_reports.append(report)
+    incoming_reports.append(report)
+    if urgent and not unit.has("parent_id") and battle_time-float(unit.get("last_relief_request",-100.0))>=30.0:
+        _send_relief_request(unit,report)
+    if situation_reports.size() > 80:
+        for j in range(situation_reports.size()):
+            if str(situation_reports[j]["status"]) not in ["대기","미대응","전령 파견","명령 수령","실행 중"]:
+                situation_reports.remove_at(j)
+                break
 
 # Follow actual courier and tactical execution, rather than treating dispatch as success.
 func _response_delivery(letter: Dictionary,status: String) -> void:
@@ -4221,6 +4237,9 @@ func tactical_matchup(attacker: Dictionary,defender: Dictionary,side_attack: boo
     return factor
 
 func _has_combined_arms(unit: Dictionary,enemy: Dictionary,targets: Dictionary = {}) -> bool:
+    return _combined_arms_partner(unit,enemy,targets)>=0
+
+func _combined_arms_partner(unit: Dictionary,enemy: Dictionary,targets: Dictionary) -> int:
     var p: Vector2=unit["pos"]
     var ep: Vector2=enemy["pos"]
     for ally in units:
@@ -4234,8 +4253,8 @@ func _has_combined_arms(unit: Dictionary,enemy: Dictionary,targets: Dictionary =
         if formation_contacts(ally,enemy,ally_reach)<=0: continue
         var a: Vector2=(p-ep).normalized()
         var b: Vector2=((ally["pos"] as Vector2)-ep).normalized()
-        if str(ally["type"])=="궁병" or str(unit["type"])=="궁병" or a.dot(b)<0.45: return true
-    return false
+        if str(ally["type"])=="궁병" or str(unit["type"])=="궁병" or a.dot(b)<0.45: return ally["id"]
+    return -1
 
 # Cooperation uses a friendly anchor and local observation, not an omniscient
 # enemy position. A flank waypoint stays committed until reached or timed out.

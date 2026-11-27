@@ -165,7 +165,7 @@ var next_combat_ms: Dictionary = {}
 var combat_audio_cursor: int=0
 var sound_enabled: bool = true
 var shutting_down:=false
-var music_player: AudioStreamPlayer
+var score:=preload("res://scripts/field_music.gd").new()
 var tutorial_dialog: AcceptDialog
 var retreat_button: Button
 var retreat_dialog: ConfirmationDialog
@@ -777,6 +777,7 @@ func _start() -> void:
     last_audio_event=-1.0
     last_warning=""
     heard_urgent_deliveries=0
+    score.reset_field()
     _select_unit()
     _refresh_hud()
 
@@ -959,6 +960,7 @@ func _process(delta: float) -> void:
     # UI is updated at a bounded rate rather than issuing draw work every frame.
     ui_clock += minf(delta, 0.15)
     if ui_clock >= 0.2:
+        _update_score(ui_clock)
         ui_clock = 0.0
         if sim.started and not sim.finished:
             var problems: Array[String] = sim.validate_state()
@@ -976,7 +978,7 @@ func _process(delta: float) -> void:
         map_layer.queue_redraw()
     if sim.finished and not finish_seen:
         finish_seen = true
-        _play_cue(BattleAudio.END)
+        score.select("homecoming" if sim.winning_side==0 else "ashes")
         _show_outcome()
 
 func _refresh_hud() -> void:
@@ -3539,7 +3541,7 @@ func _setup_sound() -> void:
         channel.volume_db=-13.0
         add_child(channel)
         combat_players.append(channel)
-    _setup_ambient_music()
+    add_child(score)
 
 func _toggle_sound() -> void:
     sound_enabled = not sound_enabled
@@ -3547,10 +3549,7 @@ func _toggle_sound() -> void:
     if not sound_enabled:
         sound_player.stop()
         for channel in combat_players: channel.stop()
-        if is_instance_valid(music_player): music_player.stream_paused=true
-    elif is_instance_valid(music_player):
-        music_player.stream_paused=false
-        if not music_player.playing: music_player.play()
+    score.set_enabled(sound_enabled)
     _refresh_hud()
 
 func _play_cue(stream: AudioStream) -> void:
@@ -3743,7 +3742,8 @@ func _quit_game(exit_code: int=0) -> void:
     sound_enabled=false
     var players: Array[AudioStreamPlayer]=combat_players.duplicate()
     players.append(sound_player)
-    players.append(music_player)
+    players.append_array(score.players.values())
+    score.set_process(false)
     for player in players:
         if is_instance_valid(player):
             player.stop()
@@ -4142,12 +4142,16 @@ func _confirm_retreat() -> void:
         finish_seen = true
         _show_outcome()
 
-func _setup_ambient_music() -> void:
-    music_player = AudioStreamPlayer.new()
-    music_player.volume_db = -12.0
-    music_player.stream=preload("res://assets/audio/river_watch.ogg")
-    add_child(music_player)
-    music_player.play()
+func _update_score(seconds: float) -> void:
+    if title_screen.visible or strategy_view.visible:
+        score.select("council")
+    elif sim.finished:
+        score.select("homecoming" if sim.winning_side==0 else "ashes")
+    elif not sim.started or order_view.visible or planning_dialog.visible:
+        score.select("council")
+    elif not sim.paused:
+        score.select(score.battlefield(sim,seconds))
+
 
 func _build_messenger_card() -> void:
     messenger_card=_button("",Vector2(28,154),Vector2(307,75),func(): _open_situations(messenger_id))
@@ -4248,6 +4252,7 @@ func _refresh_messenger_card(pending: Array[Dictionary]) -> void:
         return
 
 func _messenger_account(report: Dictionary) -> String:
+    if report.has("objective_account"): return report["objective_account"]
     var lines:=PackedStringArray()
     var push: Vector2=report.get("push",Vector2.ZERO)
     var contact: String=str(report.get("opponent",""))
@@ -4420,6 +4425,7 @@ func _select_situation(index: int) -> void:
             var remaining: float=maxf(0.0,float(report.get("expires",sim.battle_time))-sim.battle_time)*sim.operation_scale()
             situation_record.text="회신 기한  %s" % _operation_clock(remaining)
             if advanced_orders.button_pressed: situation_record.text+="  ·  별도 지시는 5일차부터  ·  지휘력 %d/4" % sim.command_points
+        elif report.has("desk_summary"): situation_record.text=report["desk_summary"]
         else: situation_record.text=_situation_outcome(report)
         if not situation_notice.is_empty(): situation_record.text+="\n"+situation_notice
         if report.has("relief_answer"): situation_record.text+="\n"+str(report["relief_answer"])

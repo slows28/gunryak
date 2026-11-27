@@ -96,7 +96,7 @@ static func victory(sim) -> void:
             if u["troops"]>0 and not u["routed"] and Vector2(u["pos"]).distance_to(site["pos"])<=sim.OUTPOST_RADIUS: garrison=true
             flank+=float(u["flank_damage"])
             linked+=float(u["linked_hits"])
-            if u["bridge_crossings"]>0 and u["troops"]>0 and u["pos"].x>sim.river_x(u["pos"].y): crossed+=1
+            if on_east_bank(sim,u): crossed+=1
     if standing[0]==0 and sim.reinforcements_used[0]>=sim.reserve_limit[0]:
         sim._finish("아군 전투 불능 — 패배")
         return
@@ -140,3 +140,79 @@ static func victory(sim) -> void:
             "decisive": detail+=" · 위군 잔여 %d%%" % ceili(100.0*sim.total_troops(1)/float(c["enemy_initial"]))
             "duel": detail+=" · 아군 %d명 / 위군 %d명" % [sim.total_troops(0),sim.total_troops(1)]
         sim._finish(sim.scenario_title+(" — 승리" if won else " 목표 미달 — 패배"),detail)
+
+static func on_east_bank(sim,u: Dictionary) -> bool:
+    return u["bridge_crossings"]>0 and u["troops"]>0 and u["pos"].x>sim.river_x(u["pos"].y)
+
+# Each letter records one commander's own observations at departure. Keep
+# traffic below ordinary emergency reports and do not create a reply request.
+static func report_progress(sim) -> void:
+    var ledger: Dictionary=sim.chapter["metrics"]
+    if sim.battle_time<ledger.get("next_letter",0.0): return
+    for letter in sim.incoming_reports:
+        if letter.has("objective_account"): return
+    for id in sim.command_ids(0):
+        var u: Dictionary=sim.find_unit(id)
+        if u["troops"]<=0 or u["routed"]: continue
+        var dispatch: Array=_river_report(sim,u) if sim.chapter["mode"]=="river" else _link_report(sim,u)
+        if dispatch.is_empty(): continue
+        var kind: String=dispatch[0]
+        var key: String=kind+str(id)
+        if kind in ["도하 완료","서안 복귀"]:
+            if ledger.get("bank"+str(id),"")==kind: continue
+            ledger["bank"+str(id)]=kind
+        elif ledger.has(key) or (kind in ["교량 접근","합류 대기"] and ledger.get(kind,0)>=2): continue
+        ledger[key]=true
+        ledger[kind]=int(ledger.get(kind,0))+1
+        ledger["next_letter"]=sim.battle_time+6.0
+        sim._send_situation(u,kind,"",false,Vector2.ZERO,"",0,0,dispatch[1])
+        return
+
+static func _river_report(sim,u: Dictionary) -> Array:
+    var name: String=u["name"]
+    if on_east_bank(sim,u):
+        return ["도하 완료","%s군이 위수를 건너 동안에 도착했습니다. 이 강둑에 남아 있는 군단 두 개과 동쪽 교두보 확보가 필요합니다." % name]
+    if u["bridge_crossings"]>0 and u["pos"].x<sim.river_x(u["pos"].y):
+        return ["서안 복귀","%s군이 위수 서쪽으로 돌아왔습니다. 지금은 동안에 주둔한 군단 수에서 빠집니다." % name]
+    var bridge: float=u["bridge_y"]
+    if bridge<0 or u["bridge_bank"]<=0 or u["pos"].x>=sim.river_x(u["pos"].y): return []
+    var gate:=Vector2(sim.river_x(bridge),bridge)
+    if gate.distance_to(u["pos"])>220: return []
+    var which: String="북측" if bridge<600 else ("남측" if bridge>1100 else "중앙")
+    return ["교량 접근","%s군이 %s 교량 서쪽 진입로에 있습니다. 교량을 지나 동안에 닿아야 도하로 집계됩니다." % [name,which]]
+
+static func _link_report(sim,u: Dictionary) -> Array:
+    var elapsed: float=sim.battle_time-float(u.get("joint_time",-100.0))
+    if u.has("joint_time"):
+        var ally: Dictionary=sim.find_unit(u["joint_partner"])
+        var partner: String=ally.get("name","협동 군단")
+        var credit: int=roundi(u["linked_hits"])
+        if elapsed<=3.0:
+            var kind: String="협공 성과" if credit>=120 and sim.chapter["metrics"].has("협공 성립"+str(u["id"])) else "협공 성립"
+            return [kind,"%s군과 %s군이 같은 적을 쳤습니다. 이번 전투에서 우리 %s군이 협공으로 가한 피해는 %d명입니다. 전군의 목표는 120명과 무공 확보입니다." % [u["name"],partner,u["name"],credit]]
+        if elapsed>=6.0:
+            return ["협공 중단","%s군과 마지막으로 협공한 뒤 %d초 동안 추가 협동 타격이 없었습니다. 우리 군단의 누적 기여는 %d명입니다." % [partner,floori(elapsed*sim.operation_scale()),credit]]
+    var other: Dictionary=sim.find_unit(u["assigned_link"])
+    if not other.is_empty() and u["pos"].distance_to(other["pos"])>245:
+        return ["합류 대기","연계 대상인 %s군과 거리가 벌어졌습니다. 다른 병과가 같은 적을 타격할 수 있는 거리까지 합류해야 합니다." % other["name"]]
+    return []
+
+# Only delivered observations enter the desk. A late letter keeps the
+# situation as it was described at that time, including the reporting corps.
+static func receive(sim,report: Dictionary) -> void:
+    var receipts: Dictionary=sim.chapter.get("receipts",{})
+    receipts[report["unit_id"]]=report
+    sim.chapter["receipts"]=receipts
+    var eastern:=PackedStringArray()
+    var joint_damage:=0.0
+    for latest in receipts.values():
+        if latest.get("east_bank",false): eastern.append(latest["sender"])
+        joint_damage+=float(latest.get("joint_credit",0.0))
+    var summary: String
+    if report.has("east_bank"):
+        summary="수신 보고 기준  ·  동안 %d/2개 군단" % eastern.size()
+        if not eastern.is_empty(): summary+="  ·  "+" · ".join(eastern)
+    else:
+        summary="수신 보고 기준  ·  협공 피해 %d/120명" % floori(joint_damage)
+    report["desk_summary"]=summary
+    sim.chapter["desk_summary"]=summary

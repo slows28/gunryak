@@ -44,8 +44,8 @@ func _run() -> void:
     AudioServer.add_bus_effect(0,tap)
     print("AUDIO_DRIVER ",AudioServer.get_driver_name()," rate=",AudioServer.get_mix_rate())
     check(await _sample("ambient",0.85)>0.00005,"ambient music reaches the master bus")
-    check(game.music_player.stream is AudioStreamOggVorbis and game.music_player.stream.loop and game.music_player.stream.get_length()>90.0,"full chamber score loops in the game")
-    game.music_player.stop()
+    check(game.score.players["council"].stream is AudioStreamOggVorbis and game.score.players["council"].stream.loop and game.score.players["council"].stream.get_length()>90.0,"full chamber score loops in the game")
+    game.score.set_enabled(false)
     await create_timer(0.15).timeout
     var point: Vector2=sim.find_unit(0)["pos"]
     game.camera_center=point

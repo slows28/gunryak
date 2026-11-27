@@ -31,6 +31,7 @@ var action_choice: OptionButton
 var action_buttons: Array[Button]=[]
 var label_areas: Array[Rect2]=[]
 var council_reports: Button
+var council_letter: int=-1
 var council_round := 0
 var goal_label: Label
 var progress_label: Label
@@ -140,7 +141,7 @@ func configure(owner_game: Control,used_font: Font) -> void:
         _select(selected_id)
         feedback.text="이 군단의 미확정 변경을 취소했습니다.")
     _paper_button(cancel)
-    council_reports=_button("전령 회신",Vector2(1078,448),Vector2(85,29),func(): game.call("_open_situations"))
+    council_reports=_button("전령 회신",Vector2(1078,448),Vector2(85,29),func(): game.call("_open_situations",council_letter))
     council_reports.hide()
     feedback=_label("",Vector2(274,727),Vector2(776,52),15,Color("#f3ecdc"))
     feedback.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
@@ -257,12 +258,21 @@ func refresh_council() -> void:
     var loss := 0
     for unit in sim.units:
         if unit["side"] == 0: loss += roundi(unit["casualties_taken"])
+    var latest: Dictionary={}
+    for i in range(sim.situation_reports.size()-1,-1,-1):
+        var report: Dictionary=sim.situation_reports[i]
+        if report["status"]=="작전 보고 수신":
+            latest=report
+            break
+    council_letter=latest.get("id",-1) if pending==0 else -1
     council_reports.show()
-    council_reports.text = "회신 %d건" % pending
-    council_reports.disabled = pending == 0
+    council_reports.text="작전 보고" if council_letter>=0 else "회신 %d건" % pending
+    council_reports.disabled=pending==0 and council_letter<0
     if not draft_dirty:
         var agenda := "현재 접수한 추가 건의 없음"
         if pending > 0: agenda = str(reports[0]["title"])
+        if not latest.is_empty():
+            agenda=("최근 전령  ·  "+str(latest["title"])) if pending==0 else (agenda+"  /  "+str(latest["title"]))
         var authority: String = sim.command_status(0) if sim.commander_captured(0) else "전령 파견 가능"
         feedback.text = "아군 잔존 %s명  ·  누적 전투 손실 %s명  ·  회신 대기 %d건\n%s  ·  %s" % [_troop_text(sim.total_troops(0)),_troop_text(loss),pending,authority,agenda]
 
@@ -370,6 +380,8 @@ func _update_destination()->void:
         progress_label.text="미확정 %d개 · * 표시 군단" % drafts.size()
     elif not dispatch.is_empty():
         progress_label.text=dispatch
+    elif in_battle and sim.chapter.has("desk_summary"):
+        progress_label.text=sim.chapter["desk_summary"]
     elif has_destination:
         progress_label.text="행동과 연계를 검토하고 지시를 확정하십시오."
     else:
