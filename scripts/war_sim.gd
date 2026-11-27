@@ -1149,6 +1149,12 @@ func _decide(unit: Dictionary) -> void:
             action = "수레 공격" if gap <= 42.0 else "차단"
             reason = "군량 수레에 접근해 파손" if action == "수레 공격" else "호위 수레의 진로를 막기 위해 접근"
             goal = wagon
+    var watch: Dictionary=unit.get("post_watch",{})
+    if not watch.is_empty() and battle_time<watch["until"] and not commander_captured(side) and NorthernField._watch_ready(self,unit) and action not in ["후퇴","패주","재집결","휴식","보급 복귀","탄약 보충","사기 혼란","거리 유지","전술 철수"]:
+        action="거점 차단" if unit["type"]=="보병" else "거점 엄호 사격"
+        reason="%s 인근에서 적 %d개 군단을 거듭 관측" % [outposts[watch["site"]]["name"],watch["count"]]
+        goal=watch["station"] if pos.distance_to(watch["station"])>12.0 else pos
+        unit["field_choice"]={}
     # An explicit headquarters assignment follows the camp. The commander can
     # meet a local attack but keeps the center of the corps within guard range.
     if unit["mission"]=="본진 방어" and unit["has_destination"] and not unit["routed"] and action not in ["후퇴","패주","재집결","휴식","보급 복귀","탄약 보충","전술 철수","사기 혼란"]:
@@ -1344,7 +1350,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
             goal = pos
             meeting_contact = true
     var dressing_line: bool=long_operation and not enemy.is_empty() and unit["action"] in ["후열 정렬","엄호 사격","전열 유지","거리 유지","궁병 보호","협동 엄호"]
-    if not enemy.is_empty() and not (unit["action"]=="본진 수비" and unit["has_destination"]) and str(unit["action"]) not in ["수레 공격", "후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호","아군 보호","후열 정렬","엄호 사격","전열 유지"]:
+    if not enemy.is_empty() and not (unit["action"]=="본진 수비" and unit["has_destination"]) and str(unit["action"]) not in ["거점 차단","거점 엄호 사격","수레 공격", "후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호","아군 보호","후열 정렬","엄호 사격","전열 유지"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
@@ -3571,6 +3577,9 @@ func _send_relief_request(sender: Dictionary, report: Dictionary) -> void:
     var rider:=_field_rider(sender["pos"],sender["side"],-11-report["id"]*3)
     for ally in units:
         if ally["side"]!=sender["side"] or ally["id"]==sender["id"] or ally.has("parent_id") or ally["troops"]<=0 or ally["reserve"] or ally["routed"]: continue
+        if report.has("site"):
+            if ally["mission"]=="본진 방어" or ally["defense_set"] or ally["has_destination"] or ally.has("post_watch") or ally["tactical_until"]>battle_time: continue
+            if Vector2(ally["pos"]).distance_to(outposts[report["site"]]["pos"])<OUTPOST_RADIUS*2: continue
         if (sender["pos"] as Vector2).distance_to(ally["pos"]) >= radius: continue
         var distance := _relief_travel_distance(rider, ally["pos"])
         if distance < shortest:
@@ -3610,7 +3619,11 @@ func _move_relief_riders(dt: float) -> void:
             request["answer"]="수신 부대 상실"
             continue
         var dest: Vector2=headquarters[side]["pos"] if returning else ally["pos"]
-        if not _advance_rider(request["rider"],dest,dt): continue
+        var arrived:=_advance_rider(request["rider"],dest,dt)
+        if report.has("site") and _courier_intercepted(request["rider"]):
+            relief_riders.remove_at(i)
+            continue
+        if not arrived: continue
         if returning:
             report["relief_answer"]=request["answer"]
             if side==0:
@@ -3620,6 +3633,8 @@ func _move_relief_riders(dt: float) -> void:
             continue
         var sender:=find_unit(report["unit_id"])
         var reason:=_relief_decision(ally,sender)
+        if report.has("site") and battle_time-report["written_at"]>24.0: reason="오래된 전황 보고"
+        if report.has("site") and (commander_captured(side) or ally["mission"]=="본진 방어" or ally["defense_set"] or ally["has_destination"] or ally.has("post_watch")): reason="기존 방어 임무 유지"
         var text: String="%s → %s군 구원 " % [ally["name"],report["sender"]]
         if reason.is_empty():
             ally["tactical_order"]="지원"
@@ -4676,6 +4691,7 @@ func _observed_threat_to(observer:Dictionary,ally:Dictionary)->Dictionary:
 
 func _enemy_strategy()->void:
     if scenario_id in [2,3]: return
+    NorthernField.review_pressure(self)
     for unit in units:
         if int(unit["side"])!=1 or float(unit["troops"])<600.0 or bool(unit["routed"]) or bool(unit["reserve"]) or str(unit["mission"])=="본진 방어": continue
         if float(unit["morale"])<40.0 or float(unit["cohesion"])<35.0 or float(unit["rations"])<20.0:

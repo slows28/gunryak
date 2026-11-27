@@ -7,18 +7,36 @@ func _initialize() -> void:
     var args:=OS.get_cmdline_user_args()
     var n:=int(args[0]) if not args.is_empty() else 1
     var options:=args.slice(1)
-    var assault: bool="assault" in options
-    var equipped: bool="equipped" in options
-    var relief: bool="relief" in options
-    var receipts: bool="receipts" in options
-    var watch: bool="watch" in options
-    var garrison: bool="garrison" in options
-    if n<1 or n>North.Field.CHAPTERS.size() or options.size()!=int(assault)+int(equipped)+int(relief)+int(receipts)+int(watch)+int(garrison) or ((watch or garrison) and n!=11) or (watch and garrison) or (relief and n not in [7,13]) or (receipts and n not in [10,11]):
-        push_error("Use -- CHAPTER [assault] [equipped] [relief (7/13) | receipts (10/11)] [watch | garrison (11)]")
+    var plan: String="brief"
+    var seed_text: String="game"
+    var seen_options: Dictionary={}
+    for token in options:
+        var key: String="seed" if token.begins_with("seed=") else token
+        var valid: bool=not seen_options.has(key)
+        if token in ["assault","rush","split","wings","recapture"]:
+            valid=valid and plan=="brief"
+            plan=token
+        elif token.begins_with("seed="):
+            seed_text=token.trim_prefix("seed=")
+            valid=valid and (seed_text=="game" or seed_text.is_valid_int())
+        elif token not in ["equipped","relief","receipts","watch","garrison"]:
+            valid=false
+        if not valid:
+            push_error("Unknown, duplicate or incompatible option: "+token)
+            quit(2)
+            return
+        seen_options[key]=true
+    var equipped: bool=options.has("equipped")
+    var relief: bool=options.has("relief")
+    var receipts: bool=options.has("receipts")
+    var watch: bool=options.has("watch")
+    var garrison: bool=options.has("garrison")
+    if (plan=="recapture" and n!=3) or n<1 or n>North.Field.CHAPTERS.size() or ((watch or garrison) and n!=11) or (watch and garrison) or (relief and n not in [7,13]) or (receipts and n not in [10,11]):
+        push_error("Use -- CHAPTER [assault | rush | split | wings | recapture (3)] [seed=game|INTEGER] [equipped] [relief (7/13) | receipts (10/11)] [watch | garrison (11)]")
         quit(2)
         return
     var campaign:=North.new()
-    campaign.save_path="user://north-playtest-%d-%s-%s.json" % [n,assault,equipped]
+    campaign.save_path="user://north-playtest-%d-%s-%s.json" % [n,"-".join(options),equipped]
     # A legal inventory obtained by choosing the first reward at each preceding chapter.
     for prior in range(1,n):
         campaign.state.reward=prior
@@ -43,19 +61,29 @@ func _initialize() -> void:
         return
     var start_blue:=sim.total_troops(0)
     var start_red:=sim.total_troops(1)
-    if assault:
+    if seed_text!="game": sim.rng.seed=int(seed_text)
+    if plan!="brief":
         var objective: Vector2=sim.outposts[0].pos
         var gate: bool=sim.chapter.mode in ["siege","capital"]
-        for id in sim.command_ids(0):
+        var ids:=sim.command_ids(0)
+        for i in ids.size():
+            var id:=ids[i]
             var unit:=sim.find_unit(id)
             var target:=objective
             var intent: String="공격"
-            if gate and unit.type=="보병":
+            if plan=="split" and i%2==1: target=sim.outposts[1].pos
+            if plan=="assault" and gate and unit.type=="보병":
                 var wall: Rect2=sim.structures[0].rect
                 target=Vector2(wall.position.x-13,wall.get_center().y)
             elif unit.type=="궁병":
-                target=objective+Vector2(-90,0)
+                target+=Vector2(-90,0)
                 intent="지역 사수"
+            elif plan=="wings" and unit.type=="기병":
+                target=objective+Vector2(60,220)
+                intent="측후방 기동"
+            if plan=="recapture":
+                intent="지역 사수"
+                target=objective+Vector2(-195-28*(i%3),-108+54*(i%5))
             if not sim.issue_map_order(id,intent,target):
                 push_error("Illegal opening order for "+unit.name)
                 quit(1)
@@ -70,6 +98,7 @@ func _initialize() -> void:
         print("GARRISON ",sim.find_unit(guard_id).name," day 1")
     sim.start()
     var dispatched: Dictionary={}
+    var wing_orders: Dictionary={}
     var receipt_orders: Dictionary={}
     while not sim.finished and sim.step_count<3800:
         sim.step(0.1)
@@ -79,6 +108,16 @@ func _initialize() -> void:
             if candidate>=0 and sim.issue_map_order(candidate,"본진 방어",sim.headquarters[0]["pos"]):
                 guard_id=candidate
                 print("WATCH_ORDER ",sim.find_unit(guard_id).name," at ",sim.operation_elapsed())
+        if plan=="recapture" and sim.player_can_see(sim.outposts[0].pos) and sim.outposts[0].owner==1:
+            for id in sim.command_ids(0):
+                if dispatched.has(id): continue
+                if sim.issue_map_order(id,"공격",sim.outposts[0].pos): dispatched[id]=true
+        if plan=="wings":
+            for id in sim.command_ids(0):
+                var wing:=sim.find_unit(id)
+                if wing_orders.has(id) or wing.type!="기병" or wing.routed: continue
+                if wing.pos.distance_to(sim.outposts[0].pos+Vector2(60,220))>160: continue
+                if sim.issue_map_order(id,"공격",sim.outposts[0].pos): wing_orders[id]=true
         if receipts:
             for letter in sim.chapter.get("receipts",{}).values():
                 var id: int=letter.unit_id
@@ -106,5 +145,5 @@ func _initialize() -> void:
         for key in u.get("skill_stats",{}):
             uses[key]=uses.get(key,0)+int(u.skill_stats[key].uses)
     for site in sim.outposts: sites.append({"name":site.name,"owner":site.owner,"held":roundi(site.hold*sim.operation_scale())})
-    print("CHAPTER_RUN ",JSON.stringify({"chapter":n,"plan":"assault" if assault else "brief","post_breach_orders":dispatched.size(),"gear":"earned" if equipped else "starters","title":sim.scenario_title,"elapsed":roundi(sim.operation_elapsed()),"blue_start":start_blue,"red_start":start_red,"blue":sim.total_troops(0),"red":sim.total_troops(1),"winner":sim.winning_side,"why":sim.result,"uses":uses,"sites":sites,"gate_hp":roundi(sim.structures[0].hp) if sim.chapter.mode in ["siege","capital"] else -1}))
+    print("CHAPTER_RUN ",JSON.stringify({"chapter":n,"plan":plan,"seed":seed_text,"details":sim.result_detail,"wing_orders":wing_orders.size(),"post_breach_orders":dispatched.size() if relief else 0,"recapture_orders":dispatched.size() if plan=="recapture" else 0,"gear":"earned" if equipped else "starters","title":sim.scenario_title,"elapsed":roundi(sim.operation_elapsed()),"blue_start":start_blue,"red_start":start_red,"blue":sim.total_troops(0),"red":sim.total_troops(1),"winner":sim.winning_side,"why":sim.result,"uses":uses,"sites":sites,"gate_hp":roundi(sim.structures[0].hp) if sim.chapter.mode in ["siege","capital"] else -1}))
     quit(0 if sim.finished and sim.validate_state().is_empty() else 1)

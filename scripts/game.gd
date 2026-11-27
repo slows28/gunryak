@@ -1261,8 +1261,14 @@ func _refresh_enemy_intel() -> void:
     details_label.text="%s · %s · %s" % [str(enemy["type"]),_field_action(enemy),str(enemy["formation"])]
     readiness_label.text="사기 %d · 응집 %d" % [roundi(float(enemy["morale"])),roundi(float(enemy["cohesion"]))]
     enemy_intel.text=""
+    if enemy["action"] in ["거점 차단","거점 엄호 사격"] and enemy.has("post_watch"):
+        var site: String=sim.outposts[enemy["post_watch"]["site"]]["name"]
+        var approaching: bool=Vector2(enemy["pos"]).distance_to(enemy["post_watch"]["station"])>24.0
+        var position: String=" 진입로" if enemy["type"]=="보병" else " 후방"
+        enemy_intel.text="관측 · "+site+position+(" 방향으로 이동 중" if approaching else "에 전개")
     if not fog_enabled:
-        enemy_intel.text="가한 피해 %s · 손실 %s" % [
+        if not enemy_intel.text.is_empty(): enemy_intel.text+="\n"
+        enemy_intel.text+="가한 피해 %s · 손실 %s" % [
             _number_text(roundi(float(enemy["damage_dealt"]))),_number_text(roundi(float(enemy["casualties_taken"])))]
 
 func _latest_command_response(id: int) -> String:

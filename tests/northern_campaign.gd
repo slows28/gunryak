@@ -30,6 +30,14 @@ func _initialize():
             check(campaign.prepare(1,sim) and sim.find_unit(0).troops==4500 and sim.find_unit(0).general_hp==100,"fresh forces")
             sim.start()
         # Exercise the real objective evaluator with controlled endgame positions.
+        if n==3:
+            sim.find_unit(sim.command_ids(1)[0]).pos=sim.outposts[0].pos
+            sim.outposts[0].owner=0
+            sim._check_victory()
+            check(not sim.chapter.baited,"a passing enemy cannot satisfy the lure")
+            sim.outposts[0].owner=1
+            sim._check_victory()
+            check(sim.chapter.baited and not sim.finished,"enemy occupation opens the recapture phase")
         sim.battle_time=sim.scenario_limit
         sim.turn=15
         for post in sim.outposts: post.owner=0;post.hold=60

@@ -4,7 +4,7 @@ extends RefCounted
 const CHAPTERS := [
     ["기산 진출전",0,"field","기산 야전 · 18분 이후 위군 손실 10,000명 또는 거점 두 곳 유지.",Vector2(1270,775),Rect2(630,630,210,140),["strike","square","dash"]],
     ["천수 공략전",0,"sites","천수의 세 거점 가운데 두 곳을 확보하십시오.",Vector2(1230,405),Rect2(1610,1080,250,150),["inspire","rapid","harass"]],
-    ["기곡 전투",1,"lure","위군을 기곡 유인 지점으로 끌어들인 뒤 그 지점을 탈환하십시오.",Vector2(1080,830),Rect2(930,720,225,145),["ambush","decoy","swift"]],
+    ["기곡 전투",1,"lure","위군이 기곡 유인 지점을 점령하도록 유인한 뒤, 촉군으로 탈환하십시오.",Vector2(1080,830),Rect2(930,720,225,145),["ambush","decoy","swift"]],
     ["가정 전투",2,"hold","가정의 본진을 지키고 작전 종료 시 고갯길을 확보하십시오.",Vector2(735,550),Rect2(1040,600,230,140),["iron","last","counter"]],
     ["상규 전투",1,"flank","측후방에서 누적 피해 150명을 내고 상규 고지를 확보하십시오.",Vector2(1450,710),Rect2(1050,455,220,175),["breach","fury","wing"]],
     ["농서 평정전",0,"fronts","북로와 남로를 동시에 확보하십시오.",Vector2(1390,780),Rect2(1090,970,280,145),["link","relief","rally"]],
@@ -47,6 +47,80 @@ static func deploy(sim, number: int) -> void:
     sim._map_terrain_posts()
     sim.chapter={"number":number,"mode":stage[2],"baited":false,"enemy_count":enemy_count,"enemy_initial":0,"metrics":{}}
 
+# A field commander can commit to a nearby objective after seeing a mass of
+# enemy corps there twice. Two commanders can take stations. Further help
+# requires a delivered request. Each station expires with its last sighting.
+const PRESSURE_MODES:=["sites","fronts","line","link","decisive"]
+const MASS_RADIUS:=240.0
+const MASS_CORPS:=4
+const WATCH_SECONDS:=17.0
+
+static func review_pressure(sim) -> void:
+    var mode: String=sim.chapter.get("mode","")
+    if mode not in PRESSURE_MODES: return
+    var sites:=2
+    if mode=="link": sites=1
+    elif mode in ["sites","decisive"]: sites=sim.outposts.size()
+    var candidates: Array[Dictionary]=[]
+    var active:=0
+    for u in sim.units:
+        if u["side"]!=1: continue
+        var prior: Dictionary=u.get("post_watch",{})
+        if not prior.is_empty() and prior["until"]<=sim.battle_time:
+            u.erase("post_watch")
+            prior={}
+        if not _watch_ready(sim,u):
+            u.erase("post_watch")
+            u.erase("post_sighting")
+            continue
+        if not prior.is_empty(): active+=1
+        var seen:=_massed_corps(sim,u,sites,prior.get("site",-1))
+        if seen.is_empty():
+            u.erase("post_sighting")
+            continue
+        var earlier: Dictionary=u.get("post_sighting",{})
+        u["post_sighting"]={"site":seen["site"],"time":sim.battle_time}
+        if not prior.is_empty():
+            u["post_watch"]=seen
+        elif earlier.get("site",-1)==seen["site"] and sim.battle_time-float(earlier["time"])<=10.0 and sim.battle_time>earlier["time"]:
+            candidates.append({"unit":u,"watch":seen,"distance":Vector2(u["pos"]).distance_squared_to(seen["station"])})
+    candidates.sort_custom(func(a,b): return a.distance<b.distance)
+    for slot in range(mini(candidates.size(),2-active)):
+        var candidate:=candidates[slot]
+        var u: Dictionary=candidate["unit"]
+        u["post_watch"]=candidate["watch"]
+        u["ai_cooldown"]=0.0
+        if sim.tactical_enabled and sim.battle_time>=float(sim.chapter.get("next_site_call",0.0)) and sim.battle_time-float(u.get("last_relief_request",-100.0))>=30.0:
+            var report: Dictionary={"id":sim.step_count*100+u["id"],"side":1,"unit_id":u["id"],"sender":u["name"],"pos":u["pos"],"site":candidate["watch"]["site"],"written_at":sim.battle_time}
+            sim._send_relief_request(u,report)
+            sim.chapter["next_site_call"]=sim.battle_time+30.0
+
+static func _watch_ready(sim,u: Dictionary) -> bool:
+    if u.has("parent_id") or u["type"] not in ["보병","궁병"] or u["troops"]<600 or u["routed"] or u["reserve"]: return false
+    if u["mission"]=="본진 방어" or u["has_destination"] or u["defense_set"] or u["tactical_until"]>sim.battle_time: return false
+    return u["morale"]>=40 and u["cohesion"]>=35 and u["rations"]>=20
+
+static func _massed_corps(sim,u: Dictionary,sites: int,committed_site: int) -> Dictionary:
+    var best: Dictionary={}
+    for i in range(sites):
+        if committed_site>=0 and i!=committed_site: continue
+        var site: Vector2=sim.outposts[i]["pos"]
+        if Vector2(u["pos"]).distance_squared_to(site)>360.0*360.0 or sim._river_separates(u["pos"],site): continue
+        var center:=Vector2.ZERO
+        var count:=0
+        for foe in sim.units:
+            if foe["side"]!=0 or foe.has("parent_id") or foe["routed"] or foe["reserve"] or foe["troops"]<600: continue
+            if site.distance_squared_to(foe["pos"])>MASS_RADIUS*MASS_RADIUS: continue
+            if not sim._locally_observed(u,foe) or sim._river_separates(foe["pos"],site): continue
+            center+=Vector2(foe["pos"])
+            count+=1
+        if count<MASS_CORPS or count<=int(best.get("count",0)): continue
+        var offset:=site.direction_to(center/count)*(28.0 if u["type"]=="보병" else -75.0)
+        var station: Vector2=sim._field_point(site+offset)
+        if sim.in_open_water(station) or sim._river_separates(site,station): station=site
+        best={"site":i,"station":station,"count":count,"until":sim.battle_time+WATCH_SECONDS}
+    return best
+
 # Mark an opening assignment on the ordinary orders map. The player can
 # replace or cancel every assignment before dispatching the army.
 static func opening_orders(sim) -> void:
@@ -77,11 +151,7 @@ static func victory(sim) -> void:
     var c: Dictionary=sim.chapter
     var mode: String=c["mode"]
     var site: Dictionary=sim.outposts[0]
-    if mode=="lure" and not c["baited"]:
-        for u in sim.units:
-            if u["side"]==1 and u["troops"]>0 and Vector2(u["pos"]).distance_to(site["pos"])<=100:
-                c["baited"]=true
-                break
+    if mode=="lure" and site["owner"]==1: c["baited"]=true
     if sim.battle_time<sim.LONG_OBJECTIVE_OPEN and sim.step_count%10!=0: return
     var standing: Array[int]=[0,0]
     var flank:=0.0
@@ -131,7 +201,7 @@ static func victory(sim) -> void:
         var detail: String="확보 거점 %d곳" % count
         match mode:
             "field": detail+=" · 위군 전투 손실 %d / 10,000명" % roundi(wei_losses)
-            "lure": detail+=" · 기곡 유인 "+("성공" if c["baited"] else "미달")
+            "lure": detail+=" · 위군 점령 "+("확인" if c["baited"] else "미달")+" · 촉군 탈환 "+("완료" if won else "미달")
             "hold": detail+=" · 고갯길 수비대 "+("주둔" if garrison else "부재")
             "flank": detail+=" · 측후방 피해 %d / 150명" % roundi(flank)
             "link": detail+=" · 협동 피해 %d / 120명" % floori(linked)
