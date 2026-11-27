@@ -454,6 +454,13 @@ func _formation_support() -> void:
         and front > 0.70*view.melee_displacement(Vector2.ZERO,contact,4).length() and is_equal_approx(front,single),
         "rear ranks retain their places while the leading or last surviving rank can still engage")
 
+    contact["hold"] = square
+    contact["inverse_depth"] = 1.0/32.0
+    contact["reach"] = 8.0
+    _check(view.melee_displacement(Vector2.ZERO,contact,4).length()>front
+        and view.melee_displacement(Vector2(-32,0),contact,4).length()<front,
+        "at a measured contact gap, lead files step in while the held tail remains behind")
+
     var line := _infantry_duel("횡대")
     var block := _infantry_duel("방진")
     var file := _infantry_duel("종대")

@@ -158,7 +158,10 @@ static func melee_displacement(local: Vector2, front: Dictionary, person: int) -
     var phase: float = front["phase"]
     var push := sin(across*0.12+phase)
     var step := sin(float(person)*2.39996+phase)
-    var inward := clampf(17.0-along*0.40+push*7.0+step*4.0-float(front["pressure"])*7.0, -14.0, 40.0)
+    # At the outer edge of melee reach, lead files must step into the
+    # measured contact gap. The rank weight below still anchors reserves.
+    var reach_step := clampf(float(front.get("reach",0.0)),0.0,10.0)
+    var inward := clampf(17.0+reach_step-along*0.40+push*7.0+step*4.0-float(front["pressure"])*7.0, -14.0, 40.0)
     var sideways := -sin(across*0.21+phase)*2.7 + sin(along*0.14+phase)*4.0 + step*3.4
     # The depth is relative to this body's occupied files, even during a turn
     # or formation change. Front files can still close the last gap.
@@ -166,7 +169,8 @@ static func melee_displacement(local: Vector2, front: Dictionary, person: int) -
     if hold > 0.0:
         var inverse_depth: float = front["inverse_depth"]
         var rank := clampf((local.dot(normal)-float(front["back"]))*inverse_depth,0.0,1.0) if inverse_depth > 0.0 else 1.0
-        var room := lerpf(0.21,0.86,smoothstep(0.23,0.88,rank))
+        var lead_rank := lerpf(0.88,0.72,reach_step/10.0)
+        var room := lerpf(0.21,0.86,smoothstep(0.23,lead_rank,rank))
         weight *= lerpf(1.0,room,hold)
     return (normal*inward+tangent*sideways)*weight
 
