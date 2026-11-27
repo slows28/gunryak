@@ -2,6 +2,40 @@ extends RefCounted
 ## File positions are in forward/lateral coordinates, in units of file spacing.
 static var patterns: Dictionary = {}
 
+# Relative contribution of the occupied formation to the existing push contest.
+static func frontage_factor(shape: String) -> float:
+    match shape:
+        "횡대": return 1.06
+        "종대": return 0.77
+        "방진": return 1.28
+        "어린진": return 1.19
+        "학익진": return 1.10
+        "봉시진": return 1.18
+        "안행진": return 0.85
+    return 1.0
+
+# How firmly the unengaged ranks retain the ordered pattern at this contact.
+static func rank_hold(unit: Dictionary, normal: Vector2, pressure: float) -> float:
+    if unit["routed"]: return 0.0
+    var shape: String = unit["formation"]
+    var structure := lerpf(0.40,1.0,inverse_lerp(0.77,1.28,frontage_factor(shape)))
+    var facing := clampf(Vector2(unit["facing"]).dot(normal),0.0,1.0)
+    if shape != "방진": structure *= lerpf(0.68,1.0,facing)
+    var cohesion := smoothstep(36.0,90.0,float(unit["cohesion"]))
+    var ordered := 1.0 if str(unit["next_formation"]).is_empty() else 0.55
+    return structure * lerpf(0.22,1.0,cohesion) * lerpf(1.0,0.68,clampf(pressure,0.0,1.0)) * ordered
+
+static func role_text(shape: String) -> String:
+    match shape:
+        "방진": return "충격에 강함 · 느린 이동"
+        "횡대": return "넓은 전열 · 동시 교전"
+        "종대": return "빠른 이동 · 좁은 전열"
+        "어린진": return "근접 공격 강화"
+        "학익진": return "측후방 공격 강화"
+        "봉시진": return "기병 공격 강화 · 빠른 이동"
+        "안행진": return "궁병 사격 강화"
+    return ""
+
 static func pattern(shape: String, count: int) -> Array[Vector2]:
     if not patterns.has(shape): patterns[shape] = {}
     if patterns[shape].has(count): return patterns[shape][count]

@@ -10,6 +10,7 @@ func _initialize() -> void:
     _contact_footwork()
     _planted_feet()
     _melee_crowd()
+    _formation_support()
     _change_ranks()
     _aftermath()
     _targeting()
@@ -410,3 +411,56 @@ func _melee_crowd() -> void:
     motion.spread_neighbours(feet,PackedInt32Array([1,2,3,4]))
     _check(feet[0].distance_to(feet[1])>2.0 and feet[1].distance_to(feet[2])>2.0 and feet[3]==Vector2(17,0), "crowded neighbours make space without disturbing an isolated person")
     _check(motion.nearby_opponent(feet[3],feet,motion.bins_for(feet),-1)==3 and motion.nearby_opponent(Vector2(72,0),feet,motion.bins_for(feet),-1)==-1, "local contact follows actual feet and respects reach")
+
+func _formation_support() -> void:
+    var view := preload("res://scripts/front_view.gd")
+    var unit := {"formation":"방진","routed":false,"facing":Vector2.RIGHT,"cohesion":90.0,"next_formation":""}
+    var square := WarSim.FormationDrill.rank_hold(unit,Vector2.RIGHT,0.0)
+    unit["formation"] = "종대"
+    var column := WarSim.FormationDrill.rank_hold(unit,Vector2.RIGHT,0.0)
+    unit["formation"] = "방진"
+    unit["next_formation"] = "횡대"
+    _check(square > column and square > WarSim.FormationDrill.rank_hold(unit,Vector2.RIGHT,0.0),
+        "an orderly square supports its ranks better than a column or a changing formation")
+    unit["next_formation"] = ""
+    unit["cohesion"] = 22.0
+    _check(WarSim.FormationDrill.rank_hold(unit,Vector2.RIGHT,1.0) < column, "a depleted, pressured formation yields ground")
+    var contact := {"axis":Vector2.RIGHT,"tangent":Vector2.DOWN,"patch":Vector2.ZERO,"half_width":22.0,
+        "phase":0.4,"pressure":0.0,"hold":square,"back":-32.0,"inverse_depth":1.0/32.0}
+    var rear := view.melee_displacement(Vector2(-32,0),contact,4).length()
+    var front := view.melee_displacement(Vector2.ZERO,contact,4).length()
+    contact["inverse_depth"] = 0.0
+    var single := view.melee_displacement(Vector2.ZERO,contact,4).length()
+    contact["hold"] = 0.0
+    _check(rear < 0.30*view.melee_displacement(Vector2(-32,0),contact,4).length()
+        and front > 0.70*view.melee_displacement(Vector2.ZERO,contact,4).length() and is_equal_approx(front,single),
+        "rear ranks retain their places while the leading or last surviving rank can still engage")
+
+    var line := _infantry_duel("횡대")
+    var block := _infantry_duel("방진")
+    var file := _infantry_duel("종대")
+    _check(line["contacts"] > file["contacts"] and line["damage"] > block["damage"],
+        "a line brings more files into the same fight and deals more damage than a square")
+    _check(block["loss"] < line["loss"] and block["push"] > line["push"] and file["yield"] > block["yield"],
+        "the square resists and pushes while the column gives ground in the same encounter")
+
+func _infantry_duel(shape: String) -> Dictionary:
+    var sim := _field()
+    var own := _place(sim.find_unit(0),Vector2(820,750),"보병",shape)
+    var enemy := _place(sim.find_unit(3),Vector2(858,750),"보병","횡대")
+    for u: Dictionary in [own,enemy]:
+        u["initial_troops"] = 3600.0
+        u["troops"] = 3600.0
+        u["cohesion"] = 90.0
+        u["morale"] = 90.0
+        u["fatigue"] = 0.0
+        u["specialty"] = ""
+    var contacts := 0
+    for step in range(30):
+        sim.step_count += 1
+        sim.battle_time += 0.1
+        sim._resolve_frontline(0.1)
+        sim._combat(0.1)
+        contacts += int(own["contact_troops"])
+    return {"contacts":contacts, "damage":own["damage_dealt"], "loss":own["casualties_taken"],
+        "push":enemy["pushed_distance"], "yield":own["pushed_distance"]}

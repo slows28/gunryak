@@ -1238,6 +1238,9 @@ func _capture_melee_ranks() -> bool:
         if nearest < 121.0 and leading-state["raw"][person["index"]].dot(axis) > 16.0: deep += 1
         if forward and backward: mixed += 1
         if nearest < 2.25: stacked += 1
+    if deep > 35 or mixed > 55:
+        push_error("VISUAL_CAPTURE_FAIL: sustained contact swallowed the formed reserves (%d deep, %d mixed)" % [deep,mixed])
+        return false
     if deep < 15 or mixed < 15 or stacked*10 > mixed:
         push_error("VISUAL_CAPTURE_FAIL: expected intermingled ranks with room for individual feet (%d deep, %d mixed, %d stacked)" % [deep,mixed,stacked])
         return false

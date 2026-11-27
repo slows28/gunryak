@@ -1418,16 +1418,7 @@ func _body_distance(a: Dictionary, b: Dictionary) -> float:
 func _frontline_power(unit: Dictionary, enemy: Dictionary, direction: Vector2) -> float:
     var factor: float = 1.0
     if six_armies: factor *= tactical_matchup(unit,enemy,false)
-    var formation_factor: float = 1.0
-    match str(unit["formation"]):
-        "횡대": formation_factor = 1.06
-        "종대": formation_factor = 0.77
-        "방진": formation_factor = 1.28
-        "어린진": formation_factor = 1.19
-        "학익진": formation_factor = 1.10
-        "봉시진": formation_factor = 1.18
-        "안행진": formation_factor = 0.85
-    factor *= formation_factor
+    factor *= FormationDrill.frontage_factor(unit["formation"])
     if str(unit["type"]) == "기병":
         factor *= 1.16 if str(enemy["formation"]) != "방진" else 0.70
         if _in_forest(unit["pos"]):

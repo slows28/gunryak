@@ -126,6 +126,7 @@ static func contact_displacement(local: Vector2, front: Dictionary) -> Vector2:
 static func melee_patch(left: Array[Vector2], right: Array[Vector2], axis: Vector2) -> Dictionary:
     var tangent := axis.orthogonal()
     var edge := PackedFloat32Array([-INF, INF])
+    var rear := PackedFloat32Array([INF, -INF])
     var lo := PackedFloat32Array([INF, INF])
     var hi := PackedFloat32Array([-INF, -INF])
     for side in 2:
@@ -135,11 +136,12 @@ static func melee_patch(left: Array[Vector2], right: Array[Vector2], axis: Vecto
             var depth := point.dot(axis)
             var across := point.dot(tangent)
             edge[side] = maxf(edge[side], depth) if side == 0 else minf(edge[side], depth)
+            rear[side] = minf(rear[side], depth) if side == 0 else maxf(rear[side], depth)
             lo[side] = minf(lo[side], across)
             hi[side] = maxf(hi[side], across)
     var lower := maxf(lo[0], lo[1])
     var upper := minf(hi[0], hi[1])
-    return {"center": axis * ((edge[0]+edge[1])*0.5) + tangent * ((lower+upper)*0.5),
+    return {"near":edge, "far":rear, "center": axis * ((edge[0]+edge[1])*0.5) + tangent * ((lower+upper)*0.5),
         "half_width": maxf(6.0, (upper-lower)*0.5) + 6.0}
 
 # Feed several ranks into the contact area. Neighbouring files fold together,
@@ -158,6 +160,14 @@ static func melee_displacement(local: Vector2, front: Dictionary, person: int) -
     var step := sin(float(person)*2.39996+phase)
     var inward := clampf(17.0-along*0.40+push*7.0+step*4.0-float(front["pressure"])*7.0, -14.0, 40.0)
     var sideways := -sin(across*0.21+phase)*2.7 + sin(along*0.14+phase)*4.0 + step*3.4
+    # The depth is relative to this body's occupied files, even during a turn
+    # or formation change. Front files can still close the last gap.
+    var hold: float = front.get("hold",0.0)
+    if hold > 0.0:
+        var inverse_depth: float = front["inverse_depth"]
+        var rank := clampf((local.dot(normal)-float(front["back"]))*inverse_depth,0.0,1.0) if inverse_depth > 0.0 else 1.0
+        var room := lerpf(0.21,0.86,smoothstep(0.23,0.88,rank))
+        weight *= lerpf(1.0,room,hold)
     return (normal*inward+tangent*sideways)*weight
 
 

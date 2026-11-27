@@ -1157,6 +1157,13 @@ func _refresh_commander_desk() -> void:
     var notes: String=_latest_engagement_note(selected_id)
     if not notes.is_empty():
         commander_observation.text+="\n"+notes
+    if sim.six_armies:
+        var formation: String = unit["formation"]
+        var formation_note := WarSim.FormationDrill.role_text(formation)
+        if not str(unit["next_formation"]).is_empty():
+            formation_note = "%s 편성 중 · 전열 불안정" % unit["next_formation"]
+        if not formation_note.is_empty():
+            commander_observation.text += "\n%s · %s" % [formation,formation_note]
     if not observed.is_empty():
         commander_observation.text+="\n"+observed
 
@@ -2058,6 +2065,13 @@ func _update_contact_fronts(dt: float) -> void:
                 var local_center: Vector2 = patch["center"] - unit["pos"]
                 front["patch"] = Vector2(front.get("patch", local_center)).lerp(local_center, minf(1.0, dt*4.0))
                 front["half_width"] = patch["half_width"]
+                var sign_axis := 1.0 if side == 0 else -1.0
+                var back: float = sign_axis*patch["far"][side] - Vector2(unit["pos"]).dot(normal)
+                var depth: float = sign_axis*(patch["near"][side]-patch["far"][side])
+                front["back"] = back
+                front["inverse_depth"] = 1.0/depth if depth > 1.0 else 0.0
+                var hold := WarSim.FormationDrill.rank_hold(unit,normal,front["pressure"])
+                front["hold"] = lerpf(float(front.get("hold",hold)),hold,minf(1.0,dt*4.0))
                 front["tangent"] = front["axis"].orthogonal() if side == 0 else -Vector2(front["axis"]).orthogonal()
             front["mix"] = move_toward(float(front.get("mix",0.0)), 0.0 if patch.is_empty() else 1.0, dt*0.85)
             front["width"]=width
@@ -2573,7 +2587,8 @@ func _draw_formation_ink(units: Array[Dictionary], field_view: Rect2) -> void:
         # as an allegiance cue while the solid outlines fade at contact.
         var mix := 0.0
         for front: Dictionary in fronts_by_unit.get(id, []):
-            mix = maxf(mix, float(front["strength"])*float(front.get("mix",0.0)))
+            var engaged: float = front["strength"]*float(front.get("mix",0.0))
+            mix = maxf(mix,engaged*(1.0-0.38*float(front.get("hold",0.0))))
         var ink:=Color("#244d72") if unit["side"]==0 else Color("#8a383c")
         var edge: Color=COL_BLUE if unit["side"]==0 else COL_RED
         var opacity: float=0.48 if unit["routed"] else (0.64 if unit["ambush_ready"]>=3.0 else 1.0)
