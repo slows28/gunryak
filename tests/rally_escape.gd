@@ -70,6 +70,10 @@ func rally() -> void:
             u.goal=u.pos
             u.ai_cooldown=10000.0
         else: u.troops=0.0
+    game.order_view.open(false)
+    game.order_view._select(ids[0])
+    check(game.order_view.march_preview.text.contains("공동 집결 3개 군단"),"the operations map identifies the confirmed group")
+    await capture("orders",pin,1.60,ids[0])
     game._start()
     # An observed weak unit is behind the horse; a second placement physically
     # blocks its approach. Exercise the public order through the normal AI.

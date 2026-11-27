@@ -4,7 +4,7 @@ extends RefCounted
 const STEP := 116.0
 
 static func decision(sim, unit: Dictionary) -> Dictionary:
-    var must_hold := sim.battle_time < unit["tactical_until"] and unit["tactical_order"] not in ["철수","재집결"]
+    var must_hold: bool = sim.battle_time < unit["tactical_until"] and unit["tactical_order"] not in ["철수","재집결"]
     if unit["routed"] or must_hold or unit["mission"] == "본진 방어":
         unit.erase("escape_step")
         return {}
