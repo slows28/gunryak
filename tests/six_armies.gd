@@ -486,6 +486,6 @@ func _run() -> void:
     game.call("_refresh_hud")
     check(game.command_outcome.text.contains("관측 행동 긴급 지원"),"an actual response state is distinguishable from delivery")
     game.call("_begin_campaign")
-    check(game.strategy_view.slot_choice.item_count==10,"ten strategic UI slots")
+    check(game.strategy_view.slot_choice.item_count==12,"twelve northern campaign UI slots")
     print("GUNRYAK_SIX_PASS" if failures==0 else "GUNRYAK_SIX_FAIL "+str(failures))
     game._quit_game(0 if failures==0 else 1)

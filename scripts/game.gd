@@ -214,7 +214,11 @@ var forest_textures: Array[ImageTexture]=[]
 var terrain_scenario: int = -1
 var terrain_variants: Dictionary = {}
 var campaign_active: bool = false
-var campaign = Campaign.new()
+const North=preload("res://scripts/northern_campaign.gd")
+const NorthView=preload("res://scripts/northern_view.gd")
+var campaign = North.new()
+var reward_options: HBoxContainer
+var terrain_chapter: int=-1
 var strategy_view: Control
 var order_view: Control
 var order_pause_before: bool = false
@@ -238,7 +242,6 @@ func _ready() -> void:
     get_tree().auto_accept_quit=false
     sim.tactical_enabled = true
     sim.set_long_operation(true)
-    campaign.set_six_armies(true)
     _install_korean_font()
     _build_map_layer()
     _rebuild_terrain()
@@ -252,10 +255,10 @@ func _ready() -> void:
     _build_demo_help()
     _build_situations()
     sim.messenger_arrived.connect(_on_messenger_arrived)
-    strategy_view = CampaignView.new()
+    strategy_view = NorthView.new()
     strategy_view.configure(campaign,korean_font,PAINTED_ART,_launch_campaign_battle,_show_title)
-    add_child(strategy_view)
     strategy_view.hide()
+    add_child(strategy_view)
     order_view=OrderMap.new()
     order_view.configure(self,korean_font)
     add_child(order_view)
@@ -444,13 +447,7 @@ func _build_interface() -> void:
     var strip:=HBoxContainer.new()
     strip.add_theme_constant_override("separation",8)
     corps_scroll.add_child(strip)
-    for i in range(WarSim.FIELD_CORPS):
-        var card:=BattleHud.CorpsCard.new()
-        card.custom_minimum_size=Vector2(201,88)
-        card.pressed.connect(_select_general_card.bind(i))
-        card.report_requested.connect(_open_situations)
-        strip.add_child(card)
-        general_cards.append(card)
+    _ensure_cards(strip,WarSim.FIELD_CORPS)
     _build_sector_board()
     situation_btn = _button("긴급 보고",Vector2(830,58),Vector2(120,45),_open_situations)
     dispatch_headline=_button("",Vector2(417,675),Vector2(395,21),func(): _frame_milestone({"point":sim.headquarters[0]["pos"]}))
@@ -550,6 +547,15 @@ func _build_battle_feed() -> void:
     combat_brief=_body_text(lines,14,COL_GOLD)
     event_label=_body_text(lines,13,COL_TEXT)
     battle_feed.hide()
+
+func _ensure_cards(strip: Control,count: int) -> void:
+    for i in range(general_cards.size(),count):
+        var card:=BattleHud.CorpsCard.new()
+        card.custom_minimum_size=Vector2(201,88)
+        card.pressed.connect(_select_general_card.bind(i))
+        card.report_requested.connect(_open_situations)
+        strip.add_child(card)
+        general_cards.append(card)
 
 func _ensure_friendly_selection() -> void:
     var ids: Array[int]=sim.command_ids(0)
@@ -890,6 +896,24 @@ func _open_due_council() -> void:
     councils_held += 1
     order_view.open_council(councils_held,due)
 
+func _can_edge_pan() -> bool:
+    if not sim.started or order_view.visible or not get_window().has_focus() or get_viewport().gui_get_drag_data()!=null:
+        return false
+    if Input.get_mouse_button_mask()!=0 or get_viewport().gui_get_hovered_control() is BaseButton: return false
+    for child in get_children():
+        if child is Window and child.visible: return false
+    return true
+
+func _edge_pan(point: Vector2) -> Vector2:
+    var screen := Rect2(Vector2.ZERO,size)
+    if not screen.has_point(point): return Vector2.ZERO
+    var field := Rect2(MAP_TOP_LEFT,MAP_SIZE)
+    var bounds := field if field.has_point(point) else screen
+    var margin := 18.0
+    var near_edge := (bounds.position+Vector2.ONE*margin-point)/margin
+    var far_edge := (point-bounds.end+Vector2.ONE*margin)/margin
+    return far_edge.clamp(Vector2.ZERO,Vector2.ONE)-near_edge.clamp(Vector2.ZERO,Vector2.ONE)
+
 func _process(delta: float) -> void:
     _open_due_council()
     if sim.started and not sim.paused and not arrival_messages.is_empty():
@@ -898,11 +922,13 @@ func _process(delta: float) -> void:
             if arrival_messages[i]["remaining"]<=0.0: arrival_messages.remove_at(i)
     if sim.started and not sim.paused and not sim.finished:
         render_clock = sim.battle_time + step_buffer
-    if is_instance_valid(title_screen) and not title_screen.visible and (not is_instance_valid(strategy_view) or not strategy_view.visible) and not outcome_dialog.visible:
+    if is_instance_valid(title_screen) and not title_screen.visible and (not is_instance_valid(strategy_view) or not strategy_view.visible) and not outcome_dialog.visible and not order_view.visible:
         if not planning_dialog.visible and not brief_dialog.visible and not situation_dialog.visible and not mind_dialog.visible:
             var pan := Vector2(float(Input.is_physical_key_pressed(KEY_RIGHT))-float(Input.is_physical_key_pressed(KEY_LEFT)),float(Input.is_physical_key_pressed(KEY_DOWN))-float(Input.is_physical_key_pressed(KEY_UP)))
+            if pan.is_zero_approx() and _can_edge_pan():
+                pan = _edge_pan(get_local_mouse_position())
             if pan.length_squared() > 0.0:
-                camera_center += pan.normalized()*minf(delta,0.15)*410.0/camera_zoom
+                camera_center += pan.limit_length(1.0)*minf(delta,0.15)*410.0/camera_zoom
                 _clamp_camera()
                 map_layer.queue_redraw()
                 queue_redraw()
@@ -1104,6 +1130,10 @@ func _refresh_commander_desk() -> void:
     if sim.started: readiness_label.text+=" · "+("다음 배급 %d초" % ceili(unit.get("delivery_left",0.0)*sim.operation_scale()) if unit["supplied"] else "배급 중단")
     details_label.tooltip_text="%s · %s\n사기 %d · 응집 %d · 피로 %d\n군량 %d · 화살 %d" % [
         str(unit["name"]),str(unit["type"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"])]
+    if unit.has("skill_ids"):
+        var names:=PackedStringArray()
+        for id in unit["skill_ids"]: names.append(WarSim.Skills.CATALOG[id][1])
+        details_label.tooltip_text+="\n전술  "+" / ".join(names)
     if sim.six_armies:
         details_label.tooltip_text+="\n협동 타격 %d · 상성 우위 타격 %d · 측후방 피해 %d" % [
             roundi(unit["linked_hits"]),roundi(unit["counter_damage"]),roundi(unit["flank_damage"])]
@@ -1401,7 +1431,7 @@ func _refresh_sector_board() -> void:
 
 func _refresh_objectives() -> void:
     objective_label.text=sim.scenario_goal
-    if sim.started and not sim.finished and sim.scenario_id in [2,3]:
+    if sim.chapter.is_empty() and sim.started and not sim.finished and sim.scenario_id in [2,3]:
         objective_label.text=("아군 본진 사수" if sim.scenario_id==2 else "군량 수레 호위")+" · 남은 "+_operation_clock(ceilf(maxf(0.0,sim.operation_limit()-sim.operation_elapsed())-0.00001))
     objective_label.tooltip_text=sim.scenario_goal
     objective_rows=FrontView.objective_targets(sim,fog_enabled)
@@ -2609,7 +2639,7 @@ func _draw_formation_footprint(slots: Array[Vector2], fill: Color, outline: Colo
     map_layer.draw_polyline(hull, outline, width, true)
 
 func _draw_corps_standard(unit: Dictionary, p: Vector2, opacity: float) -> void:
-    var scale_factor := 0.71 if unit.has("parent_id") else 1.0
+    var scale_factor := 0.51 if unit.has("parent_id") else 0.68
     CorpsStandard.paint(map_layer,unit,p+Vector2(-6,-2)*scale_factor,scale_factor,korean_font,opacity,2.1*render_clock+float(unit["id"]),true)
 
 func _draw_unit(unit: Dictionary) -> void:
@@ -2638,7 +2668,7 @@ func _draw_unit(unit: Dictionary) -> void:
         map_layer.draw_circle(p,3.0*k,center_color,false,1.1*k,true)
         var front: Vector2=(unit["facing"] as Vector2).normalized()
         map_layer.draw_line(p+front*4*k,p+front*8*k,center_color,1.4*k,true)
-        CorpsStandard.paint(map_layer,unit,p-Vector2(3,4)*k,(0.47 if unit.has("parent_id") else 0.61)*k,korean_font,accent.a)
+        CorpsStandard.paint(map_layer,unit,p-Vector2(3,4)*k,(0.39 if unit.has("parent_id") else 0.52)*k,korean_font,accent.a)
         return
     var id: int=int(unit["id"])
     var selected: bool=id==(observed_enemy_id if observing_enemy else selected_id)
@@ -2648,6 +2678,10 @@ func _draw_unit(unit: Dictionary) -> void:
         elif formation_render_cache.has(id): drawn_slots=formation_render_cache[id]
         else: drawn_slots=_contact_slots(unit,_visual_slots(unit))
     _draw_corps_standard(unit,p+_render_offset(id,p),accent.a)
+    var skill: Dictionary=unit.get("field_skill",{})
+    if not skill.is_empty() and sim.battle_time-skill["start"]<1.8:
+        var at:=p+Vector2(6,-36)/camera_zoom
+        _map_plate(skill["title"],at,WarSim.Skills.SIGNAL[skill["effect"]],12)
     var forward: Vector2 = unit["facing"]
     if detailed_map:
         map_layer.draw_line(p + forward*22.0, p + forward*35.0, Color(accent,0.8), 1.8)
@@ -3108,7 +3142,8 @@ func _open_briefing() -> void:
         tactic = "보병으로 성문을 파괴하고 중앙 거점을 확보하십시오."
     var story: String = ""
     if campaign_active and int(campaign.state["pending"]) >= 0:
-        story = str(Campaign.NODES[int(campaign.state["pending"])]["story"])+"\n"
+        if campaign is North: tactic=sim.scenario_goal
+        else: story = str(Campaign.NODES[int(campaign.state["pending"])]["story"])+"\n"
     brief_text.text = story + "%s\n\n승리 목표: %s\n제한 시간: %s (기본 배속)\n\n권장 전략: %s\n\n1~4일차에는 사전 작전을 수행합니다. 장수의 건의는 도착 즉시 회신할 수 있습니다. 5일차와 10일차에 중간회의가 열립니다.\n장수별 능력과 성향, 정찰 정보, 보급을 고려하십시오." % [sim.scenario_title,sim.scenario_goal,_operation_clock(sim.operation_limit()),tactic]
     brief_dialog.popup_centered()
 
@@ -3764,6 +3799,9 @@ func _build_outcome_dialog() -> void:
     layout.add_child(scroll)
     outcome_cards.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     scroll.add_child(outcome_cards)
+    reward_options=HBoxContainer.new()
+    layout.add_child(reward_options)
+    reward_options.hide()
     var buttons := HBoxContainer.new()
     buttons.add_theme_constant_override("separation",8)
     layout.add_child(buttons)
@@ -3796,8 +3834,19 @@ func _show_outcome() -> void:
     if campaign_active:
         if not battle_recorded:
             battle_recorded = campaign.conclude(sim)
-            campaign.save()
+            if not campaign.save(): runtime_notice="캠페인 기록 저장 실패"
         outcome_text.text += "  /  전략 %d일차" % int(campaign.state["turn"])
+        if campaign is North:
+            var total:=0.0
+            for unit in sim.units:
+                if unit["side"]==0 and not unit["reserve"] and not unit.has("parent_id"): total+=float(unit["initial_troops"])
+            var loss:=0.0
+            var enemy_loss:=0.0
+            for unit in sim.units:
+                if unit["side"]==0: loss+=float(unit["casualties_taken"])
+                else: enemy_loss+=float(unit["casualties_taken"])
+            var rank: String=("대승" if loss<0.30*total else "승리" if loss<0.55*total else "신승") if sim.winning_side==0 else "패배"
+            outcome_text.text+="\n%s · 아군 손실 %s명 / 위군 손실 %s명" % [rank,_number_text(roundi(loss)),_number_text(roundi(enemy_loss))]
     for child in outcome_cards.get_children():
         outcome_cards.remove_child(child)
         child.queue_free()
@@ -3833,8 +3882,29 @@ func _show_outcome() -> void:
         var contact_summary := _body_text(info,12,COL_MUTED)
         contact_summary.text="돌격 저지 %d회 · 후방 손실 %s명 · 패주 %d회" % [
             int(corps["brace_stops"]),_number_text(roundi(corps["rear_losses"])),int(corps["rout_count"])]
+        if unit.has("skill_ids"):
+            var summaries:=PackedStringArray()
+            for skill_id in unit["skill_ids"]:
+                var stat: Dictionary=unit["skill_stats"].get(skill_id,{"uses":0,"effect":0.0})
+                summaries.append("%s %d회 · %s" % [WarSim.Skills.CATALOG[skill_id][1],stat.uses,WarSim.Skills.effect_stat(skill_id,stat.effect)])
+            contact_summary.text+="\n"+"   /   ".join(summaries)
+    for child in reward_options.get_children(): reward_options.remove_child(child); child.queue_free()
+    reward_options.visible=campaign_active and campaign is North and campaign.state.reward>0
+    if reward_options.visible:
+        for id: String in campaign.choices():
+            var choice:=Button.new()
+            choice.text="%s · %s" % [WarSim.Skills.CATALOG[id][0],WarSim.Skills.CATALOG[id][1]]
+            choice.tooltip_text=WarSim.Skills.describe(id)
+            choice.pressed.connect(func():
+                if campaign.claim(id): _show_outcome()
+                else: outcome_text.text=campaign.save_error)
+            reward_options.add_child(choice)
+    campaign_next.disabled=reward_options.visible
     campaign_next.visible = campaign_active
     campaign_next.text = "전략 지도로 돌아가기"
+    if campaign_active and campaign is North:
+        campaign_next.text="북벌 결산" if campaign.state.complete else ("다음 출전 준비" if sim.winning_side==0 else "재도전 준비")
+        if reward_options.visible: outcome_text.text+="   /   전리품 한 가지 선택"
     outcome_comparison.queue_redraw()
     outcome_dialog.show()
 
@@ -3859,9 +3929,26 @@ func _draw_fortifications() -> void:
         map_layer.draw_rect(Rect2(p+Vector2(-19,-10),Vector2(38*ratio,4)),COL_GOLD)
         if detailed_map or structure["kind"]=="성문": _map_plate(str(structure["name"]),p+Vector2(0,-16),COL_TEXT,11)
 
+func _campaign_mode(north: bool) -> void:
+    if north==(campaign is North): return
+    remove_child(strategy_view)
+    strategy_view.queue_free()
+    if north:
+        campaign=North.new()
+        strategy_view=NorthView.new()
+    else:
+        campaign=Campaign.new()
+        campaign.set_six_armies(true)
+        strategy_view=CampaignView.new()
+    strategy_view.configure(campaign,korean_font,PAINTED_ART,_launch_campaign_battle,_show_title)
+    strategy_view.hide()
+    add_child(strategy_view)
+
 func _begin_campaign() -> void:
     if is_instance_valid(order_view): order_view.hide()
+    _campaign_mode(true)
     campaign.reset()
+    strategy_view.slot=0
     campaign_active = true
     _clear_journal()
     contact_cache.clear()
@@ -3880,9 +3967,11 @@ func _advance_campaign() -> void:
     strategy_view.refresh()
 
 func _rebuild_terrain() -> void:
-    if terrain_cache != null and terrain_scenario == sim.scenario_id:
+    var chapter_number: int=sim.chapter.get("number",0)
+    if terrain_cache != null and terrain_scenario == sim.scenario_id and terrain_chapter==chapter_number:
         return
-    var key: String="%s/%d" % [str(sim.field_size),sim.scenario_id]
+    terrain_chapter=chapter_number
+    var key: String="%s/%d/%d" % [str(sim.field_size),sim.scenario_id,chapter_number]
     if not terrain_variants.has(key):
         if terrain_variants.size()>=2: terrain_variants.erase(terrain_variants.keys()[0])
         var layers: Dictionary={"separate_trees":true}
@@ -3946,6 +4035,7 @@ func _launch_campaign_battle(target: int) -> bool:
     if not campaign.prepare(target,sim):
         return false
     campaign_active = true
+    _ensure_cards(general_cards[0].get_parent(),sim.command_ids(0).size())
     battle_recorded = false
     strategy_view.hide()
     title_screen.hide()
@@ -3962,10 +4052,15 @@ func _launch_campaign_battle(target: int) -> bool:
     _select_unit()
     _refresh_hud()
     queue_redraw()
+    if campaign is North:
+        camera_center=sim.find_unit(0)["pos"]
+        camera_zoom=0.85
+        _clamp_camera()
     _open_order_map()
     return true
 
 func _continue_campaign() -> void:
+    _campaign_mode(FileAccess.file_exists("user://gunryak_northern_v1.json") or not FileAccess.file_exists("user://gunryak_demo_v3.json"))
     if campaign.load_save():
         campaign_active = true
         title_screen.hide()
@@ -3989,7 +4084,7 @@ func _build_demo_help() -> void:
     tutorial_dialog = AcceptDialog.new()
     tutorial_dialog.title = "군략 · 첫 출전 안내"
     tutorial_dialog.ok_button_text = "확인"
-    tutorial_dialog.dialog_text = "0. 기본 전체 시야: 아군/적군 탭에서 양 진영 활동과 병력을 확인합니다. C: 최근 교전 위치, V: 정찰 시야 전환.\n1. 전략 지도에서 인접 지역을 선택합니다. 군량 55가 필요합니다.\n2. 장수 등용, 병력 보충, 병과 편성을 완료한 뒤 출전합니다.\n3. 작전 지도에서 거점과 담당 군단을 골라 행동을 지정합니다. 필요한 곳에 임시 거점을 세울 수 있습니다. 본진과 책사는 함께 이전합니다.\n4. 기본 배속 전투는 약 25분. 장수는 자율적으로 판단하며 5일차와 10일차에 중간회의가 열립니다. 밤에는 시야가 줄고 본진과 기지에 불이 켜집니다. 좌측 전령 보고에서 건의에 허가·불허를 회신하세요.\n5. 숫자 1~6 장수 선택, Space 일시정지, 휠 확대, 방향키/가운데 마우스 이동. F는 장수 중심.\n6. 전투 결산 후 전략 지도로 복귀합니다. 승리·패배·생존 병력과 장수 상태가 유지됩니다.\n7. 철수는 패배로 계산하되 현재 병력을 보존합니다. 전략 지도에서 저장 가능.\n8. 입문 난이도는 적 전력을 줄입니다. 캠페인은 천수 확보 또는 3패로 종료합니다."
+    tutorial_dialog.dialog_text = "전역에서 출전 장수와 장비를 편성한 뒤 작전 지도에서 각 군단이 맡을 거점과 행동을 지정하세요.\n장수는 명령 안에서 자율적으로 교전하고 전술을 사용합니다. 5일차와 10일차에는 중간회의가 열립니다.\n왼쪽 전령 보고를 선택해 회신하세요. 전투에서 이기면 전리품 하나를 골라 다음 전투에 장착합니다.\n휠로 확대하고 마우스를 전장 가장자리로 가져가 시야를 옮기세요. 방향키·가운데 버튼 이동, F 장수 중심, Home 전체 보기, Space 일시정지."
     var guide := tutorial_dialog.dialog_text
     tutorial_dialog.dialog_text = ""
     var content := VBoxContainer.new()
@@ -3999,22 +4094,22 @@ func _build_demo_help() -> void:
     instructions.custom_minimum_size.x = 700
     content.add_child(instructions)
     var key := Label.new()
-    key.text = "군기 읽기   ·   글자는 장수의 성, 바탕색은 현재 진형입니다. 아군은 평평한 깃단, 적군은 제비꼬리입니다."
+    key.text = "군기 읽기   ·   글자는 장수의 성입니다. 촉군은 남색의 평평한 깃단, 위군은 적갈색 제비꼬리 군기를 씁니다."
     key.add_theme_color_override("font_color",COL_GOLD)
     content.add_child(key)
     var flags := HBoxContainer.new()
     flags.add_theme_constant_override("separation",9)
-    for shape: String in CorpsStandard.DYES:
+    for faction in 2:
         var tile := AtlasTexture.new()
         tile.atlas = CorpsStandard.ATLAS
-        tile.region = CorpsStandard.tile({"formation":shape,"side":0,"name":"왕평"})
+        tile.region = CorpsStandard.tile({"side":faction,"name":"왕평" if faction==0 else "장합"})
         var icon := TextureRect.new()
         icon.texture = tile
         icon.custom_minimum_size = Vector2(23,29)
         icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
         flags.add_child(icon)
         var label := Label.new()
-        label.text = shape
+        label.text = "촉 · 왕평" if faction==0 else "위 · 장합"
         flags.add_child(label)
     content.add_child(flags)
     tutorial_dialog.add_child(content)
@@ -4156,6 +4251,7 @@ func _messenger_account(report: Dictionary) -> String:
     if push.length()>=4.0:
         lines.append("제가 떠날 때 우리 전열이 %s으로 밀리고 있었습니다." % _push_direction(push))
     else:
+        if report.has("skill_report"): lines.append("발신 시 전술   "+str(report["skill_report"]))
         match report.get("kind",""):
             "포위 위험": lines.append("여러 방향에서 적이 접근해 퇴로가 위태롭습니다.")
             "전열 붕괴 위험": lines.append("대열을 유지하기 어렵습니다. 당시 사기는 %d, 응집은 %d였습니다." % [report["morale"],report["cohesion"]])

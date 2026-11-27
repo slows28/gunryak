@@ -223,7 +223,7 @@ static func objective_targets(sim, limited: bool) -> Array[Dictionary]:
         if not limited or sim.finished or sim.player_can_see(center):
             state="돌파" if gate["hp"]<=0 else "내구도 %d%%" % ceili(100.0*gate["hp"]/gate["max_hp"])
         rows.append({"name":gate["name"],"pos":center,"state":state,"alert":false})
-    var sites: int=sim.outposts.size() if sim.scenario_id==0 else 1
+    var sites: int=sim.outposts.size() if sim.scenario_id==0 or sim.chapter.get("mode","")=="line" else 1
     for index in range(sites):
         var site: Dictionary=sim.outposts[index]
         var state: String="미확인"

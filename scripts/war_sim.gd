@@ -35,6 +35,9 @@ const GUARD_RADIUS: float = 76.0
 var next_supply_survey: float=0.0
 const MARCH_LEG := 320.0
 const MORALE_NEWS_DISTANCE := 280.0
+const Skills=preload("res://scripts/field_skills.gd")
+const NorthernField=preload("res://scripts/northern_field.gd")
+var chapter: Dictionary={}
 const FIELD_CORPS := 10
 const LOSSES_PER_FALLEN := 65
 var fallen_marks: Array[Dictionary] = []
@@ -123,6 +126,7 @@ func _init() -> void:
     reset()
 
 func reset() -> void:
+    chapter.clear()
     timeline.clear()
     structures.clear()
     visual_effects.clear()
@@ -377,6 +381,7 @@ func step(dt: float) -> void:
     for unit in units:
         if float(unit["troops"]) <= 0.0:
             continue
+        if unit.has("skill_ids"): Skills.tick(self,unit)
         _update_general_conditions(unit, dt)
         unit["ai_cooldown"] = float(unit["ai_cooldown"]) - dt
         if float(unit["ai_cooldown"]) <= 0.0:
@@ -398,6 +403,9 @@ func step(dt: float) -> void:
         var walking: Vector2 = unit["walking_step"]
         var net: Vector2 = unit["pos"] - start
         var walked := clampf(net.dot(walking.normalized()), 0.0, walking.length())
+        if unit.has("skill_ids") and not march_plans.has(unit["id"]):
+            var mobile:=Skills.current(unit,["stride","pursue"])
+            if not mobile.is_empty(): mobile["stat"]["effect"]+=walked
         unit["stride_step"] = walked
         unit["stride_distance"] += walked
         if six_armies: _emit_march_dust(unit, start, walking.normalized() * walked)
@@ -1337,6 +1345,13 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         if march["phase"]=="도하" and (pos.x-river_x(pos.y))*march["bank"]<0.0:
             unit["bridge_y"]=march["bridge"]
             unit["bridge_bank"]=march["bank"]
+    if march.is_empty() and unit.has("skill_ids"):
+        var skill: Dictionary=unit["field_skill"]
+        if not skill.is_empty() and Skills.mission(unit) in skill["missions"]:
+            if skill["effect"]=="feint" and not enemy.is_empty() and not meeting_contact:
+                goal=_field_point(Vector2(skill["anchor"])+Vector2(enemy["pos"]).direction_to(skill["anchor"])*62.0)
+            elif skill["effect"]=="stride" or (skill["effect"]=="pursue" and not enemy.is_empty() and enemy["routed"] and pos.direction_to(goal).dot(pos.direction_to(enemy["pos"]))>0.65):
+                rate*=1.0+float(skill["power"])
     var running_in := false
     if str(unit["type"]) == "기병":
         unit["charge_cooldown"] = maxf(0.0, float(unit["charge_cooldown"]) - dt)
@@ -1406,12 +1421,12 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
 # M2-1: Keep formation bodies separate. This applies to friends and enemies.
 # M2-2: A contact line shifts toward the weaker side, based on the soldiers
 # actually in each formation, morale and how well a unit resists front pressure.
-func _body_distance(a: Dictionary, b: Dictionary) -> float:
+func _body_distance(a: Dictionary, b: Dictionary, slots_a: Array[Vector2]=[], slots_b: Array[Vector2]=[]) -> float:
     if six_armies:
         var direction: Vector2 = ((b["pos"] as Vector2)-(a["pos"] as Vector2)).normalized()
         if direction.length_squared()<0.01: direction=Vector2.RIGHT
-        var slots_a := formation_slots(a)
-        var slots_b := formation_slots(b)
+        if slots_a.is_empty(): slots_a=formation_slots(a)
+        if slots_b.is_empty(): slots_b=formation_slots(b)
         var edge_a := _leading_offset(a,slots_a,direction)
         var edge_b := _leading_offset(b,slots_b,-direction)
         var nominal := maxf(10.0,edge_a.dot(direction)+8.0)+maxf(10.0,edge_b.dot(-direction)+8.0)+5.0
@@ -1470,12 +1485,26 @@ func _advance_charge_recoil(unit: Dictionary, dt: float) -> void:
             break
         travel -= step_length
 
+# Positions can change several times inside a single push sweep. Reuse exact
+# occupied geometry only until that body's center is moved by another pair.
+func _collision_profile(u: Dictionary,profiles: Dictionary) -> Dictionary:
+    var cached: Dictionary=profiles.get(u["id"],{})
+    if not cached.is_empty() and cached["center"]==u["pos"]: return cached
+    var center: Vector2=u["pos"]
+    var slots:=formation_slots(u)
+    var squared:=0.0
+    for point in slots: squared=maxf(squared,center.distance_squared_to(point))
+    cached={"center":center,"slots":slots,"extent":maxf(10.0,sqrt(squared)+8.0)}
+    profiles[u["id"]]=cached
+    return cached
+
 func _resolve_frontline(dt: float) -> void:
     front_shifts.clear()
     for unit in units:
         unit["front_pressure"] = 0.0
         if unit["troops"] > 0 and unit.get("charge_recoil", Vector2.ZERO) != Vector2.ZERO:
             _advance_charge_recoil(unit, dt)
+    var profiles: Dictionary={}
     for i in range(units.size()):
         var a: Dictionary = units[i]
         if float(a["troops"]) <= 0.0:
@@ -1488,7 +1517,13 @@ func _resolve_frontline(dt: float) -> void:
             var bp: Vector2 = b["pos"]
             var delta: Vector2 = bp - ap
             var distance: float = delta.length()
-            var threshold: float = _body_distance(a, b)
+            var threshold: float
+            if six_armies:
+                var body_a:=_collision_profile(a,profiles)
+                var body_b:=_collision_profile(b,profiles)
+                if distance>=float(body_a["extent"])+float(body_b["extent"])+12.0: continue
+                threshold=_body_distance(a,b,body_a["slots"],body_b["slots"])
+            else: threshold=_body_distance(a,b)
             if distance >= threshold + 7.0:
                 continue
             var direction: Vector2 = delta / distance if distance > 0.0001 else (Vector2.RIGHT if int(a["side"]) == 0 else Vector2.LEFT)
@@ -1935,13 +1970,17 @@ func _combat(dt: float) -> void:
             guard["screened_damage"]+=saved
             guard["screen_events"]+=1
         var guarding:bool=long_operation and unit_type!="궁병" and _guarding_archer_in_contact(enemy,unit)
-        var damage_requested: float=maxf(0.0,damage+shock)
+        var original_damage:=damage+shock
+        var adjusted:=original_damage
+        if unit.has("skill_ids"): adjusted=Skills.attack_factor(unit,enemy,bow,adjusted)
+        var bonus:=adjusted-original_damage
+        var damage_requested:=Skills.absorb(enemy,adjusted) if enemy.has("skill_ids") else adjusted
         if damage_requested<=0.0: continue
         var source_id: int=int(unit["id"])
         var target_id: int=int(enemy["id"])
         var attack_kind: String="돌격" if shock>0.0 else ("화살" if bow else "근접")
         var entry: Dictionary={
-            "defender_id":target_id,"attacker_id":source_id,"damage":damage_requested,"flank":flank or rear,"rear":rear,
+            "skill_bonus":bonus*(damage_requested/maxf(0.00001,adjusted)),"skill_saved":adjusted-damage_requested,"defender_id":target_id,"attacker_id":source_id,"damage":damage_requested,"flank":flank or rear,"rear":rear,
             "shock":shock,"braced":braced,"screened":lane_screened or not guard.is_empty(),"linked":link,
             "ambush":ambush,"counter":counter,"guarding":guarding,"kind":attack_kind,"contacts":contacts,
             "from":pos,"to":ep,"time":battle_time,"side":unit["side"]
@@ -1968,6 +2007,9 @@ func _combat(dt: float) -> void:
         var allocation: float=float(requested_losses[entry["defender_id"]])
         var actual_damage: float=minf(remaining,float(entry["damage"])*allocation)
         if remaining-actual_damage<0.000001: actual_damage=remaining
+        var actual_source: Dictionary=find_unit(entry["attacker_id"])
+        if entry["skill_bonus"]>0.0: actual_source["field_skill"]["stat"]["effect"]+=float(entry["skill_bonus"])*allocation
+        if entry["skill_saved"]>0.0: defender["field_skill"]["stat"]["effect"]+=minf(remaining,float(entry["skill_saved"])*allocation)
         entry["damage"]=actual_damage
         combat_contacts[int(entry["attacker_id"])]=entry
         _take_combat_loss(defender, actual_damage, entry["from"], entry["kind"] != "화살")
@@ -1986,7 +2028,7 @@ func _combat(dt: float) -> void:
             defender["charge_recoil"] = defender.get("charge_recoil", Vector2.ZERO) + recoil
             entry["recoil"] = recoil
         if shock_damage > 0.0 or bool(entry["ambush"]):
-            defender["morale"] = maxf(0.0, float(defender["morale"]) - shock_damage * 1.1 - (6.0 if bool(entry["ambush"]) else 0.0))
+            defender["morale"] = maxf(0.0, float(defender["morale"]) - (shock_damage * 1.1 + (6.0 if bool(entry["ambush"]) else 0.0))*(1.0-float(defender.get("field_skill",{}).get("power",0.0)) if defender.get("field_skill",{}).get("effect","")=="guard" else 1.0))
             defender["cohesion"] = maxf(0.0, float(defender["cohesion"]) - shock_damage * 1.6)
         _general_exposure(defender, pressure_damage, bool(entry["flank"]), shock_damage)
         var disarray: float=0.85 if bool(entry["flank"]) else 0.38
@@ -2276,10 +2318,13 @@ func _check_victory() -> void:
     if finished:
         return
     for side in range(2):
-        if headquarters[side]["occupied"]:
+        if headquarters[side]["occupied"] and not (side==1 and chapter.get("mode","") in ["capital","siege"]):
             _finish("아군 본진 함락 — 패배" if side==0 else "적 본진 함락 — 아군 승리","%s 본진 · 적이 %d초 연속 점거" % [_camp_side(side),roundi(HQ_CAPTURE_SECONDS*operation_scale())])
             return
     _check_command_capture()
+    if not chapter.is_empty():
+        NorthernField.victory(self)
+        return
     if scenario_id == 3 and not convoy.is_empty():
         if float(convoy["hp"]) <= 0.0:
             _finish("군량 수레 파괴 — 패배","군량 수레 내구도 0%")
@@ -2356,7 +2401,8 @@ func validate_state() -> Array[String]:
     var problems: Array[String] = []
     if is_nan(battle_time) or is_inf(battle_time) or battle_time < 0.0:
         problems.append("invalid elapsed time")
-    if units.size() > (FIELD_CORPS*2+reserve_limit[0]+reserve_limit[1] if six_armies else 16):
+    var opening_count:int=FIELD_CORPS*2 if chapter.is_empty() else 12+int(chapter["enemy_count"])
+    if units.size() > (opening_count+reserve_limit[0]+reserve_limit[1] if six_armies else 16):
         problems.append("unit pool exceeds bounded demo limit")
     if intercepted_orders < 0 or delivered_orders < 0:
         problems.append("invalid courier counters")
@@ -2762,6 +2808,7 @@ func _update_reserves() -> void:
                 worst = stress
                 assigned = unit
         var expected: int = FIELD_CORPS if six_armies else 3
+        if not chapter.is_empty(): expected=12 if side==0 else int(chapter["enemy_count"])
         if active >= expected and ratio > float(expected)*0.72 and pressure < 0.45 and (long_operation or turn < 5):
             continue
         reinforcements_used[side] += 1
@@ -2789,13 +2836,16 @@ func _update_general_conditions(unit: Dictionary, dt: float) -> void:
         unit["ambush_ready"] = 0.0
     else:
         unit["ambush_ready"] = maxf(0.0, float(unit["ambush_ready"]) - dt * 0.5)
-    if long_operation and unit["morale"]<=0 and not unit.get("demoralized",false):
+    var resolute: bool=not Skills.current(unit,["stand"]).is_empty() if unit.has("skill_ids") else false
+    if long_operation and unit["morale"]<=0 and not resolute and not unit.get("demoralized",false):
         unit["demoralized"]=true
         unit["panic_until"]=battle_time+2.5
         _site_notice(unit["side"],str(unit["name"])+" 사기 붕괴 · 혼란과 탈주",unit["pos"])
     elif unit["morale"]>0: unit["demoralized"]=false
     var broken: bool = float(unit["morale"]) < 14.0 or (float(unit["cohesion"]) < 14.0 and float(unit["morale"]) < 37.0)
-    if broken and not bool(unit["routed"]):
+    if broken and resolute:
+        unit["field_skill"]["stat"]["effect"]+=dt*operation_scale()
+    if broken and not resolute and not bool(unit["routed"]):
         unit["routed"] = true
         unit["rout_count"] = int(unit["rout_count"]) + 1
         unit["action"] = "패주"
@@ -2955,7 +3005,9 @@ func swap_generals(first_id: int, second_id: int) -> bool:
     var second: Dictionary = find_unit(second_id)
     if first.is_empty() or second.is_empty() or int(first["side"]) != 0 or int(second["side"]) != 0:
         return false
-    for key in ["name","personality","ability","leadership","martial","intelligence","judgment","loyalty","deputy_index"]:
+    var fields:=["name","personality","ability","leadership","martial","intelligence","judgment","loyalty","deputy_index","specialty"]
+    if first.has("skill_ids") and second.has("skill_ids"): fields.append_array(["skill_ids","field_skill","skill_stats","skill_ready"])
+    for key in fields:
         var temporary: Variant = first[key]
         first[key] = second[key]
         second[key] = temporary
@@ -3249,6 +3301,12 @@ func _update_structures(dt: float) -> void:
                 continue
             var power: float = 5.0 if str(unit["type"]) == "보병" else (2.0 if str(unit["type"]) == "궁병" else 3.0)
             var damage: float = minf(float(structure["hp"]),power*dt*float(unit["troops"])/maxf(1.0,float(unit["initial_troops"])))
+            if unit.has("skill_ids"):
+                var skill:=Skills.current(unit,["siege"])
+                if not skill.is_empty():
+                    var extra:=minf(float(structure["hp"])-damage,damage*float(skill["power"]))
+                    damage+=extra
+                    skill["stat"]["effect"]+=extra
             structure["hp"] = maxf(0.0,float(structure["hp"])-damage)
             unit["structure_damage"] = float(unit["structure_damage"])+damage
             if battle_time-float(unit["last_visual"]) >= 0.65:
@@ -3551,7 +3609,10 @@ func _scan_situations() -> void:
             "losses":recent_losses,"sample_seconds":roundi(span*operation_scale()),"status":"대기","mission":unit["mission"],"action":unit["action"],"reason":unit["reason"],
             "morale":roundi(unit["morale"]),"cohesion":roundi(unit["cohesion"]),"rations":roundi(unit["rations"]),
             "ammo":roundi(unit["ammo"]),"general_hp":roundi(unit["general_hp"]),"pressure":float(unit["front_pressure"])}
-        if side==0: situation_reports.append(report)
+        if side==0:
+            if unit.has("last_skill_report"):
+                report["skill_report"]=unit["last_skill_report"]
+            situation_reports.append(report)
         incoming_reports.append(report)
         if urgent and not unit.has("parent_id") and battle_time-float(unit.get("last_relief_request",-100.0))>=30.0:
             _send_relief_request(unit,report)

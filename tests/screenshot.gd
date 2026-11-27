@@ -35,7 +35,7 @@ func _capture() -> void:
     game.call("_begin_campaign")
     await process_frame
     await RenderingServer.frame_post_draw
-    if game.strategy_view.slot_choice.item_count != 10:
+    if game.strategy_view.slot_choice.item_count != 12:
         push_error("VISUAL_CAPTURE_FAIL: campaign slots missing")
         quit(1)
         return
@@ -569,18 +569,15 @@ func _capture() -> void:
             quit(1)
             return
     var cloth: Image=game.CorpsStandard.ATLAS.get_image()
-    var dyes_seen: Array[Color]=[]
-    for shape: String in game.sim.LARGE_FORMATIONS:
-        var friendly: Rect2i=game.CorpsStandard.tile({"name":"왕평","formation":shape,"side":0})
-        var enemy: Rect2i=game.CorpsStandard.tile({"name":"왕쌍","formation":shape,"side":1})
-        var dye_sample: Color=cloth.get_pixelv(friendly.position+Vector2i(8,55))
-        var header_a: Color=cloth.get_pixelv(friendly.position+Vector2i(7,8))
-        var header_b: Color=cloth.get_pixelv(enemy.position+Vector2i(7,8))
-        if dyes_seen.has(dye_sample) or not dye_sample.is_equal_approx(cloth.get_pixelv(enemy.position+Vector2i(8,55))) or header_a.b<=header_a.r or header_b.r<=header_b.b or cloth.get_pixelv(friendly.position+Vector2i(32,72)).a<0.9 or cloth.get_pixelv(enemy.position+Vector2i(32,72)).a>0.1:
-            push_error("VISUAL_CAPTURE_FAIL: formation dye, faction ribbon or forked hem missing for "+shape)
+    var shu: Rect2i=game.CorpsStandard.tile({"side":0,"name":"왕평"})
+    var wei: Rect2i=game.CorpsStandard.tile({"side":1,"name":"왕쌍"})
+    var blue: Color=cloth.get_pixelv(shu.position+Vector2i(8,55))
+    var red: Color=cloth.get_pixelv(wei.position+Vector2i(8,55))
+    for shape in game.sim.LARGE_FORMATIONS:
+        if shu!=game.CorpsStandard.tile({"formation":shape,"side":0,"name":"왕평"}) or wei!=game.CorpsStandard.tile({"formation":shape,"side":1,"name":"왕쌍"}) or blue.b<=blue.r or red.r<=red.b or cloth.get_pixelv(shu.position+Vector2i(32,70)).a<0.9 or cloth.get_pixelv(wei.position+Vector2i(32,70)).a>0.1:
+            push_error("VISUAL_CAPTURE_FAIL: incorrect army dye or hem")
             quit(1)
             return
-        dyes_seen.append(dye_sample)
     if game.CorpsStandard.insignia({"name":"위연 별동대"})!="魏" or game.CorpsStandard.insignia({"name":"장합"})!="張" or game.CorpsStandard.insignia({"name":"왕실 예비대 1"})!="備":
         push_error("VISUAL_CAPTURE_FAIL: commander or reserve insignia mismatch")
         quit(1)
