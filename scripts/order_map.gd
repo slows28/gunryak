@@ -598,6 +598,7 @@ func _gui_input(event:InputEvent)->void:
         if not issue.is_empty():
             feedback.text=issue
             return
+        var old_home: Vector2=sim.headquarters[0]["pos"]
         if sim.place_post(mode,point):
             _set_post_mode("")
             if mode=="임시 거점":
@@ -605,7 +606,12 @@ func _gui_input(event:InputEvent)->void:
                 _choose_site(sim.temporary_sites.back())
             else:
                 _refresh_hq_button()
-                if mode=="본진": _select(selected_id)
+                if mode=="본진":
+                    for draft in drafts.values():
+                        if ACTIONS[draft["action"]]=="지역 사수" and draft["destination"].is_equal_approx(old_home):
+                            draft["destination"]=point
+                    draft_dirty=false
+                    _select(selected_id)
                 survey_sites=sim.field_survey_sites()
                 _refresh_survey()
                 feedback.text=("본진·책사 이전 완료" if mode=="본진" else "첫 보급기지 지정")+"  ·  "+_grid_ref(point)
@@ -940,7 +946,10 @@ func _piece(u:Dictionary,p:Vector2,selected:bool)->void:
     if selected:
         draw_circle(p,19,Color(0.98,0.75,0.22,0.18))
         draw_arc(p,19,0,TAU,40,Color("#edc56b"),2.2,true)
-    CorpsStandard.paint(self,u,p+Vector2(-10,1),1.0,font,1.0)
+    # Keep the geographical marker at the true position even along the
+    # northern map edge, where a full-height standard would cover the header.
+    var foot: Vector2=(p+Vector2(-10,1)).clamp(MAP.position+Vector2(3,37),MAP.end-Vector2(27,2))
+    CorpsStandard.paint(self,u,foot,1.0,font,1.0)
     var kind:String="步" if str(u["type"])=="보병" else ("弓" if str(u["type"])=="궁병" else "騎")
     draw_circle(p+Vector2(3,1),6.8,c)
     _ink(kind,p+Vector2(-2,5),10,Color("#f4e9ca"))
