@@ -381,7 +381,7 @@ func step(dt: float) -> void:
     if long_operation and battle_time>=next_enemy_strategy:
         next_enemy_strategy=battle_time+8.0
         if enemy_strategy_enabled and not commander_captured(1): _enemy_strategy()
-        if not commander_captured(0) and scenario_id not in [2,3]: _plan_local_roles(0)
+        if not commander_captured(0): _plan_local_roles(0)
     # We use a shallow fixed unit pool and never mutate it during these loops.
     for unit in units:
         if float(unit["troops"]) <= 0.0:
@@ -1112,7 +1112,7 @@ func _decide(unit: Dictionary) -> void:
             goal = screen_pos+behind*100.0
             action = "전열 지원"
             reason = "보병 엄호 하에 후방 사격 위치 확보"
-    if six_armies and (scenario_id!=3 or str(unit["mission"]) in ["전열 엄호","측후방 기동","구원 지원"]):
+    if six_armies and (scenario_id!=3 or LinkedMarch.role(unit,battle_time) in LinkedMarch.COOPERATIVE_MISSIONS):
         var cooperation: Dictionary = _coordinated_order(unit,nearest,action,reason,goal)
         action=cooperation["action"]
         reason=cooperation["reason"]
@@ -4743,13 +4743,13 @@ func _observed_threat_to(observer:Dictionary,ally:Dictionary)->Dictionary:
     return best
 
 func _enemy_strategy()->void:
-    if scenario_id in [2,3]: return
-    NorthernField.review_pressure(self)
+    if scenario_id not in [2,3]: NorthernField.review_pressure(self)
     _plan_local_roles(1)
 
 func _plan_local_roles(side: int)->void:
     for unit in units:
-        if unit["assigned_link"]>=0 or unit["has_destination"] or (side==0 and unit["mission"]!="자유 재량"): continue
+        if unit["assigned_link"]>=0 or unit["has_destination"]: continue
+        if (side==0 or scenario_id in [2,3]) and unit["mission"]!="자유 재량": continue
         if int(unit["side"])!=side or float(unit["troops"])<600.0 or bool(unit["routed"]) or bool(unit["reserve"]) or str(unit["mission"])=="본진 방어": continue
         if float(unit["morale"])<40.0 or float(unit["cohesion"])<35.0 or float(unit["rations"])<20.0:
             unit["ai_role_until"]=0.0
