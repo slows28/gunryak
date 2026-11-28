@@ -16,6 +16,7 @@ const OrderMap = preload("res://scripts/order_map.gd")
 const PAINTED_ART = preload("res://assets/art/painted_atlas.webp")
 const FALLEN_ART := preload("res://assets/art/fallen_soldiers.svg")
 const SOLDIER_ART = preload("res://assets/art/soldier_sprites.svg")
+const MOUNTED_ART = preload("res://assets/art/mounted_lancers.png")
 const SOLDIER_MOTION = preload("res://assets/art/soldier_motion.svg")
 const BATTLE_ARROW = preload("res://assets/art/battle_arrow.png")
 const VOLLEY_ARROW_DELAYS: Array[float] = [0.0,0.041,0.013,0.056,0.026,0.066,0.034,0.006,0.049,0.020]
@@ -3448,7 +3449,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     var moving: bool = float(unit["stride_step"]) > 0.12 and sim.started and not sim.finished
     var kind: int = 1 if str(unit["type"])=="궁병" else (2 if str(unit["type"])=="기병" else 0)
     # The atlas uses a shared foot anchor. Taller silhouettes, compact lateral footprint.
-    var extent: Vector2 = (Vector2(13,18) if kind==2 else Vector2(9,13))*SOLDIER_SCALE
+    var extent: Vector2 = (Vector2(20,20) if kind==2 else Vector2(9,13))*SOLDIER_SCALE
     if not sim.six_armies: extent*=1.25
     # Front and rear ranks no longer perform the same thrust on every tick.
     var visual_contact: bool=target!=Vector2.INF
@@ -3495,9 +3496,9 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     if moving:
         var stride := sin(stride_angle if stride_angle != -INF else (file_phase if dressing else _stride_phase(unit, index)))
         var gallop := smoothstep(8.0, 80.0, unit["charge"]) if kind == 2 else 0.0
-        p.y -= absf(stride) * (0.65 + gallop * 1.7) * SOLDIER_SCALE
+        p.y -= absf(stride) * (0.65 + gallop * 0.55) * SOLDIER_SCALE
         tilt += stride * 0.028 + gallop * 0.12
-        if gallop > 0.0: extent.x *= 1.0 + gallop * (0.10 + stride * 0.06)
+
     var hit := reaction.length_squared() > 0.025
     if hit:
         if kind == 0: tilt -= 0.09 * reaction.length()
@@ -3523,6 +3524,9 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     var region: Rect2=Rect2(column*96,(int(unit["side"])*3+kind)*96,96,96)
     var mirror: float = -1.0 if region.position.x==0.0 and direction.x<0.0 else 1.0
     var rotation: float=tilt*mirror if column==0 else tilt*0.35
+    if kind==2:
+        mirror = -1.0 if direction.x<0.0 else 1.0
+        rotation = tilt*mirror*absf(direction.x)*0.55
     map_layer.draw_set_transform(map_offset+p*camera_zoom,rotation,Vector2(mirror,1.0)*camera_zoom)
     var art: Texture2D = SOLDIER_MOTION if pose>=0 else SOLDIER_ART
     var source: Rect2 = _soldier_motion_region(region,pose) if pose>=0 else region
@@ -3531,7 +3535,22 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
         source=Rect2((exchange_pose*3+column)*128,int(unit["side"])*96,128,96)
         extent.x=extent.y*128.0/96.0
     source = Rect2(source.position*TROOP_ATLAS_SCALE,source.size*TROOP_ATLAS_SCALE)
-    map_layer.draw_texture_rect_region(art,Rect2(Vector2(-extent.x*0.5,-extent.y*0.90),extent),source,shade)
+    var foot_anchor := 0.90
+    if kind==2:
+        var elevation := absf(direction.y)
+        var view := 0
+        if elevation>0.924: view=2 if direction.y>0.0 else 4
+        elif elevation>0.383: view=1 if direction.y>0.0 else 3
+        var frame := 0
+        if pose>=2: frame=pose+3
+        elif moving:
+            var gait := stride_angle if stride_angle!=-INF else _stride_phase(unit,index)
+            frame = 1+posmod(floori(gait*4.0/TAU),4)
+        var coat := 1 if posmod(index*7+int(unit["id"]),11)<4 else 0
+        art = MOUNTED_ART
+        source = Rect2((frame*5+view)*56,(int(unit["side"])*2+coat)*56,56,56)
+        foot_anchor = 47.0/56.0
+    map_layer.draw_texture_rect_region(art,Rect2(Vector2(-extent.x*0.5,-extent.y*foot_anchor),extent),source,shade)
     if aiming==FrontView.BowPhase.DRAW and column==0 and camera_zoom>=1.35:
         var draw: float=smoothstep(0.08,FrontView.VOLLEY_RELEASE,bow_age)
         var hand:=Vector2(lerpf(0.25,-0.8,draw),-5.9)*SOLDIER_SCALE

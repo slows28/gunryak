@@ -1181,7 +1181,7 @@ func _decide(unit: Dictionary) -> void:
         var local_order := BreakContact.decision(self,unit)
         if local_order.is_empty(): local_order = RallyOrders.decision(self,unit,nearest,action)
         var mounted_order: Dictionary={}
-        if on_station and action not in MountedVanguard.OVERRIDES and local_order.get("action","") not in MountedVanguard.OVERRIDES and not local_order.get("arrival_cover",false):
+        if on_station and action not in MountedVanguard.OVERRIDES and local_order.get("action","") not in MountedVanguard.OVERRIDES and not local_order.get("rally_cover",false):
             mounted_order=MountedVanguard.decide(self,unit,mounted_anchor,mounted_foes)
         if not mounted_order.is_empty():
             local_order=mounted_order
@@ -1194,7 +1194,7 @@ func _decide(unit: Dictionary) -> void:
             unit.erase("mounted_partner")
             unit["flank_target"]=-1
             unit["flank_phase"]=0
-        unit["rally_covering"]=local_order.get("arrival_cover",false)
+        unit["rally_covering"]=local_order.get("rally_cover",false)
         if not local_order.is_empty():
             action = local_order["action"]
             reason = local_order["reason"]
@@ -2107,6 +2107,8 @@ func _combat(dt: float) -> void:
             defender["flank_hits"] = float(defender["flank_hits"]) + actual_damage
         var source: Dictionary = find_unit(int(entry["attacker_id"]))
         if not source.is_empty():
+            source["last_strike_target"] = defender["id"]
+            source["last_strike_at"] = battle_time
             source["damage_dealt"] = float(source["damage_dealt"]) + actual_damage
             if entry.has("visual_from"):
                 source["last_visual"]=battle_time
