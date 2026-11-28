@@ -1661,8 +1661,17 @@ func _resolve_frontline(dt: float) -> void:
             if distance < threshold:
                 # Geometric separation prevents passing through the other unit.
                 var overlap: float = threshold - distance
-                var next_a:Vector2=_field_point(ap-direction*overlap*0.5)
-                var next_b:Vector2=_field_point(bp+direction*overlap*0.5)
+                var share := 0.5
+                if a.side==b.side and march_plans.has(a.id) and march_plans.has(b.id):
+                    var first: Dictionary=march_plans[a.id]
+                    var second: Dictionary=march_plans[b.id]
+                    # A forming column dresses on its stationary guide. The
+                    # arriving rank takes up the clearance around that point.
+                    if first.phase=="대형 집결" and first.get("guide_id",-1)==second.get("guide_id",-2):
+                        if first.guide_id==a.id and ap.is_equal_approx(first.goal): share=0.0
+                        elif first.guide_id==b.id and bp.is_equal_approx(second.goal): share=1.0
+                var next_a:Vector2=_field_point(ap-direction*overlap*share)
+                var next_b:Vector2=_field_point(bp+direction*overlap*(1.0-share))
                 a["pos"]=_land_motion(a,ap,next_a) if long_operation else next_a
                 b["pos"]=_land_motion(b,bp,next_b) if long_operation else next_b
             if int(a["side"]) == int(b["side"]):

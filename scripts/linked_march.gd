@@ -249,5 +249,5 @@ static func _plan_group(sim, group: Array[Dictionary], previous: Dictionary, dt:
         if not waiting and not crossing and origin.distance_to(target)<=2.0: phase="대형 유지"
         if deck: phase="교량 집결" if waiting else "대형 유지"
         var peer: Dictionary=guide if id!=guide["id"] else (group[1] if group[0]["id"]==id else group[0])
-        plans[id]={"pass_side":slot.get("pass_side",0.0),"target":target,"goal":sim._field_point(slot["point"]+shift),"forward":forward,"pace":pace,
+        plans[id]={"guide_id":guide.id,"pass_side":slot.get("pass_side",0.0),"target":target,"goal":sim._field_point(slot["point"]+shift),"forward":forward,"pace":pace,
             "role":slot["role"],"phase":phase,"slowest":slowest["name"],"peer":peer["id"],"bridge":bridge,"bank":bank,"deck_target":target if deck else Vector2.INF}
