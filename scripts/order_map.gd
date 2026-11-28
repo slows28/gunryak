@@ -1,7 +1,9 @@
 extends Control
 ## Separate paper war-room: actual battle coordinates, independent rendering and input.
 const CommandMarks = preload("res://scripts/command_marks.gd")
-const ACTIONS: Array[String]=["지정 위치 이동","공격","지역 사수","전열 엄호","측후방 기동","구원 지원","예비 대기","철수","자유 재량"]
+const ACTIONS: Array[String]=["지정 위치 이동","공격","지역 사수","전열 엄호","측후방 기동","구원 지원","예비 대기","철수","자유 재량","보급기지 수색"]
+const TASKS := [0,9,8,3,4,6,7]
+const RESPONSES := {1:"공격",5:"지원",2:"사수"}
 const PAPER=Color("#d6c29a")
 const INK=Color("#554735")
 const GOLD=Color("#d5b473")
@@ -28,7 +30,15 @@ var game: Control
 var sim
 var font: Font
 var action_choice: OptionButton
-var action_buttons: Array[Button]=[]
+var action_buttons: Dictionary={}
+var task_choice: OptionButton
+var raid_response: OptionButton
+var response_caption: Label
+var deploy_button: Button
+var task_caption: Label
+var deployment_caption: Label
+var formation_choice: OptionButton
+var drag_corps := -1
 var label_areas: Array[Rect2]=[]
 var council_reports: Button
 var council_letter: int=-1
@@ -127,25 +137,39 @@ func configure(owner_game: Control,used_font: Font) -> void:
     info.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     site_choice=_choice(Vector2(35,214),Vector2(276,33),[])
     _paper_button(site_choice)
-    site_choice.tooltip_text="지도 거점 또는 임시 거점을 선택"
+    site_choice.tooltip_text="거점을 선택하면 선택한 군단에 이동 지시가 등록됩니다."
     site_choice.item_selected.connect(func(index: int):
         if index > 0: _choose_site(site_choice.get_item_metadata(index)))
     destination_label=_label("",Vector2(35,250),Vector2(276,42),13,SHEET_TEXT)
     destination_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    _label("행동",Vector2(35,296),Vector2(276,24),15,SHEET_MUTED)
-    action_choice=_choice(Vector2(35,326),Vector2(276,39),ACTIONS)
+    deploy_button=_button("배치 편집",Vector2(201,88),Vector2(109,29),_toggle_deployment)
+    deploy_button.toggle_mode=true
+    _paper_button(deploy_button)
+    task_caption=_label("임무",Vector2(35,296),Vector2(65,30),15,SHEET_MUTED)
+    task_choice=_choice(Vector2(106,296),Vector2(205,33),["거점 이동","보급기지 수색","자유 재량","아군 보호","측후방 기동","예비 대기","철수"])
+    _paper_button(task_choice)
+    task_choice.item_selected.connect(func(row: int): _choose_action(TASKS[row]))
+    deployment_caption=_label("",Vector2(35,235),Vector2(276,80),16,SHEET_TEXT)
+    deployment_caption.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    formation_choice=_choice(Vector2(35,335),Vector2(276,36),[])
+    for shape: String in sim.LARGE_FORMATIONS: formation_choice.add_item("출전 진형 · "+shape)
+    _paper_button(formation_choice)
+    formation_choice.item_selected.connect(func(row: int):
+        if sim.set_opening_formation(recipients,sim.LARGE_FORMATIONS[row]): _update_destination();queue_redraw())
+    action_choice=_choice(Vector2.ZERO,Vector2(1,1),ACTIONS)
     action_choice.hide()
-    var labels:Array[String]=["이동","공격","사수","아군 보호","우회","구원","예비","철수","자유 재량"]
-    for i in range(ACTIONS.size()):
-        var b:Button=_button(labels[i],Vector2(35+(i%2)*141,326+floori(float(i)/2.0)*40),Vector2(135,34),_choose_action.bind(i))
-        if i==8:
-            b.position=Vector2(177,292)
-            b.size=Vector2(133,29)
-        _paper_button(b)
-        b.toggle_mode=true
-        b.tooltip_text=ACTIONS[i]
-        action_buttons.append(b)
-    action_description=_label("",Vector2(35,486),Vector2(276,38),13,SHEET_MUTED)
+    response_caption=_label("적 조우 시",Vector2(35,346),Vector2(270,25),15,SHEET_MUTED)
+    var column := 0
+    for index: int in RESPONSES:
+        var button := _button(RESPONSES[index],Vector2(35+column*94,378),Vector2(88,36),_choose_action.bind(index))
+        _paper_button(button)
+        button.toggle_mode=true
+        action_buttons[index]=button
+        column+=1
+    raid_response=_choice(Vector2(35,378),Vector2(276,36),["습격 중단 · 본진 철수","습격 속행 · 수비대 교전"])
+    _paper_button(raid_response)
+    raid_response.item_selected.connect(func(_row: int): _mark_draft())
+    action_description=_label("",Vector2(35,428),Vector2(276,57),13,SHEET_MUTED)
     action_description.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     partner_caption=_label("협동 대상",Vector2(35,532),Vector2(276,23),15,SHEET_MUTED)
     partner_choice=_choice(Vector2(35,560),Vector2(276,38),[])
@@ -153,7 +177,7 @@ func configure(owner_game: Control,used_font: Font) -> void:
     _paper_button(partner_choice)
     partner_choice.add_theme_constant_override("modulate_arrow",1)
     march_preview=_label("",Vector2(35,599),Vector2(277,22),13,SHEET_MUTED)
-    apply=_button("지시 확정",Vector2(35,625),Vector2(135,43),_apply)
+    apply=_button("지시 적용",Vector2(35,625),Vector2(135,43),_apply)
     game._primary_button(apply)
     cancel_draft=_button("초안 취소",Vector2(176,625),Vector2(135,43),func():
         drafts.erase(selected_id)
@@ -222,12 +246,15 @@ func open(mid_battle:bool=false)->void:
     in_battle=mid_battle
     goal_label.text="승리 목표   "+sim.scenario_goal
     title.text=("%d일차 전령 지시" % sim.turn if mid_battle else "작전 지도")+"   /   "+sim.scenario_title
-    progress_label.text="거점 선택 → 군단과 행동 → 지시 확정"
+    progress_label.text="군단 선택 → 조우 대응 → 거점 선택"
     launch.text="전장 복귀" if mid_battle else "전투 개시"
     focus_site = {}
     _refresh_site_choices()
     post_mode=""
     post_cursor=Vector2.INF
+    deploy_button.visible=not mid_battle
+    deploy_button.set_pressed_no_signal(false)
+    drag_corps=-1
     for post: String in post_buttons:
         post_buttons[post].set_pressed_no_signal(false)
     post_buttons["보급기지"].visible=not mid_battle
@@ -323,6 +350,7 @@ func _pick_corps(id: int) -> void:
 func _select(id:int)->void:
     var u:Dictionary=sim.find_unit(id)
     if u.is_empty(): return
+    if id!=selected_id: focus_site={}
     recipients.assign([id])
     group_button.set_pressed_no_signal(false)
     selected_id=id
@@ -361,6 +389,8 @@ func _select(id:int)->void:
         has_destination=dispatch["mission"]!="자유 재량"
         destination=dispatch["destination"] if has_destination else u["pos"]
         action_choice.select(maxi(0,ACTIONS.find("지역 사수" if dispatch["mission"]=="본진 방어" else str(dispatch["mission"]))))
+    var encounter: String = dispatch.get("encounter","") if incoming else prepared.get("encounter",u.get("encounter",""))
+    raid_response.select(1 if encounter=="강행" else 0)
     if not focus_site.is_empty() and ACTIONS[action_choice.selected]!="자유 재량":
         has_destination = true
         destination = focus_site["pos"]
@@ -372,6 +402,7 @@ func _select(id:int)->void:
         destination=draft["destination"]
         has_destination=draft["has_destination"]
         action_choice.select(draft["action"])
+        raid_response.select(draft.get("raid_response",0))
         for row in range(partner_choice.item_count):
             if int(partner_choice.get_item_metadata(row))==int(draft["partner"]):
                 partner_choice.select(row)
@@ -385,7 +416,7 @@ func _selected_partner() -> int:
 
 func _mark_draft() -> void:
     draft_dirty=true
-    drafts[selected_id]={"destination":destination,"has_destination":has_destination,"action":action_choice.selected,"partner":_selected_partner(),"members":recipients.duplicate()}
+    drafts[selected_id]={"destination":destination,"has_destination":has_destination,"action":action_choice.selected,"partner":_selected_partner(),"members":recipients.duplicate(),"raid_response":raid_response.selected}
     _update_destination()
     queue_redraw()
 
@@ -455,7 +486,7 @@ func _update_destination()->void:
     if has_destination or ACTIONS[action_choice.selected]=="자유 재량":
         problem=sim.group_order_issue(recipients,_map_mission(),destination) if recipients.size()>1 else sim.map_order_issue(selected_id,_map_mission(),destination,_selected_partner())
     if recipients.size()>1: march_preview.text="%d개 군단 · 공동 행군 / 피격 시 엄호" % recipients.size()
-    if not home_task and ACTIONS[action_choice.selected]=="지역 사수": action_description.text="지정 구역을 확보하고 방어"
+    if not home_task and ACTIONS[action_choice.selected]=="지역 사수": action_description.text="진군 중 적을 만나면 전열을 지킵니다. 도착하면 거점을 사수합니다."
     if home_task:
         action_description.text="본진에 주둔해 점거를 막고 본진 이전 시 따라갑니다."
     apply.disabled=not problem.is_empty()
@@ -470,11 +501,32 @@ func _update_destination()->void:
     elif in_battle and sim.chapter.has("desk_summary"):
         progress_label.text=sim.chapter["desk_summary"]
     elif has_destination:
-        progress_label.text="행동과 연계를 검토하고 지시를 확정하십시오."
+        progress_label.text="다른 거점을 선택하면 이동 지시가 등록됩니다."
     else:
-        progress_label.text="거점 선택 → 군단과 행동 → 지시 확정"
+        progress_label.text="군단 선택 → 조우 대응 → 거점 선택"
     if in_battle or draft_dirty:
         feedback.text=problem if not problem.is_empty() else ("도착 전까지 현재 지시를 유지합니다." if in_battle else "지시를 확정하거나 다른 군단의 계획을 작성할 수 있습니다.")
+
+    _sync_sheet_mode()
+
+func _sync_sheet_mode() -> void:
+    var editing := deploy_button.button_pressed and not in_battle
+    apply.visible=not editing and draft_dirty
+    cancel_draft.visible=apply.visible
+    for control in [site_choice,destination_label,task_caption,task_choice,action_description,partner_caption,partner_choice,march_preview]:
+        control.visible=not editing
+    var index:=action_choice.selected
+    response_caption.visible=not editing and index in [0,1,2,5,9]
+    raid_response.visible=response_caption.visible and index==9
+    for button in action_buttons.values(): button.visible=response_caption.visible and index!=9
+    deployment_caption.visible=editing
+    formation_choice.visible=editing
+    if editing:
+        var unit: Dictionary=sim.find_unit(selected_id)
+        deployment_caption.text="%s · %s\n지도에서 끌어 배치합니다. 다중 선택한 군단은 간격을 유지합니다." % [unit.name,_grid_ref(unit.pos)]
+        formation_choice.select(sim.LARGE_FORMATIONS.find(unit.formation))
+        map_hint.text="파란 구역에 배치\n화살촉은 부대의 정면"
+        route_summary.text="배치한 위치에서 전투를 시작합니다."
 
 func _refresh_map_hint() -> void:
     if post_mode=="":
@@ -505,15 +557,8 @@ func _choose_site(site: Dictionary) -> void:
     focus_site=site
     destination=site["pos"]
     has_destination=true
-    if draft_dirty: _mark_draft()
-    else: _update_destination()
-    var assigned := PackedStringArray()
-    for id in sim.command_ids(0):
-        var u: Dictionary=sim.find_unit(id)
-        if u["has_destination"] and destination.is_equal_approx(u["order_destination"]):
-            assigned.append("%s · %s" % [u["name"],u["mission"]])
-    feedback.text = str(site["name"])+"  /  "+(", ".join(assigned) if not assigned.is_empty() else "담당 군단과 행동을 선택하세요.")
-    queue_redraw()
+    _mark_draft()
+    _apply()
 
 func _refresh_hq_button() -> void:
     var reason: String=sim.headquarters_move_issue()
@@ -526,7 +571,48 @@ func _pick_post(post: String) -> void:
     if post_buttons[post].disabled: return
     _set_post_mode("" if post==post_mode else post)
 
+func _toggle_deployment() -> void:
+    if deploy_button.button_pressed:
+        _set_post_mode("")
+        _update_destination()
+        feedback.text="군단 깃발을 끌거나 군단을 선택한 뒤 배치 구역 안의 땅을 누르세요."
+    else:
+        _update_destination()
+    queue_redraw()
+
+func _deployment_input(event: InputEventMouseButton) -> void:
+    if event.pressed:
+        drag_corps=-1
+        for id in sim.command_ids(0):
+            var unit: Dictionary=sim.find_unit(id)
+            if unit.troops>0 and _point(unit.pos).distance_to(event.position)<=14:
+                drag_corps=id
+                break
+        press_origin=event.position if MAP.has_point(event.position) else Vector2.INF
+        return
+    if press_origin==Vector2.INF: return
+    var dragged:=press_origin.distance_to(event.position)>8
+    press_origin=Vector2.INF
+    if not MAP.has_point(event.position): return
+    if drag_corps>=0 and not dragged:
+        _pick_corps(drag_corps)
+        feedback.text="선택한 군단을 놓을 위치를 누르세요."
+    else:
+        if drag_corps>=0 and not recipients.has(drag_corps): _select(drag_corps)
+        var anchor: Dictionary=sim.find_unit(selected_id)
+        var point:=_world(event.position)
+        if drag_corps>=0: point+=Vector2(anchor.pos)-Vector2(sim.find_unit(drag_corps).pos)
+        var problem: String=sim.deploy_corps(recipients,point)
+        _update_destination()
+        feedback.text=problem if not problem.is_empty() else "%s 등 %d개 군단 배치 완료" % [anchor.name,recipients.size()]
+    drag_corps=-1
+    accept_event()
+    queue_redraw()
+
 func _set_post_mode(mode: String) -> void:
+    if mode!="" and deploy_button.button_pressed:
+        deploy_button.set_pressed_no_signal(false)
+        _update_destination()
     post_mode=mode
     press_origin=Vector2.INF
     post_cursor=Vector2.INF
@@ -625,13 +711,20 @@ func _apply()->void:
     if not problem.is_empty():
         feedback.text=problem
         return
-    var accepted: bool=sim.issue_group_order(recipients,action,destination) if grouped else sim.issue_map_order(selected_id,action,destination,partner)
+    var mode: String = RESPONSES.get(action_choice.selected,"공격" if action_choice.selected==0 else "")
+    if action==sim.StandingOrders.RAID: mode="철수" if raid_response.selected==0 else "강행"
+    var members:=recipients.duplicate()
+    var accepted: bool=sim.issue_group_order(recipients,action,destination,mode) if grouped else sim.issue_map_order(selected_id,action,destination,partner,mode)
     if accepted:
         for id in recipients: drafts.erase(id)
         draft_dirty=false
         _select(selected_id)
         feedback.text="전령 파견 완료 · 도착까지 기존 지시 유지" if in_battle else "작전 지시 확정 · "+str(sim.find_unit(selected_id)["name"])+" / "+(site_choice.get_item_text(site_choice.selected)+" · " if site_choice.selected>0 else "")+action
-        if grouped: feedback.text="%d개 군단 · %s · %s" % [count,action,"전령 파견" if in_battle else "출전 시 전령 파견"]
+        if grouped:
+            recipients.assign(members)
+            group_button.set_pressed_no_signal(true)
+            _update_destination()
+            feedback.text="%d개 군단 · %s · %s" % [count,action,"전령 파견" if in_battle else "출전 시 전령 파견"]
         queue_redraw()
     else:
         feedback.text="군단 상태가 변경되어 지시를 확정할 수 없습니다."
@@ -664,6 +757,9 @@ func _gui_input(event:InputEvent)->void:
         _refresh_map_hint()
         queue_redraw()
     if not event is InputEventMouseButton or event.button_index!=MOUSE_BUTTON_LEFT: return
+    if deploy_button.button_pressed and not in_battle:
+        _deployment_input(event)
+        return
     if event.pressed:
         press_origin=event.position if MAP.has_point(event.position) else Vector2.INF
         return
@@ -729,7 +825,8 @@ func _draw()->void:
     draw_style_box(lacquer,Rect2(1068,76,196,628))
     draw_line(Vector2(1081,521),Vector2(1252,521),Color("#8d7953"))
     draw_style_box(lacquer,Rect2(6,716,1268,78))
-    if not march_diagram.is_empty(): _draw_march_diagram()
+    if not march_diagram.is_empty() and not deploy_button.button_pressed: _draw_march_diagram()
+    if deploy_button.button_pressed: _draw_opening_formation()
     if sim==null: return
     draw_rect(Rect2(MAP.position+Vector2(3,5),MAP.size),Color(0.08,0.05,0.025,0.65))
     draw_texture_rect(Materials.SILK,MAP,false)
@@ -803,7 +900,14 @@ func _draw()->void:
     var ridge_extent: Vector2=hill.size/sim.field_size*MAP.size*1.32
     draw_texture_rect_region(INK_RELIEF,Rect2(hc-ridge_extent*0.52,ridge_extent),Rect2(0,0,384,212))
     _ink("고지",hc+Vector2(39,-32),11,INK)
-    draw_rect(Rect2(MAP.position,Vector2(MAP.size.x*0.30,MAP.size.y)),Color(0.20,0.35,0.45,0.05))
+    if not in_battle:
+        var world_area: Rect2=sim.deployment_area()
+        var area:=Rect2(_point(world_area.position),_point(world_area.end)-_point(world_area.position))
+        var editing:=deploy_button.button_pressed
+        draw_rect(area,Color(0.12,0.38,0.45,0.20 if editing else 0.055))
+        if editing:
+            draw_rect(area,Color("#386878"),false,2.0)
+            _ink("아군 배치 구역",area.position+Vector2(13,40),14,BLUE)
     # Reserve visible army counters before placing the names of nearby sites.
     var occupied: Array[Rect2]=[]
     for structure in sim.structures:
@@ -1010,6 +1114,20 @@ func _dashed(a:Vector2,b:Vector2,c:Color)->void:
     var direction:Vector2=(b-a).normalized()
     for i in range(0,int(d),10): draw_line(a+direction*i,a+direction*minf(float(i)+5,d),c,2,true)
 
+func _draw_opening_formation() -> void:
+    var unit: Dictionary=sim.find_unit(selected_id)
+    var center:=Vector2(166,479)
+    var files: Array[Vector2]=sim.formation_slots(unit)
+    var radius:=1.0
+    for file in files: radius=maxf(radius,file.distance_to(unit.pos))
+    draw_rect(Rect2(35,388,276,179),Color(0.32,0.26,0.16,0.075))
+    _ink("%s군 · %s" % [unit.name,unit.formation],Vector2(47,414),14,INK)
+    for file in files:
+        var p:=center+(file-Vector2(unit.pos))*minf(2.0,62.0/radius)
+        draw_circle(p,3.6,BLUE)
+    CommandMarks.chevron(self,Vector2(276,479),unit.facing,BLUE,1.2)
+    _ink("적진",Vector2(261,507),12,INK)
+
 func _draw_march_diagram() -> void:
     var center:=Vector2(1222,499)
     var forward: Vector2=march_diagram["forward"]
@@ -1041,6 +1159,8 @@ func _piece(u:Dictionary,p:Vector2,selected:bool)->void:
     # northern map edge, where a full-height standard would cover the header.
     var foot: Vector2=(p+Vector2(-10,1)).clamp(MAP.position+Vector2(3,37),MAP.end-Vector2(27,2))
     CorpsStandard.paint(self,u,foot,1.0,font,1.0)
+    if not in_battle:
+        CommandMarks.chevron(self,p+Vector2(u.facing)*18.0,u.facing,Color("#7096a4") if u.side==0 else Color("#af7364"),0.68)
     var kind:String="步" if str(u["type"])=="보병" else ("弓" if str(u["type"])=="궁병" else "騎")
     draw_circle(p+Vector2(3,1),6.8,c)
     _ink(kind,p+Vector2(-2,5),10,Color("#f4e9ca"))
@@ -1089,7 +1209,12 @@ func _plate(t:String,p:Vector2,fs:int,c:Color)->Rect2:
     return Rect2()
 
 func _choose_action(index:int)->void:
+    deploy_button.set_pressed_no_signal(false)
     action_choice.select(index)
+    if index==9 and not has_destination:
+        var officer: Dictionary=sim.find_unit(selected_id)
+        destination=sim._field_point(Vector2(sim.field_size.x*0.78,officer.pos.y))
+        has_destination=true
     if ACTIONS[index]=="자유 재량":
         focus_site={}
         has_destination=false
@@ -1099,9 +1224,18 @@ func _choose_action(index:int)->void:
 
 func _sync_actions()->void:
     partner_choice.disabled=ACTIONS[action_choice.selected]=="자유 재량"
-    var descriptions:Array[String]=["동행 군단과 느린 쪽의 보속으로 이동","목표 지역의 적을 공격","지정 구역을 확보하고 방어","지정 아군을 따라 엄호하고 가까운 위협을 차단","적의 측후방으로 기동","위기에 처한 연계 군단을 지원","지정 지점에서 투입을 대기","목표 지점으로 철수","현지 상황에 따라 장수가 연계 상대와 역할을 선택"]
-    for i in range(action_buttons.size()):
-        action_buttons[i].set_pressed_no_signal(i==action_choice.selected)
+    var descriptions:Array[String]=["거점으로 이동하며, 접근하는 적과 교전합니다.","거점으로 이동하며, 접근하는 적과 교전합니다.","진군 중 적을 만나면 현 위치에서 사수합니다.","지정 아군을 따라 엄호하고 가까운 위협을 차단","적의 측후방으로 기동","교전한 아군을 지원합니다. 협동 대상을 지정하면 해당 군단을 우선합니다.","지정 지점에서 투입을 대기","목표 지점으로 철수","현지 상황에 따라 장수가 연계 상대와 역할을 선택"]
+    var index := action_choice.selected
+    var raid := index == 9
+    task_choice.select(maxi(0,TASKS.find(index)))
+    response_caption.visible = raid or index in [0,1,2,5]
+    raid_response.visible = raid
+    for key: int in action_buttons:
+        action_buttons[key].visible = response_caption.visible and not raid
+        action_buttons[key].set_pressed_no_signal(key == index or (key == 1 and index == 0))
+    if raid:
+        action_description.text="선택한 거점을 거쳐 적 진영을 수색합니다. 발견한 보급기지를 습격합니다."
+        partner_caption.text="협동 대상"
     if action_choice.selected>=0 and action_choice.selected<descriptions.size():
         action_description.text=descriptions[action_choice.selected]
         match ACTIONS[action_choice.selected]:

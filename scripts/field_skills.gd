@@ -98,11 +98,41 @@ static func describe_signature(officer: String) -> String:
         "precision": effect="이번 사격 최대 2배 · 추가 손실 최대 20명"
     return "발동   %s\n효과   %s" % [rule[9],effect]
 
+static func item_icon(id: String) -> AtlasTexture:
+    var tile := 5
+    match id:
+        "strike","breach","fury","cascade": tile=0
+        "iron","last","counter","shield": tile=1
+        "relief","dash","pursue": tile=2
+        "inspire","war_drum": tile=3
+        "rapid","harass","focus": tile=4
+        "wing","charge","reshape": tile=6
+        "tiger","bridge","rally","swift","surprise": tile=7
+    var icon := AtlasTexture.new()
+    icon.atlas=preload("res://assets/art/equipment_seals.png")
+    icon.region=Rect2(tile*32,0,32,32)
+    return icon
+
+static func item_effect(id: String) -> String:
+    var item: Array=CATALOG[id]
+    var rule: Array=RULES[item[2]]
+    var power := float(rule[5])*float(item[3])
+    match rule[1]:
+        "break": return "적 응집 −%s" % snappedf(power,0.1)
+        "reform": return "아군 응집 +%s" % snappedf(power,0.1)
+        "rally": return "주변 아군 사기 +%s" % snappedf(power,0.1)
+        "attack","volley": return "해당 공격 피해 +%s%%" % snappedf(power*100,0.1)
+        "guard","feint": return "받는 피해 −%s%%" % snappedf(power*100,0.1)
+        "stride","pursue": return "해당 이동 속도 +%s%%" % snappedf(power*100,0.1)
+        "siege": return "시설 피해 +%s%%" % snappedf(power*100,0.1)
+    return EFFECT_TEXT[rule[1]]
+
 static func describe(id: String) -> String:
     if not CATALOG.has(id): return "장착 없음"
     var item: Array=CATALOG[id]
     var rule: Array=RULES[item[2]]
-    return "%s · %s\n%s → %s\n지속 %.0f초 · 재사용 %.0f초" % [item[0],item[1],rule[9],EFFECT_TEXT[rule[1]],rule[6]*4.0,rule[7]*4.0]
+    var duration := "즉시" if rule[1] in ["break","reform","rally"] else "%s초 지속" % snappedf(float(rule[6])*4.0,0.1)
+    return "%s · %s\n%s\n발동  %s\n%s · 재사용 %s초" % [item[0],item[1],item_effect(id),rule[9],duration,snappedf(float(rule[7])*4.0,0.1)]
 
 static func mission(u: Dictionary,now: float) -> String:
     if u.get("tactical_until",0.0)>now:

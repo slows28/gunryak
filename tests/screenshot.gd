@@ -873,9 +873,10 @@ func _capture_deployment() -> bool:
     sheet.apply.pressed.emit()
     if game.sim.find_unit(0)["mission"]!="지역 사수" or game.sim.find_unit(0)["pos"]!=start_pos: return false
     sheet._select(1)
-    if not sheet.destination.is_equal_approx(anchor["pos"]): return false
+    if sheet.has_destination: return false
     sheet.action_buttons[1].pressed.emit()
-    sheet.apply.pressed.emit()
+    _sheet_click(sheet,anchor["pos"])
+    if sheet.draft_dirty: return false
     if not (game.sim.find_unit(1)["order_destination"] as Vector2).is_equal_approx(anchor["pos"]): return false
     sheet.post_buttons["임시 거점"].pressed.emit()
     _sheet_click(sheet,blank)
@@ -886,7 +887,9 @@ func _capture_deployment() -> bool:
     if not await _deployment_frame("anchor_orders.png"): return false
     var last: int=game.sim.command_ids(0).back()
     sheet._select(last)
-    sheet.action_buttons[8].pressed.emit()
+    var free_row: int=sheet.TASKS.find(8)
+    sheet.task_choice.select(free_row)
+    sheet.task_choice.item_selected.emit(free_row)
     if sheet.apply.disabled or sheet.has_destination: return false
     sheet.apply.pressed.emit()
     if game.sim.find_unit(last)["mission"]!="자유 재량" or game.sim.find_unit(last)["has_destination"]: return false

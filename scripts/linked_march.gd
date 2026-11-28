@@ -2,7 +2,7 @@ extends RefCounted
 ## March orders for one movement tick, calculated before any corps takes its step.
 ## Local offsets use forward / right coordinates, independent of the faction.
 const COOPERATIVE_MISSIONS = ["전열 엄호","측후방 기동","구원 지원","궁병 보호"]
-const INTERRUPTS = ["포위 이탈","거점 차단","거점 엄호 사격","후퇴","패주","재집결","전술 재집결","휴식","탄약 보충","보급 복귀","전술 철수","거리 유지","측면 방어","긴급 방어","긴급 지원","아군 보호","공격 지속","궁병 보호","교전","반격","전열 유지","후열 정렬","엄호 사격"]
+const INTERRUPTS = ["보급기지 수색","기지 습격","포위 이탈","거점 차단","거점 엄호 사격","후퇴","패주","재집결","전술 재집결","휴식","탄약 보충","보급 복귀","전술 철수","거리 유지","측면 방어","긴급 방어","긴급 지원","아군 보호","공격 지속","궁병 보호","교전","반격","전열 유지","후열 정렬","엄호 사격"]
 
 static func has_field_role(unit: Dictionary, now: float) -> bool:
     return not unit.has("order_group") and unit.get("assigned_link",-1)<0 and now<float(unit.get("ai_role_until",0.0)) and unit.get("ai_role","") in COOPERATIVE_MISSIONS

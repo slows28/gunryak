@@ -135,7 +135,7 @@ func _play():
     await click_at(prep.corps_buttons[2].get_global_rect().get_center())
     await click_at(prep.equip_button.get_global_rect().get_center())
     expect(game.campaign.state.gear.get("2","")=="pace","select and equip from preparation")
-    expect(prep.description.text.contains("이동 속도 증가") and prep.innate.text.contains("재사용"),"readable effects and cooldowns")
+    expect(prep.description.text.contains("+17.6%") and prep.description.text.contains("발동") and prep.owner_list.get_item_icon(0)!=null and prep.innate.text.contains("재사용"),"readable effects and cooldowns")
     expect(prep.equip_button.text.contains("해제"),"equipped item has an explicit removal action")
     await click_at(prep.corps_buttons[0].get_global_rect().get_center())
     expect(prep.equip_button.text.contains("위연 → 왕평"),"transfer shows both officers before confirmation")

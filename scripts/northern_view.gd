@@ -132,9 +132,10 @@ func _ready() -> void:
     equipped=text("",802,402,420,29,18,Gold)
     owner_list=ItemList.new()
     owner_list.add_theme_font_size_override("font_size",15)
-    place(owner_list,800,438,226,124)
+    owner_list.fixed_icon_size=Vector2i(24,24)
+    place(owner_list,800,438,180,128)
     owner_list.item_selected.connect(func(_i): _describe())
-    description=text("",1041,434,186,140,15,Paper)
+    description=text("",992,434,234,140,15,Paper)
     equip_button=button("",800,581,422,_change_gear)
     reward_bar=HBoxContainer.new()
     place(reward_bar,40,661,1170,45)
@@ -258,7 +259,7 @@ func refresh() -> void:
     for id: String in s["items"]:
         var owner: Variant=s.gear.find_key(id)
         var title: String=Skills.CATALOG[id][0]
-        owner_list.add_item(title+"  ·  "+("미장착" if owner==null else str(campaign.officers[int(owner)].name)))
+        owner_list.add_item(title+" · "+("미장착" if owner==null else str(campaign.officers[int(owner)].name)),Skills.item_icon(id))
         owner_list.set_item_metadata(owner_list.item_count-1,id)
     if owner_list.item_count>0: owner_list.select(maxi(0,s["items"].find(gear)))
     _describe()
@@ -268,7 +269,10 @@ func refresh() -> void:
     for child in reward_bar.get_children(): reward_bar.remove_child(child);child.queue_free()
     for id: String in campaign.choices():
         var b:=Button.new()
-        b.text="%s · %s" % [Skills.CATALOG[id][0],Skills.CATALOG[id][1]]
+        b.text="%s · %s\n%s" % [Skills.CATALOG[id][0],Skills.CATALOG[id][1],Skills.item_effect(id)]
+        b.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+        b.add_theme_font_size_override("font_size",14)
+        b.icon=Skills.item_icon(id)
         b.tooltip_text=Skills.describe(id)
         b.pressed.connect(func():
             if campaign.claim(id): status.text="전리품 수령 · 장비 재배치 가능";refresh()

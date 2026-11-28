@@ -4194,8 +4194,8 @@ func _show_outcome() -> void:
         for id: String in campaign.choices():
             var choice:=Button.new()
             var item: Array=WarSim.Skills.CATALOG[id]
-            var effect: String=WarSim.Skills.RULES[item[2]][1]
-            choice.text="%s · %s\n%s" % [item[0],item[1],WarSim.Skills.EFFECT_TEXT[effect]]
+            choice.icon=WarSim.Skills.item_icon(id)
+            choice.text="%s · %s\n%s" % [item[0],item[1],WarSim.Skills.item_effect(id)]
             choice.add_theme_font_size_override("font_size",14)
             choice.size_flags_horizontal=Control.SIZE_EXPAND_FILL
             choice.tooltip_text=WarSim.Skills.describe(id)
