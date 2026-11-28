@@ -1375,3 +1375,18 @@ Godot 4.7.2 정적 구조 및 엔진 검사 20개가 통과했다. 실행 명령
 - `art_source/render_northern_atlas.py`가 Basemap 2.0.0의 2분각 세계 지형 음영과 Natural Earth v5.1.2의 위수·한수 등 하천 및 중국 윤곽에서 전역 이미지를 굽는다. 새 Windows 패키지와 CI 배포물에 Basemap 라이선스를 포함했다. 전장 표식은 연관 지역을 대표한다. 고대 하도와 개별 군단의 실제 행군 경로에는 별도 문헌 대조가 필요하다. [자료 출처와 좌표 기준](art_source/northern_atlas.md)
 - Windows x64 테스트판은 `/workspace/Gunryak-Windows-65a725b.zip`, 54,330,039바이트, SHA-256 `ab658a4eb86c41b19d8300d804adac8c8a152e5df05a1c88b9f55b2d5c492ae2`다. 모든 항목의 CRC와 EXE의 원본 해시를 검증했다. Wine에서 패키지와 동일한 EXE로 제갈량 메뉴, 북벌 편성 지도, 단독 전투와 메뉴 복귀를 확인했다.
 - 최종 실행판을 별도 체크아웃으로 검증했다. Godot 4.7.2에서 `python3 tools_check_structure.py`와 `python3 tools_run_engine_tests.py --godot /usr/local/bin/godot --project . --timeout 700`의 27개 통합 검사를 통과했다. `xvfb-run -a -s '-screen 0 1280x800x24' godot --audio-driver Dummy --rendering-driver opengl3 --path . --script res://tests/screenshot.gd`의 75장과 같은 인자로 실행한 `res://tests/northern_screen.gd`의 화면 10장을 검증했다. 승리 조건을 통제한 13장 캠페인 재현에서 농서·오장원·장안·완료 상태를 추가 촬영했다. 구형 기록을 불러와 6개 거점의 표식과 이름 총 12곳을 클릭했고, 1280×720 창에서도 북벌 지도 진입과 메뉴 복귀를 확인했다. 로그와 원본은 `test_results/northern-atlas-65a725b`에 보관했다.
+
+## 2026-11-28 북벌 장수 39명의 성격과 고유기
+
+기준판 `87bcec8`, 기능 적용 `72ad4f7`, 예전 전투 기록 호환 수정 `3bb1631`, 실행판 `27273ef`. [출진 군단 실제 화면](docs/officer-muster.jpg)
+
+- `officer_profiles.gd`에 촉 25명·위 14명의 담력, 공세, 협동, 규율과 통솔·무력·지력·판단·충성을 지정했다. `general_mind.gd`, `war_sim.gd`에서 스트레스, 독자 행동에 필요한 우세, 구원 수락, 명령 반응에 반영한다. 작전 지도에서 장수를 교체할 때 심리와 고유기가 함께 이동한다. 예전 녹화 재생 중 협동 값 누락을 발견해 이름으로 복원했다.
+- `field_skills.gd`와 두 캠페인이 개별 고유기 한 개와 장착 전술을 처리한다. 고유기는 전반 80%, 후반 65%이며 반일당 조건을 충족한 첫 기회에 판정한다. 북벌의 최소 재사용 간격은 표시 시간 16초다. 조운은 기병의 실제 돌격 적중으로 대상 하나의 공격 위력을 6초간 14% 낮춘다. 돌격 뒤 조운의 명령이 바뀌어도 이미 적중한 대상의 혼란은 정해진 시점에 끝난다. 황충은 실제 화살 피해 한 번에 한해 최대 두 배, 추가 손실 20명까지다. 장비는 기존의 별도 발동 규칙을 따른다.
+- `northern_view.gd`, `game.gd`, `assets/art/northern_officers.webp`에 초상 15점과 12개 군단 카드, 선택한 장수의 능력·성격·고유기 설명을 연결했다. `northern_atlas.gd`, `campaign_view.gd`, 지도 제작 스크립트와 기호 원화를 바꿔 실제 지형 위에 야전·성곽·고개·도하를 표시한다.
+- 기산의 공동 집결 회귀에서 구원 요청을 수락한 관흥이 담당 위치에서 300 이상 멀어졌다. `rally_orders.gd`와 전령 처리를 수정해 같은 집결지에서는 실제로 관측한 공격자에 대응하고 각자의 구역을 유지한다. 기존 전체 개전 테스트에서 왕평·마속이 관흥을 공격한 적에게 피해를 줬다.
+- `tests/officer_signatures.gd`가 실제 피해 계산, 혼란 종료, 임무 제한, 하루 상한, 장비 병용, 옛 심리 기록 복원을 검사한다. 계속 명중하는 통제 조건에서 100일간 149회 발동했다. 한 반일에 공격 횟수를 늘려도 추가로 판정하지 않는다. 실전 입력 경로의 기산 촬영에서는 선봉 기병으로 편성한 조운이 7일차 서황에게, 궁병으로 편성한 황충이 다른 전투의 18일차 장합에게 발동했다. [두 고유기의 실제 전투 화면](docs/officer-signatures.jpg)
+
+- 같은 편성·지시·난수 시드에서 고유기만 켜고 끈 완주 비교를 기산, 진창, 장안에서 한 쌍씩 실행했다. 실제 게임과 같은 전령·긴급 지시를 활성화했다. 두 조건 모두 기산은 촉 승, 진창과 장안은 위 승이었다. 고유기 사용 횟수는 촉/위 순서로 기산 47/83, 진창 41/127, 장안 53/95였다. 한 전장당 한 쌍으로 승률을 추정할 수는 없다. 다음 밸런스 점검은 진창의 자동 편성에서 양측 장수별 교전 시간, 조건을 만족한 반일 수, 실효 피해·방어량을 여러 시드로 비교하는 것이다. 비교에 사용한 스크립트와 결과는 `test_results/officer-profiles-27273ef/campaign-comparison.gd`, `tested-balance.log`에 보관했다.
+- 로컬 Windows x64 빌드는 `/workspace/Gunryak-Windows-27273ef.zip`이며 55,901,094바이트다. SHA-256은 `b000677b462780a8439ea8370caa55cdf8000088ccd61a3fd548df2ec26f43ba`다. ZIP의 실행 파일과 Wine에서 구동한 파일을 SHA-256으로 대조했고, 메뉴에서 편성·작전 지도·개전·일시정지·복귀·종료까지 통과했다.
+- 새 체크아웃에서 `python3 tools_check_structure.py`를 실행했다. Godot 4.7.2와 Xvfb 1280×800, Mesa llvmpipe에서 `godot --rendering-driver opengl3 --audio-driver Dummy --path . --script res://tests/screenshot.gd`와 `res://tests/northern_screen.gd`를 실행했다. 전장·작전·장수 정보 75장 및 출진·보상·재개 12장을 확인했다. 기존 6거점 지도는 거점과 지명을 각각 클릭해 같은 위치가 선택되는지 확인했다. 북벌 13장에서는 장안이 성곽 기호로 강조됐다. 비교 화면, 고유기 명중 원본, 실행 로그는 `test_results/officer-profiles-27273ef/`에 있다.
+- `python3 tools_run_engine_tests.py --godot /usr/local/bin/godot --project . --timeout 700`에서 최종 실행판의 엔진 검사 28/28을 통과했다. 야전 연주·전투 음향·본진 및 구원·대규모 전투·장수 심리·실제 장면 전환을 포함한다. [장수 데이터](scripts/officer_profiles.gd) · [고유기 회귀 검사](tests/officer_signatures.gd)
