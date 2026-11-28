@@ -274,7 +274,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "obedience":"성향 기반", "deviations":0, "last_deviation":-100.0,
         "memory_pos":Vector2.ZERO, "memory_time":-100.0, "memory_id":-1,
         "ambush_ready":0.0, "ambush_until":-1.0, "ambushes":0,
-        "charge_dir":Vector2.ZERO, "charge_speed":0.0, "charge_cooldown":0.0, "charges":0, "charge_recoil":Vector2.ZERO,
+        "open_run":0.0, "charge_dir":Vector2.ZERO, "charge_speed":0.0, "charge_cooldown":0.0, "charges":0, "charge_recoil":Vector2.ZERO,
         "surrounded":false, "encircled_time":0.0, "routed":false, "rout_count":0, "deserted":0.0,
         "general_hp":100.0, "general_state":"건재", "general_risk":0.0, "reserve":false,
         "waypoints":[], "waypoint_index":0, "defense_anchor":Vector2.ZERO, "defense_set":false,
@@ -1394,6 +1394,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     var prior_heading: Vector2 = unit["facing"]
     if battle_time<float(unit.get("panic_until",-1.0)) or (command_confused(unit["side"]) and not unit["routed"]):
         unit["motion_speed"]=0.0
+        unit["open_run"]=0.0
         unit["charge"]=0.0
         unit["charge_speed"]=0.0
         return
@@ -1519,6 +1520,13 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
 # M2-1: Keep formation bodies separate. This applies to friends and enemies.
 # M2-2: A contact line shifts toward the weaker side, based on the soldiers
 # actually in each formation, morale and how well a unit resists front pressure.
+const MOUNTED_CONTACT_REACH := 12.0
+
+func _charging_toward(rider: Dictionary, foe: Dictionary, axis: Vector2) -> bool:
+    if rider["type"] != "기병" or rider["side"] == foe["side"] or rider["routed"]: return false
+    if Vector2(rider["charge_dir"]).dot(axis) < 0.72: return false
+    return rider["charge"] >= 32.0 or (rider["charge_cooldown"] > 3.9 and rider.get("last_strike_target", -1) == foe["id"])
+
 func _body_distance(a: Dictionary, b: Dictionary, slots_a: Array[Vector2]=[], slots_b: Array[Vector2]=[]) -> float:
     if six_armies:
         var direction: Vector2 = ((b["pos"] as Vector2)-(a["pos"] as Vector2)).normalized()
@@ -1528,10 +1536,17 @@ func _body_distance(a: Dictionary, b: Dictionary, slots_a: Array[Vector2]=[], sl
         var edge_a := _leading_offset(a,slots_a,direction)
         var edge_b := _leading_offset(b,slots_b,-direction)
         var nominal := maxf(10.0,edge_a.dot(direction)+8.0)+maxf(10.0,edge_b.dot(-direction)+8.0)+5.0
-        if a["side"] == b["side"] or a["type"] == "궁병" or b["type"] == "궁병": return nominal
+        var reach := 30.0
+        if long_operation and (_charging_toward(a,b,direction) or _charging_toward(b,a,-direction)):
+            # The point of the wedge must reach the defending files before
+            # their recoil. Allow just that pair to close the normal spacing.
+            reach = MOUNTED_CONTACT_REACH
+            nominal = maxf(12.0, nominal - 16.0)
+        elif a["side"] == b["side"] or a["type"] == "궁병" or b["type"] == "궁병":
+            return nominal
         var range_sq: float = Vector2(a["pos"]).distance_squared_to(b["pos"])
         if range_sq > (nominal+12.0)*(nominal+12.0): return nominal
-        if (direction*nominal+edge_b-edge_a).length_squared() <= 900.0: return nominal
+        if (direction*nominal+edge_b-edge_a).length_squared() <= reach*reach: return nominal
         # Extremes on opposite wings need not be opposite each other. At the
         # proposed separation check actual file pairs, then close only the gap
         # needed to bring one pair within the model's existing melee reach.
@@ -1541,10 +1556,11 @@ func _body_distance(a: Dictionary, b: Dictionary, slots_a: Array[Vector2]=[], sl
         for left in slots_a:
             for right in slots_b:
                 var gap := right-left+offset
-                if gap.length_squared() <= 900.0: return nominal
+                if gap.length_squared() <= reach*reach: return nominal
                 var across := gap.dot(tangent)
-                if absf(across) >= 29.0: continue
-                contact_distance = maxf(contact_distance,nominal-gap.dot(direction)+sqrt(841.0-across*across))
+                var inside := reach - 1.0
+                if absf(across) >= inside: continue
+                contact_distance = maxf(contact_distance,nominal-gap.dot(direction)+sqrt(inside*inside-across*across))
         return minf(nominal, maxf(12.0,contact_distance))
     if str(a["type"]) == "궁병" or str(b["type"]) == "궁병":
         return 25.0
@@ -1702,7 +1718,7 @@ func _terrain_movement_multiplier(unit: Dictionary, p: Vector2) -> float:
     match terrain_at(p):
         "갈대밭": return 0.63 if unit["type"] == "기병" else 0.84
         "습지": return 0.48 if str(unit["type"])=="기병" else 0.66
-        "교량": return 1.08
+        "교량": return 0.78 if unit["type"] == "기병" else 0.91
         "하천": return 0.34 if str(unit["type"]) == "기병" else 0.48
         "도로":
             return 1.23
@@ -1712,7 +1728,7 @@ func _terrain_movement_multiplier(unit: Dictionary, p: Vector2) -> float:
                 "궁병": return 0.77
                 _: return 0.83
         "고지":
-            return 0.82
+            return 0.74 if unit["type"] == "기병" else 0.82
     return 1.0
 
 # Observation is a property of the observer's position. Concealment applies
@@ -1948,6 +1964,8 @@ func _combat(dt: float) -> void:
         var distance: float = pos.distance_to(ep)
         var unit_type: String = str(unit["type"])
         var reach: float = 173.0 if unit_type == "궁병" else 30.0
+        if long_operation and unit_type == "기병" and unit["charge"] >= 32.0 and _charging_toward(unit, enemy, pos.direction_to(ep)):
+            reach = MOUNTED_CONTACT_REACH
         if long_operation and unit_type!="궁병" and _river_separates(pos,ep): continue
         var contacts: int = formation_contacts(unit, enemy, reach)
         if contacts == 0:
@@ -2005,13 +2023,16 @@ func _combat(dt: float) -> void:
             attack *= 0.78
         var shock: float = 0.0
         var braced: bool=false
-        if unit_type == "기병" and (long_operation or distance < 70.0) and float(unit["charge_cooldown"]) <= 0.0:
-            shock = _charge_impact(unit, enemy)
+        var contact_pair: Array[Vector2] = []
+        if unit_type == "기병" and unit["charge"] >= 32.0 and (long_operation or distance < 70.0) and float(unit["charge_cooldown"]) <= 0.0:
+            contact_pair = visual_contact_pair(unit, enemy)
+            shock = _charge_impact(unit, enemy, contact_pair[1])
             braced=long_operation and shock>0.0 and _braced_for_charge(enemy,direction)
             if braced: shock*=0.48
             if shock > 0.0:
                 unit["charges"] = int(unit["charges"]) + 1
                 unit["charge_cooldown"] = 4.5
+                unit["open_run"] = 0.0
                 unit["charge"] = 0.0
                 unit["charge_speed"] = 0.0
                 if long_operation:
@@ -2098,14 +2119,15 @@ func _combat(dt: float) -> void:
             "ambush":ambush,"counter":counter,"guarding":guarding,"kind":attack_kind,"contacts":contacts,
             "from":pos,"to":ep,"time":battle_time,"side":unit["side"]
         }
+        if shock > 0.0: entry["impact_ground"] = terrain_at(contact_pair[1])
         var visual_time: float = unit["last_visual"]
         if rear_responses.get(source_id, {}).get("front", -1) >= 0:
             visual_time = unit.get("melee_visual_times", {}).get(target_id, -100.0)
         if shock>0.0 or battle_time-visual_time>=(0.9 if bow else 0.55):
-            var pair: Array[Vector2]=visual_contact_pair(unit,enemy)
-            entry["visual_from"]=pair[0]
-            entry["visual_to"]=pair[1]
-            if bow and long_operation: entry["arrow_lanes"]=_bow_visual_lanes(unit,enemy,pair)
+            if contact_pair.is_empty(): contact_pair = visual_contact_pair(unit,enemy)
+            entry["visual_from"]=contact_pair[0]
+            entry["visual_to"]=contact_pair[1]
+            if bow and long_operation: entry["arrow_lanes"]=_bow_visual_lanes(unit,enemy,contact_pair)
         damage_entries.append(entry)
         requested_losses[target_id]=float(requested_losses.get(target_id,0.0))+damage_requested
     # A shared casualty budget allocates simultaneous losses in proportion to
@@ -2905,18 +2927,25 @@ func _can_run_in(unit: Dictionary, enemy: Dictionary, pos: Vector2, goal: Vector
 
 func _update_charge(unit: Dictionary, moved: Vector2, dt: float, running_in: bool) -> void:
     var speed := moved.length() / maxf(dt, 0.001)
-    if not running_in or speed <= 48.0 or terrain_at(unit["pos"]) not in ["평지", "도로", "고지"]:
+    var ground := terrain_at(unit["pos"])
+    if not running_in or speed <= 48.0 or ground not in ["평지", "도로", "고지"]:
+        unit["open_run"] = 0.0
         unit["charge"] = 0.0
         unit["charge_speed"] = 0.0
         return
     var direction := moved.normalized()
     if direction.dot(unit["charge_dir"]) < 0.82:
         unit["charge"] = 0.0
+        unit["open_run"] = 0.0
+    if ground in ["평지", "도로"]:
+        unit["open_run"] = minf(110.0, float(unit["open_run"]) + moved.length())
+    else:
+        unit["open_run"] = 0.0
     unit["charge"] = minf(110.0, float(unit["charge"]) + moved.length())
     unit["charge_dir"] = direction
     unit["charge_speed"] = speed
 
-func _charge_impact(unit: Dictionary, enemy: Dictionary) -> float:
+func _charge_impact(unit: Dictionary, enemy: Dictionary, contact: Vector2 = Vector2.INF) -> float:
     var distance_run: float = float(unit["charge"])
     var target_dir: Vector2 = ((enemy["pos"] as Vector2) - (unit["pos"] as Vector2)).normalized()
     if distance_run < 32.0 or float(unit["charge_speed"]) < 40.0 or target_dir.dot(unit["charge_dir"]) < 0.72:
@@ -2930,9 +2959,23 @@ func _charge_impact(unit: Dictionary, enemy: Dictionary) -> float:
         var alignment: float = Vector2(unit["facing"]).dot(target_dir)
         impact *= 1.0+0.16*smoothstep(0.72,0.96,alignment)*smoothstep(40.0,90.0,unit["cohesion"])
     impact *= 0.3 if str(enemy["formation"]) == "방진" else 1.0
-    if _in_forest(enemy["pos"]):
-        impact *= 0.45
-    return maxf(0.0, impact)
+    var ground := terrain_at(enemy["pos"] if contact == Vector2.INF else contact)
+    var ground_factor := charge_ground_factor(ground)
+    if ground == "평지":
+        ground_factor = lerpf(1.0, ground_factor, smoothstep(32.0, 86.0, unit["open_run"]))
+    return maxf(0.0, impact * ground_factor)
+
+# The approach supplies momentum. The defender's footing determines how much
+# of that momentum the arriving files can deliver across their frontage.
+static func charge_ground_factor(ground: String) -> float:
+    match ground:
+        "평지": return 1.22
+        "고지": return 0.80
+        "교량", "갈대밭": return 0.60
+        "숲": return 0.45
+        "습지": return 0.36
+        "하천": return 0.0
+    return 1.0
 
 func _encirclement(unit: Dictionary, observed: Array = []) -> bool:
     var p: Vector2 = unit["pos"]

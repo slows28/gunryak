@@ -436,7 +436,7 @@ func _update_destination()->void:
             var site: Dictionary = site_choice.get_item_metadata(index)
             if destination.is_equal_approx(site["pos"]):
                 site_choice.select(index)
-                destination_label.text = "%s  ·  %s" % [_grid_ref(destination),sim.terrain_at(destination)]
+                destination_label.text = "%s  ·  %s\n%s" % [_grid_ref(destination),sim.terrain_at(destination),_ground_detail(destination)]
                 break
     march_preview.text=march_diagram.get("caption","")
     march_preview.tooltip_text=""
@@ -1109,9 +1109,19 @@ func _sync_actions()->void:
             "전열 엄호","구원 지원": partner_caption.text="보호할 군단"
             _: partner_caption.text="협동 대상"
 
+func _ground_detail(p: Vector2) -> String:
+    var terrain: String = sim.terrain_at(p)
+    if terrain == "하천" and sim.long_operation: return "도하 불가 · 교량 이용"
+    var detail := "이동 %d%%" % sim.terrain_movement_percent(selected_id, p)
+    var unit: Dictionary = sim.find_unit(selected_id)
+    if unit.get("type", "") == "기병":
+        if terrain == "평지": return detail + " · 직선 돌격 유리"
+        if sim.charge_ground_factor(terrain) < 1.0: return detail + " · 돌격 약화"
+    return detail + " · 시야 %d%%" % roundi(sim.terrain_sight_factor(p) * 100)
+
 func _destination_text(p:Vector2)->String:
     var terrain:String=sim.terrain_at(p)
-    var detail: String="이동 %d%% · 시야 %d%%" % [sim.terrain_movement_percent(selected_id,p), roundi(sim.terrain_sight_factor(p)*100)]
+    var detail := _ground_detail(p)
     var crossing: float=march_diagram.get("bridge",sim.map_order_crossing(selected_id,p))
     if terrain=="하천" and sim.long_operation:
         detail="목표 지정 불가"

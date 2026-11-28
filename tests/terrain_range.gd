@@ -16,6 +16,7 @@ func _initialize() -> void:
     sim.set_long_operation(true)
     sim.set_scenario(WarSim.TRAINING_SCENARIO)
     var sites:=sim.training_sites()
+    _check_charge_terrain(sim, sites)
     for kind in ["평지","도로","숲","고지","습지","갈대밭","하천"]:
         check(sim.terrain_at(sites[kind])==kind,"survey location matches "+kind)
     var foot:=sim.find_unit(0)
@@ -109,6 +110,42 @@ func _initialize() -> void:
     _check_reed_sight(sim)
     print("GUNRYAK_TERRAIN_RANGE_PASS" if failures==0 else "GUNRYAK_TERRAIN_RANGE_FAIL")
     quit(0 if failures==0 else 1)
+
+func _check_charge_terrain(sim, sites: Dictionary) -> void:
+    var rider: Dictionary = sim.find_unit(2)
+    var foot: Dictionary = sim.find_unit(3)
+    # Hold troop strength, approach distance, alignment and speed constant.
+    # Each target stands on the actual training-map feature.
+    var shocks := {}
+    var stride := Vector2.RIGHT * 10.0
+    var plain: Vector2 = sites["평지"]
+    for key in ["평지", "도로", "고지", "북측 교량", "갈대밭", "숲", "습지"]:
+        rider.pos = plain
+        sim._update_charge(rider, Vector2.ZERO, 0.1, false)
+        for tick in 10: sim._update_charge(rider, stride, 0.1, true)
+        foot.pos = sites[key]
+        rider.pos = foot.pos - Vector2.RIGHT * 20.0
+        shocks[key] = sim._charge_impact(rider, foot)
+    foot.pos = plain
+    rider.pos = plain - Vector2.RIGHT * 20.0
+    check(is_equal_approx(sim._charge_impact(rider, foot, sites["습지"]), shocks["습지"]), "a front rank in soft ground gets cover even with its standard on the plain")
+    var road: float = shocks["도로"]
+    check(road > 0.0 and is_equal_approx(shocks["평지"], road * 1.22), "full run on open ground adds 22 percent impact")
+    check(is_equal_approx(shocks["고지"], road * 0.80) and is_equal_approx(shocks["북측 교량"], road * 0.60), "high ground and bridge restrict mounted impact")
+    check(is_equal_approx(shocks["갈대밭"], road * 0.60) and is_equal_approx(shocks["숲"], road * 0.45) and is_equal_approx(shocks["습지"], road * 0.36), "sheltered ranks absorb the approach at the terrain boundary")
+    check(sim.terrain_movement_percent(rider.id, sites["중앙 교량"]) == 78 and sim.terrain_movement_percent(foot.id, sites["중앙 교량"]) == 91, "a crossing slows mounted files more than foot")
+    rider.pos = sites["고지"]
+    sim._update_charge(rider, stride, 0.1, true)
+    check(rider.open_run == 0.0 and rider.charge > 32.0, "leaving the plain loses the open-ground bonus")
+    rider.pos = plain
+    sim._update_charge(rider, -stride, 0.1, true)
+    check(is_equal_approx(rider.open_run, 10.0) and is_equal_approx(rider.charge, 10.0), "turning the horse starts a fresh run")
+    rider.pos = sites["습지"]
+    sim._update_charge(rider, stride, 0.1, true)
+    check(rider.charge == 0.0 and rider.open_run == 0.0, "soft ground breaks the run")
+    print("GROUND_IMPACT ", shocks)
+    sim.reset()
+    sim.set_scenario(WarSim.TRAINING_SCENARIO)
 
 func _check_fields(sim) -> void:
     var enemy_totals := [43700,43700,49160,43700,38100,38100]

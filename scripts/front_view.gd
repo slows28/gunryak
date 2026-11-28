@@ -82,9 +82,31 @@ static func local_target(point: Vector2, anchors: Array[Vector2], reach: float) 
             result=q
     return result
 
+const CHARGE_REACTION_TIME := 0.56
+
+# Files behind the contact recoil a fraction later. A planted square absorbs
+# the jolt at its leading edge without pushing the ranks behind it.
+static func _charge_reaction(offset: Vector2, index: int, hit: Dictionary) -> float:
+    var axis: Vector2 = hit["direction"]
+    var depth := offset.dot(axis)
+    var across := absf(offset.cross(axis))
+    var recoil: float = hit["recoil"]
+    var reach := 8.0 + recoil * 0.68
+    var width := 9.0 + recoil * 0.35
+    if depth < -6.0 or depth >= reach or across >= width: return 0.0
+    var age := float(hit["age"]) - maxf(depth, 0.0) * 0.008 - float(index % 3) * 0.009
+    if age <= 0.0 or age >= 0.27: return 0.0
+    var pulse := smoothstep(0.0, 0.065, age) * (1.0 - smoothstep(0.065, 0.27, age))
+    var spread := (1.0 - smoothstep(width * 0.44, width, across)) * (1.0 - smoothstep(2.0, reach, absf(depth)))
+    return (0.48 + recoil * 0.065) * pulse * spread
+
 static func hit_reaction(point: Vector2, index: int, impacts: Array) -> Vector2:
     var reaction := Vector2.ZERO
     for hit: Dictionary in impacts:
+        if hit.has("recoil"):
+            var push := _charge_reaction(point - Vector2(hit["target"]), index, hit)
+            if push > reaction.length(): reaction = Vector2(hit["direction"]) * push
+            continue
         var distance := point.distance_to(hit["target"])
         var radius: float = hit["radius"]
         if distance >= radius: continue

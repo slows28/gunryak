@@ -74,6 +74,7 @@ static func decide(sim, unit: Dictionary, anchor: Vector2, observed: Array[Dicti
             var opening:=26.0+clampf((balance-1.0)*23.0,-12.0,18.0)
             opening+=maxf(0.0,80.0-foe["cohesion"])*0.55+maxf(0.0,65.0-foe["morale"])*0.35
             opening+=10.0 if (ep.direction_to(p)).dot(foe["facing"])<0.25 else 0.0
+            opening += 16.0 * (sim.charge_ground_factor(sim.terrain_at(ep)) - 1.0)
             if foe["formation"]=="방진" and foe["next_formation"]=="": opening-=12.0
             if unit.has("mounted_anchor") and unit["flank_target"]==foe["id"]: opening+=8.0
             if opening<=best_score: continue

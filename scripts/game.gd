@@ -1336,7 +1336,9 @@ func _engagement_note(entry: Dictionary) -> String:
     if bool(entry.get("ambush",false)): return "매복 기습"
     if bool(entry.get("screened",false)):
         return "아군 전열 너머 사격" if entry["kind"]=="화살" else "보병 엄호"
-    if entry.get("kind", "") == "돌격": return "기병 충돌"
+    if entry.get("kind", "") == "돌격":
+        var ground: String = entry.get("impact_ground", "")
+        return "기병 충돌" if ground.is_empty() else ground + " 돌격"
     if bool(entry.get("rear",false)): return "후방 타격"
     if bool(entry.get("flank",false)): return "측면 타격"
     if bool(entry.get("linked",false)): return "협동 타격"
@@ -2644,7 +2646,7 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         if fx["kind"]=="화살" and age>=0.0 and age<FrontView.VOLLEY_RECOVERY+FrontView.volley_lane_delay(2) and fx.has("attacker_id"):
             if fx.get("side",-1)==0 or _knows_field_point(fx.get("visual_from",fx["from"])):
                 volleys[int(fx["attacker_id"])]=fx
-        if fx.has("defender_id") and age >= 0.0 and age < (1.1 if fx["kind"] == "화살" else 0.26) and _combat_effect_visible(fx):
+        if fx.has("defender_id") and age >= 0.0 and age < (1.1 if fx["kind"] == "화살" else FrontView.CHARGE_REACTION_TIME) and _combat_effect_visible(fx):
             _collect_impact(impacts, fx, age)
     for unit in visible_units:
         if not field_view.has_point(unit["pos"]): continue
@@ -2782,7 +2784,8 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             point=point.clamp(Vector2.ZERO,sim.field_size)
             if exchanges.has(person):
                 var action: Dictionary=exchanges[person]
-                exchange_pose=InfantryExchange.pose(action["role"],render_clock-action["at"])
+                stroke_age = render_clock - float(action["at"])
+                exchange_pose=InfantryExchange.pose(action["role"],stroke_age)
             batch.append({"point":point,"unit":unit,"accent":accent,"index":index,"target":local_target,
                 "bow_age":bow_age,"shadow":index<core,"reaction":FrontView.hit_reaction(point, index, incoming),"file_step":file_step,"swing_at":swing_at,"stride_angle":stride_angle,"stroke_age":stroke_age,"look_angle":look_angle,"exchange_pose":exchange_pose})
     batch.sort_custom(func(a:Dictionary,b:Dictionary)->bool: return (a["point"] as Vector2).y<(b["point"] as Vector2).y)
@@ -2793,6 +2796,8 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
 # when that lane lands, after its release delay and flight.
 func _collect_impact(impacts: Dictionary, fx: Dictionary, age: float) -> void:
     var arrow: bool = fx["kind"] == "화살"
+    var charge: bool = fx["kind"] == "돌격"
+    var duration := FrontView.CHARGE_REACTION_TIME if charge else 0.26
     var lanes: Array = fx.get("arrow_lanes", [fx.get("visual_from", fx["from"]), fx.get("visual_to", fx["to"])])
     for i in range(0, lanes.size(), 2):
         var origin: Vector2 = lanes[i]
@@ -2801,12 +2806,13 @@ func _collect_impact(impacts: Dictionary, fx: Dictionary, age: float) -> void:
         if arrow:
             if fog_enabled and not sim.finished and (not sim.player_can_see(origin) or not sim.player_can_see(target)): continue
             elapsed = FrontView.arrow_age(age, i >> 1) - _arrow_flight(origin, target)
-        if elapsed < 0.0 or elapsed >= 0.26: continue
+        if elapsed < 0.0 or elapsed >= duration: continue
         var defender: int = fx["defender_id"]
         if not impacts.has(defender): impacts[defender] = []
         var direction := (fx["from"] as Vector2).direction_to(fx["to"])
-        impacts[defender].append({"target":target, "direction":direction, "age":elapsed,
-            "radius":24.0 if fx["kind"] == "돌격" else (12.0 if arrow else 15.0)})
+        var hit := {"target":target, "direction":direction, "age":elapsed, "radius":12.0 if arrow else 15.0}
+        if charge: hit["recoil"] = Vector2(fx.get("recoil", Vector2.ZERO)).length()
+        impacts[defender].append(hit)
 
 func _arrow_flight(origin: Vector2, target: Vector2) -> float:
     var launch := origin + (origin.direction_to(target)*2.4 + Vector2(0,-6.0))*SOLDIER_SCALE
@@ -3562,6 +3568,11 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     if exchange_pose >= 0:
         moving=false
         tilt=0.0
+        if stroke_age >= 0.0:
+            if exchange_pose == InfantryExchange.Pose.THRUST:
+                tilt = 0.18 * sin(PI * smoothstep(0.10, 0.32, stroke_age))
+            elif exchange_pose == InfantryExchange.Pose.STUMBLE:
+                tilt = -0.23 * sin(PI * smoothstep(0.17, 0.40, stroke_age))
     var ground := p
     if moving:
         var stride := sin(stride_angle if stride_angle != -INF else (file_phase if dressing else _stride_phase(unit, index)))
@@ -3571,8 +3582,11 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
 
     var hit := reaction.length_squared() > 0.025
     if hit:
-        if kind == 0: tilt -= 0.09 * reaction.length()
-        else: p += reaction * SOLDIER_SCALE * 2.6
+        if kind == 0:
+            tilt += 0.11 * reaction.dot(direction)
+            p += reaction * SOLDIER_SCALE * 2.5
+        else:
+            p += reaction * SOLDIER_SCALE * 2.6
         pose = 5
     if kind == 0 and stroke_age != -INF and exchange_pose < 0:
         # Rotate the upper body about the atlas foot anchor. The feet keep
@@ -3601,7 +3615,8 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
         row = int(unit["side"])*2 + (1 if posmod(index*7+int(unit["id"]),11)<4 else 0)
         if pose>=2: frame=pose+3
     elif kind==0:
-        if exchange_pose>=0: frame=5+exchange_pose
+        if reaction.length_squared() > 1.1: frame=8
+        elif exchange_pose>=0: frame=5+exchange_pose
         elif pose>=2: frame=[5,6,10,8][pose-2]
     elif aiming!=FrontView.BowPhase.IDLE:
         frame=4+int(aiming)

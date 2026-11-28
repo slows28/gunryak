@@ -72,6 +72,14 @@ func _contact_footwork() -> void:
     var impacts := [{"target":Vector2.ZERO, "direction":Vector2.DOWN, "age":0.085, "radius":18.0}]
     _check(front.hit_reaction(Vector2.ZERO,0,impacts).y > 0.9 and front.hit_reaction(Vector2(28,0),0,impacts) == Vector2.ZERO,
         "only nearby files flinch in the incoming direction")
+    var wave := [{"target": Vector2.ZERO, "direction": Vector2.RIGHT, "age": 0.07, "recoil": 32.0}]
+    _check(front.hit_reaction(Vector2.ZERO, 0, wave).x > 2.0 and front.hit_reaction(Vector2(17,0), 0, wave) == Vector2.ZERO,
+        "the first files take the impact before the following rank")
+    wave[0].age = 0.21
+    _check(front.hit_reaction(Vector2(17,0), 0, wave).x > 0.5 and front.hit_reaction(Vector2(0,24), 0, wave) == Vector2.ZERO,
+        "the impact travels into the files on its axis")
+    wave[0].recoil = 0.0
+    _check(front.hit_reaction(Vector2(17,0), 0, wave) == Vector2.ZERO, "a braced front keeps its supporting rank planted")
     var horse := _place(sim.find_unit(2), Vector2(600,750), "기병", "봉시진")
     horse["motion_speed"] = 135.0
     sim._emit_march_dust(horse, horse["pos"]-Vector2(13,0), Vector2(13,0))
@@ -254,6 +262,9 @@ func _running_charge() -> void:
         "the command map attack builds momentum on approach and a hold order preserves its movement")
     _check(open["peak"] > 145.0 and open["first"].get("kind") == "돌격" and open["hits"] == 1,
         "a cavalry run accelerates into one real impact and cannot rearm inside the melee")
+    var impact: Dictionary = open["first"]
+    _check(impact.has("visual_from") and Vector2(impact["visual_from"]).distance_to(impact["visual_to"]) <= WarSim.MOUNTED_CONTACT_REACH,
+        "the wedge reaches the opposing file before damage and recoil")
     _check(braced["first"].get("braced", false) and braced["first"]["damage"] < open["first"]["damage"] * 0.4,
         "stationary square catches the first files even when centers are more than 70 apart")
     _check(open["displacement"] > 22.0 and open["displacement"] > braced["displacement"] + 10.0,
