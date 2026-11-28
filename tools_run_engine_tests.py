@@ -23,6 +23,7 @@ TESTS = [
     ("simulation", ["--headless", "--path", "{project}", "--script", "res://tests/smoke.gd"], "GUNRYAK_TEST_SUMMARY"),
     ("campaign_demo", ["--headless", "--path", "{project}", "--script", "res://tests/demo_smoke.gd"], "GUNRYAK_DEMO_PASS"),
     ("northern_campaign", ["--headless", "--path", "{project}", "--script", "res://tests/northern_campaign.gd"], "GUNRYAK_NORTHERN_PASS"),
+    ("officer_signatures", ["--headless", "--path", "{project}", "--script", "res://tests/officer_signatures.gd"], "OFFICER_SIGNATURES_PASS"),
     ("battle_visibility", ["--headless", "--path", "{project}", "--script", "res://tests/battle_visibility.gd"], "BATTLE_VISIBILITY_PASS"),
     ("objective_pressure", ["--headless", "--path", "{project}", "--script", "res://tests/objective_pressure.gd"], "GUNRYAK_PRESSURE_PASS"),
     ("unit_combat", ["--headless", "--path", "{project}", "--script", "res://tests/combat_upgrades.gd"], "GUNRYAK_COMBAT_PASS"),

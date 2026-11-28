@@ -109,6 +109,7 @@ var sample_at: float = 0.0
 var mind_sample_at: float = 0.0
 var pending_reports: Array[Dictionary] = []
 var structures: Array[Dictionary] = []
+var signature_seed: int=0
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var battle_time: float = 0.0
 var turn: int = 1
@@ -174,6 +175,7 @@ func reset() -> void:
     tactical_delivered = 0
     tactical_refused = 0
     last_situation_scan = -5.0
+    signature_seed=0
     rng.seed = 20261124
     next_id = 0
     battle_time = 0.0
@@ -274,6 +276,7 @@ func _add_unit(side: int, title: String, unit_type: String, disposition: String,
         "deputy_index":0, "active_deputy":false, "last_timeline_action":"대기", "last_visual":-100.0, "last_hit":-100.0, "structure_damage":0.0, "tactical_order":"", "tactical_target":-1, "tactical_anchor":start, "tactical_until":0.0, "initiative_until":0.0, "link_id":-1, "assigned_link":-1, "order_destination":Vector2.ZERO, "has_destination":false, "destination_reached":false, "flank_target":-1, "flank_goal":Vector2.ZERO, "flank_until":0.0, "flank_phase":0, "linked_hits":0.0, "counter_damage":0.0, "flank_damage":0.0, "maneuver_distance":0.0, "support_seconds":0.0, "flank_completed":0, "screened_damage":0.0, "screen_events":0, "ai_role":"", "ai_partner":-1, "ai_role_until":0.0, "ai_replans":0, "bridge_y":-1.0, "bridge_bank":0, "bridge_crossings":0, "blocked_water_steps":0, "guard_intercept_damage":0.0, "guard_intercept_ticks":0, "flank_commits":0, "flank_aborts":0, "flank_recovery":0.0, "flank_contact_at":-100.0
     }
     _set_general_profile(unit)
+    if Skills.Profiles.DATA.has(title): Skills.attach(unit,title,"")
     unit["mind"]=GeneralMind.initial(unit)
     if unit_type == "기병":
         unit["formation"] = "종대"
@@ -2038,16 +2041,30 @@ func _combat(dt: float) -> void:
             guard["screened_damage"]+=saved
             guard["screen_events"]+=1
         var guarding:bool=long_operation and unit_type!="궁병" and _guarding_archer_in_contact(enemy,unit)
+        var attack_kind: String="돌격" if shock>0.0 else ("화살" if bow else "근접")
+        var signature_hit:=false
+        if shock>0.0 or bow:
+            signature_hit=Skills.contact(self,unit,enemy["id"],"impact" if shock>0.0 else "arrow_hit")
+        var stagger: Dictionary=unit.get("stagger",{})
+        var stagger_saved:=0.0
+        if stagger.get("end",-1.0)>battle_time:
+            stagger_saved=(damage+shock)*float(stagger["power"])
+            damage*=1.0-float(stagger["power"])
+            shock*=1.0-float(stagger["power"])
         var original_damage:=damage+shock
         var adjusted:=original_damage
         if unit.has("skill_ids"): adjusted=Skills.attack_factor(unit,enemy,bow,adjusted)
+        if signature_hit and bow: adjusted+=minf(original_damage,20.0)
         var bonus:=adjusted-original_damage
         var damage_requested:=Skills.absorb(enemy,adjusted) if enemy.has("skill_ids") else adjusted
         if damage_requested<=0.0: continue
         var source_id: int=int(unit["id"])
         var target_id: int=int(enemy["id"])
-        var attack_kind: String="돌격" if shock>0.0 else ("화살" if bow else "근접")
         var entry: Dictionary={
+            "stagger":unit["field_skill"] if signature_hit and shock>0.0 else {},
+            "stagger_credit":stagger.get("stat",{}),"stagger_saved":stagger_saved,
+            "attacker_stat":unit.get("field_skill",{}).get("stat",{}),
+            "defender_stat":enemy.get("field_skill",{}).get("stat",{}),
             "skill_bonus":bonus*(damage_requested/maxf(0.00001,adjusted)),"skill_saved":adjusted-damage_requested,"defender_id":target_id,"attacker_id":source_id,"damage":damage_requested,"flank":flank or rear,"rear":rear,
             "shock":shock,"braced":braced,"screened":lane_screened or not guard.is_empty(),"linked":link,"partner_id":partner_id,
             "ambush":ambush,"counter":counter,"guarding":guarding,"kind":attack_kind,"contacts":contacts,
@@ -2076,9 +2093,11 @@ func _combat(dt: float) -> void:
         var actual_damage: float=minf(remaining,float(entry["damage"])*allocation)
         if remaining-actual_damage<0.000001: actual_damage=remaining
         if entry["skill_bonus"]>0.0:
-            var officer: Dictionary=find_unit(entry["attacker_id"])
-            officer["field_skill"]["stat"]["effect"]+=float(entry["skill_bonus"])*allocation
-        if entry["skill_saved"]>0.0: defender["field_skill"]["stat"]["effect"]+=minf(remaining,float(entry["skill_saved"])*allocation)
+            entry["attacker_stat"]["effect"]+=float(entry["skill_bonus"])*allocation
+        if entry["skill_saved"]>0.0: entry["defender_stat"]["effect"]+=minf(remaining,float(entry["skill_saved"])*allocation)
+        if not entry["stagger"].is_empty(): defender["stagger"]=entry["stagger"]
+        if entry["stagger_saved"]>0.0: entry["stagger_credit"]["effect"]+=float(entry["stagger_saved"])*allocation
+        for key in ["attacker_stat","defender_stat","stagger_credit","stagger"]: entry.erase(key)
         entry["damage"]=actual_damage
         combat_contacts[int(entry["attacker_id"])]=entry
         _take_combat_loss(defender, actual_damage, entry["from"], entry["kind"] != "화살")
@@ -2086,6 +2105,7 @@ func _combat(dt: float) -> void:
             defender["guard_intercept_damage"]+=actual_damage
             defender["guard_intercept_ticks"]+=1
         defender["last_hit"]=battle_time
+        defender["last_attacker"]=entry["attacker_id"]
         if entry["kind"]=="화살": defender["last_arrow_hit"]=battle_time
         if bool(entry["braced"]): defender["brace_stops"]+=1
         if bool(entry["rear"]): defender["rear_losses"]+=actual_damage
@@ -2718,18 +2738,8 @@ func _courier_route(letter: Dictionary, target: Vector2) -> Vector2:
 # M5: distinct general profiles. Values are prototype design parameters.
 func _set_general_profile(unit: Dictionary) -> void:
     var a: float = float(unit["ability"])
-    var profile: Array[float] = [a, a, a, a, 75.0]
-    match str(unit["name"]):
-        "왕평": profile = [92.0, 76.0, 72.0, 88.0, 92.0]
-        "마속": profile = [52.0, 47.0, 89.0, 55.0, 58.0]
-        "위연": profile = [84.0, 93.0, 69.0, 81.0, 46.0]
-        "장합": profile = [89.0, 86.0, 78.0, 86.0, 85.0]
-        "강유": profile = [83.0,79.0,88.0,85.0,80.0]
-        "관흥": profile = [74.0,87.0,61.0,72.0,85.0]
-        "장익": profile = [82.0,72.0,73.0,78.0,90.0]
-        "곽회": profile = [85.0,76.0,83.0,86.0,90.0]
-        "비요": profile = [74.0,84.0,65.0,75.0,76.0]
-        "왕쌍": profile = [77.0,91.0,61.0,68.0,82.0]
+    var profile: Array=[a,a,a,a,75.0]
+    if Skills.Profiles.DATA.has(unit["name"]): profile=Skills.Profiles.DATA[unit["name"]][1]
     unit["leadership"] = profile[0]
     unit["martial"] = profile[1]
     unit["intelligence"] = profile[2]
@@ -3136,12 +3146,12 @@ func swap_generals(first_id: int, second_id: int) -> bool:
     var second: Dictionary = find_unit(second_id)
     if first.is_empty() or second.is_empty() or int(first["side"]) != 0 or int(second["side"]) != 0:
         return false
-    var fields:=["name","personality","ability","leadership","martial","intelligence","judgment","loyalty","deputy_index","specialty"]
-    if first.has("skill_ids") and second.has("skill_ids"): fields.append_array(["skill_ids","field_skill","skill_stats","skill_ready"])
-    for key in fields:
-        var temporary: Variant = first[key]
-        first[key] = second[key]
-        second[key] = temporary
+    for key in ["name","personality","ability","leadership","martial","intelligence","judgment","loyalty","deputy_index","specialty","mind","skill_ids","field_skill","skill_stats","skill_ready"]:
+        var value: Variant=first.get(key)
+        if second.has(key): first[key]=second[key]
+        else: first.erase(key)
+        if value!=null: second[key]=value
+        else: second.erase(key)
     return true
 
 # These staging points follow the actual scenario geometry. Victory sites stay
@@ -3666,9 +3676,11 @@ func _relief_decision(ally: Dictionary, sender: Dictionary) -> String:
         return "본진 수비를 우선"
     var threat:=_nearest_visible_enemy(ally)
     var engaged: bool=not threat.is_empty() and (ally["pos"] as Vector2).distance_to(threat["pos"])<130
-    if ally["personality"]=="신중" and (engaged or ally["rations"]<35 or ally["morale"]<65):
+    var cooperation: float=ally["mind"]["profile"]["cooperation"]
+    var relief_margin: float=(cooperation-50.0)*0.16
+    if ally["personality"]=="신중" and (engaged or ally["rations"]<35-relief_margin or ally["morale"]<65-relief_margin):
         return "신중한 판단 · 자군 방어를 우선"
-    if engaged and ally["personality"]!="공격" and ally["troops"]<threat["troops"]: return "현재 교전에서 병력 열세"
+    if engaged and ally["personality"]!="공격" and ally["troops"]*(1.0+relief_margin*0.01)<threat["troops"]: return "현재 교전에서 병력 열세"
     return ""
 
 func _move_relief_riders(dt: float) -> void:
@@ -3702,6 +3714,10 @@ func _move_relief_riders(dt: float) -> void:
         var text: String="%s → %s군 구원 " % [ally["name"],report["sender"]]
         if reason.is_empty() and ally.get("mounted_partner",-1)==report["unit_id"] and ally["action"] in ["협동 우회","돌파"]:
             text+="협동 중 · 같은 적에 대한 측면 지원 계속"
+        elif reason.is_empty() and report["unit_id"] in ally.get("rally_station",{}).get("members",PackedInt32Array()):
+            ally["rally_request"]={"ally":report["unit_id"],"end":battle_time+24.0}
+            ally["ai_cooldown"]=0.0
+            text+="수락 · 공동 집결 구역에서 엄호"
         elif reason.is_empty():
             ally["tactical_order"]="지원"
             ally["tactical_target"]=report["unit_id"]

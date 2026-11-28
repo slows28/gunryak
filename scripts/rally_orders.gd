@@ -96,17 +96,20 @@ static func _support_contact(sim, unit: Dictionary, station: Dictionary, nearest
     var post: Vector2 = station["point"]
     var bow: bool = unit["type"] == "궁병"
     if p.distance_to(post)>220.0 or unit["troops"]<600 or unit["cohesion"]<40 or unit["morale"]<35: return {}
-    if bow and (unit["ammo"]<12 or p.distance_to(nearest["pos"])<110.0): return {}
+    if bow and (unit["ammo"]<12 or (nearest["type"]!="궁병" and p.distance_to(nearest["pos"])<110.0)): return {}
     var members: PackedInt32Array = station["members"]
     var best := {}
     var cost := INF
-    for foe in sim.units:
-        var ally_id: int = foe.get("last_strike_target",-1)
-        if ally_id==unit["id"] or ally_id not in members or sim.battle_time-foe.get("last_strike_at",-100.0)>3.0: continue
-        if foe["routed"] or not sim._locally_observed(unit,foe): continue
-        var ally: Dictionary = sim.find_unit(ally_id)
+    for ally_id in members:
+        if ally_id==unit["id"]: continue
+        var ally: Dictionary=sim.find_unit(ally_id)
+        if sim.battle_time-ally["last_hit"]>3.0: continue
+        var foe: Dictionary=sim.find_unit(ally.get("last_attacker",-1))
+        if foe.is_empty() or foe["routed"] or not sim._locally_observed(unit,foe): continue
         var ap: Vector2 = ally["pos"]
-        if ally["routed"] or ally["troops"]<600 or ap.distance_to(ally["rally_station"]["point"])>120.0: continue
+        if ally["routed"] or ally["troops"]<600: continue
+        # An arriving column can come under fire in the helper's assigned sector.
+        if minf(ap.distance_to(ally["rally_station"]["point"]),ap.distance_to(post))>120.0: continue
         if p.distance_to(ap)>225.0 or sim._river_separates(p,ap): continue
         var ep: Vector2 = foe["pos"]
         if nearest["id"]!=foe["id"] and sim._in_melee(unit,nearest): continue
@@ -128,6 +131,8 @@ static func _support_contact(sim, unit: Dictionary, station: Dictionary, nearest
             if other.get("rally_covering",false) and other.get("field_choice",{}).get("ally",-1)==ally_id: responders+=1
         if responders>=2: continue
         var travel := p.distance_to(goal) + float(responders)*40.0
+        var request: Dictionary=unit.get("rally_request",{})
+        if request.get("end",-1.0)>sim.battle_time and request["ally"]==ally_id: travel-=65.0
         if travel>=cost: continue
         cost = travel
         best = {"action":"아군 보호","goal":goal,"ally":ally_id,"target":foe["id"],"rally_cover":true,

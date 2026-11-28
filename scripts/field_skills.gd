@@ -1,4 +1,5 @@
 extends RefCounted
+const Profiles=preload("res://scripts/officer_profiles.gd")
 const March = preload("res://scripts/linked_march.gd")
 ## Model seconds. Orders classify eligibility only. Skills consume real contacts and never issue orders.
 const ALL := ["attack","guard","march","support","withdraw"]
@@ -7,6 +8,8 @@ const MOBILE := ["attack","march","support"]
 const DEFENSE := ["guard","support"]
 # trigger, effect, missions, target, radius, strength, duration, cooldown, priority, condition text
 const RULES := {
+    "shock_contact":["impact","stagger",OFFENSE,"enemy",0,0.14,1.5,4.0,10,"기병이 공격 임무 중 적 대열에 돌격 적중"],
+    "single_volley":["arrow_hit","precision",["attack","guard","support"],"enemy",0,1.0,0.9,4.0,10,"궁병이 유효 사거리에서 화살 명중"],
     "break":["melee","break",OFFENSE,"enemy",30,12.0,3.0,22.0,7,"공격 임무로 적 대열과 근접 교전"],
     "onslaught":["melee","attack",OFFENSE,"self",30,0.35,4.0,23.0,5,"공격 임무로 근접전을 지속"],
     "wall":["pressure","guard",DEFENSE,"self",0,0.38,5.0,22.0,8,"방어·엄호 임무 중 적의 공격이 집중"],
@@ -68,8 +71,32 @@ const CATALOG := {
     "regroup":["집결인","대열수습","dress",0.55],
     "shield":["수비패","진지엄호","wall",0.6],
 }
-const SIGNAL := {"break":Color("#d18b69"),"attack":Color("#ce9677"),"guard":Color("#8bb4c2"),"stand":Color("#b2b4c8"),"stride":Color("#a4bc98"),"pursue":Color("#bbaa82"),"feint":Color("#b7a4b8"),"reform":Color("#a2b6b6"),"rally":Color("#d3bd83"),"volley":Color("#b7b394"),"siege":Color("#bd9680")}
-const EFFECT_TEXT := {"break":"상대 응집 감소","attack":"조건을 충족한 공격 피해 증가","guard":"받는 피해·충격 사기 손실 감소","stand":"사기 패주 억제","stride":"이동 속도 증가","pursue":"패주 중인 상대를 향한 이동 가속","feint":"잠시 물러나며 받는 피해 감소","reform":"응집 회복","rally":"인근 아군 사기 회복","volley":"실제 화살 피해 증가","siege":"방어시설 피해 증가"}
+const SIGNAL := {"stagger":Color("#ca9a75"),"precision":Color("#d8b779"),"break":Color("#d18b69"),"attack":Color("#ce9677"),"guard":Color("#8bb4c2"),"stand":Color("#b2b4c8"),"stride":Color("#a4bc98"),"pursue":Color("#bbaa82"),"feint":Color("#b7a4b8"),"reform":Color("#a2b6b6"),"rally":Color("#d3bd83"),"volley":Color("#b7b394"),"siege":Color("#bd9680")}
+const EFFECT_TEXT := {"stagger":"적 한 부대가 잠시 혼란 · 공격 위력 14% 감소","precision":"한 번의 사격 피해 2배 · 추가 손실 최대 20명","break":"상대 응집 감소","attack":"조건을 충족한 공격 피해 증가","guard":"받는 피해·충격 사기 손실 감소","stand":"사기 패주 억제","stride":"이동 속도 증가","pursue":"패주 중인 상대를 향한 이동 가속","feint":"잠시 물러나며 받는 피해 감소","reform":"응집 회복","rally":"인근 아군 사기 회복","volley":"실제 화살 피해 증가","siege":"방어시설 피해 증가"}
+
+static func title(id: String) -> String:
+    return Profiles.DATA[id][2] if Profiles.DATA.has(id) else CATALOG[id][1]
+
+static func rule_for(id: String) -> Array:
+    return RULES[Profiles.DATA[id][3] if Profiles.DATA.has(id) else CATALOG[id][2]]
+
+static func describe_signature(officer: String) -> String:
+    var rule:=rule_for(officer)
+    var power:=float(rule[5])*float(Profiles.DATA[officer][4])
+    var seconds:=int(minf(rule[6],3.0)*4)
+    var effect: String=EFFECT_TEXT[rule[1]]
+    match rule[1]:
+        "break": effect="적 응집 −%d" % roundi(power)
+        "attack","volley": effect="%d초간 해당 공격 피해 +%d%%" % [seconds,roundi(power*100)]
+        "guard","feint": effect="%d초간 받는 피해 −%d%%" % [seconds,roundi(power*100)]
+        "stride","pursue": effect="%d초간 이동 속도 +%d%%" % [seconds,roundi(power*100)]
+        "stand": effect="%d초간 사기 패주 억제" % seconds
+        "rally": effect="주변 아군 사기 +%d" % roundi(power)
+        "reform": effect="자군 응집 +%d" % roundi(power)
+        "siege": effect="%d초간 시설 피해 +%d%%" % [seconds,roundi(power*100)]
+        "stagger": effect="적 한 부대 6초 혼란 · 공격 위력 −14%"
+        "precision": effect="이번 사격 최대 2배 · 추가 손실 최대 20명"
+    return "발동   %s\n효과   %s" % [rule[9],effect]
 
 static func describe(id: String) -> String:
     if not CATALOG.has(id): return "장착 없음"
@@ -140,10 +167,33 @@ static func ready(sim,u: Dictionary,rule: Array) -> bool:
 static func attach(u: Dictionary,innate: String,gear: String) -> void:
     u["skill_ids"]=[innate]
     if gear!="" and gear!=innate: u["skill_ids"].append(gear)
+    u.erase("signature_window")
     u.erase("skill_scan")
     u["skill_ready"]={}
     u["skill_stats"]={}
     u["field_skill"]={}
+
+# One reproducible draw per eligible half-day, shared by scans and on-hit triggers.
+# Passing time in camp does not consume an opportunity. Do not advance the battle RNG.
+static func _opportunity(sim,u: Dictionary) -> bool:
+    var half:=int(floor(sim.battle_time/(sim.turn_duration()*0.5)))
+    if u.get("signature_window",-1)==half: return false
+    u["signature_window"]=half
+    var seed_value: int=sim.signature_seed if sim.signature_seed!=0 else sim.rng.seed
+    var sample:=hash([seed_value,sim.scenario_title,u["name"],u["id"],half])%100
+    return sample < (80 if half%2==0 else 65)
+
+static func contact(sim,u: Dictionary,target: int,trigger: String) -> bool:
+    var id: String=u["name"]
+    if not Profiles.DATA.has(id) or id not in u.get("skill_ids",[]): return false
+    var rule:=rule_for(id)
+    if rule[0]!=trigger or u["routed"] or u["active_deputy"] or u["general_state"]=="전사" or sim.command_confused(u["side"]): return false
+    if u["skill_ready"].get(id,0.0)>sim.battle_time or mission(u,sim.battle_time) not in rule[2]: return false
+    var active: Dictionary=u["field_skill"]
+    if active.get("end",-1.0)>sim.battle_time and active["priority"]>=rule[8]: return false
+    if not _opportunity(sim,u): return false
+    _activate(sim,u,id,target)
+    return true
 
 static func tick(sim,u: Dictionary) -> void:
     if u["routed"] or u["general_state"]=="전사" or u["active_deputy"] or sim.command_confused(u["side"]):
@@ -157,22 +207,30 @@ static func tick(sim,u: Dictionary) -> void:
     u["skill_scan"]=sim.battle_time+0.5
     var chosen: String=""
     var priority: int=0 if active.is_empty() else active["priority"]
-    for id: String in u["skill_ids"]:
-        var rule: Array=RULES[CATALOG[id][2]]
+    var ids: Array=u["skill_ids"]
+    var gear_first: bool=ids.size()==2 and Profiles.DATA.has(ids[0]) and rule_for(ids[1])[8]>rule_for(ids[0])[8]
+    for i in ids.size():
+        var id: String=ids[1-i if gear_first else i]
+        var rule:=rule_for(id)
         if priority>=int(rule[8]) or u["skill_ready"].get(id,0.0)>sim.battle_time or task not in rule[2]: continue
-        if ready(sim,u,rule):
+        if rule[0] in ["impact","arrow_hit"]: continue
+        if ready(sim,u,rule) and (not Profiles.DATA.has(id) or _opportunity(sim,u)):
             chosen=id
             priority=rule[8]
     if chosen.is_empty(): return
-    var item: Array=CATALOG[chosen]
-    var rule: Array=RULES[item[2]]
-    var power:=float(rule[5])*float(item[3])
+    var target: int=sim.combat_contacts.get(u["id"],{}).get("defender_id",-1)
+    _activate(sim,u,chosen,target)
+
+static func _activate(sim,u: Dictionary,chosen: String,target: int) -> void:
+    var signature:=Profiles.DATA.has(chosen)
+    var rule:=rule_for(chosen)
+    var power:=float(rule[5])*float(Profiles.DATA[chosen][4] if signature else CATALOG[chosen][3])
+    var duration:=minf(rule[6],3.0) if signature else float(rule[6])
     var stat: Dictionary=u["skill_stats"].get(chosen,{"uses":0,"effect":0.0})
     stat["uses"]+=1
     u["skill_stats"][chosen]=stat
-    u["skill_ready"][chosen]=sim.battle_time+float(rule[7])
-    var target: int=sim.combat_contacts.get(u["id"],{}).get("defender_id",-1)
-    u["field_skill"]={"id":chosen,"title":item[1],"effect":rule[1],"power":power,"start":sim.battle_time,"end":sim.battle_time+float(rule[6]),"missions":rule[2],"priority":priority,"target":target,"anchor":u["pos"],"stat":stat}
+    u["skill_ready"][chosen]=sim.battle_time+(4.0 if signature else float(rule[7]))
+    u["field_skill"]={"id":chosen,"title":title(chosen),"effect":rule[1],"power":power,"start":sim.battle_time,"end":sim.battle_time+duration,"missions":rule[2],"priority":rule[8],"target":target,"anchor":u["pos"],"stat":stat}
     match rule[1]:
         "break":
             var foe: Dictionary=sim.find_unit(target)
@@ -190,8 +248,8 @@ static func tick(sim,u: Dictionary) -> void:
                     var amount:=minf(100.0-ally["morale"],power)
                     ally["morale"]+=amount
                     stat["effect"]+=amount
-    u["last_skill_report"]="%s · %s" % [item[1],EFFECT_TEXT[rule[1]]]
-    if u["side"]==0: sim._field_notice("%s · %s 발동 · %s" % [u["name"],item[1],EFFECT_TEXT[rule[1]]],u["pos"],u["id"])
+    u["last_skill_report"]="%s · %s" % [title(chosen),EFFECT_TEXT[rule[1]]]
+    if u["side"]==0: sim._field_notice("%s · %s 발동 · %s" % [u["name"],title(chosen),EFFECT_TEXT[rule[1]]],u["pos"],u["id"])
 
 static func current(u: Dictionary,effects: Array) -> Dictionary:
     var skill: Dictionary=u.get("field_skill",{})
@@ -212,8 +270,9 @@ static func absorb(u: Dictionary,value: float) -> float:
 
 
 static func effect_stat(id: String,value: float) -> String:
-    var effect: String=RULES[CATALOG[id][2]][1]
+    var effect: String=rule_for(id)[1]
     match effect:
+        "stagger": return "혼란으로 억제한 피해 %d" % roundi(value)
         "stand": return "패주 억제 %d초" % roundi(value)
         "pursue","stride": return "추가 이동 %d" % roundi(value)
         "break","reform": return "응집 %d" % roundi(value)

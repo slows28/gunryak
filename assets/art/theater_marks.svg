@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 32" width="256" height="64" fill="#fff">
+  <!-- Crossed straight swords, crenellated gate, mountain pass, arched bridge. -->
+  <g>
+    <path id="blade" d="m4 2 5 2 14 16-2 2L6 8zM17 22l7-6 2 2-7 6zm5 0 2-2 5 6-2 2z"/>
+    <use href="#blade" transform="translate(32 0) scale(-1 1)"/>
+    <path d="m25 2-3 6L8 22l-2-2L20 4zM6 16l8 7-2 2-8-7zm2 4 2 2-5 6-2-2z"/>
+  </g>
+  <g transform="translate(32)" fill-rule="evenodd">
+    <path d="M2 27h28v2H2zM3 24V8h3v3h3V8h3v5h8V8h3v3h3V8h3v16h-9v-4a4 4 0 0 0-8 0v4zM10 6l6-4 6 4zM12 7h8v3h-8z"/>
+  </g>
+  <g transform="translate(64)">
+    <path d="m1 24 9-17 5 9-2 3-3-6-5 11zm14 0 9-20 8 20h-4l-4-12-5 12zM6 28l11-7-3 4 6 3z"/>
+  </g>
+  <g transform="translate(96)">
+    <path d="M2 13h3v-4h2v4h4V8h2v5h6V8h2v5h4V9h2v4h3v3H2zm2 5h24v7h-4a8 8 0 0 0-16 0H4z"/>
+    <path d="M2 28q4-3 7-1t7 0 7 0 7-1v2q-3 3-7 1t-7 0-7 0-7 1z"/>
+  </g>
+</svg>

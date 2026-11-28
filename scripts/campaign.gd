@@ -1,6 +1,7 @@
 extends RefCounted
 # Demo campaign: all strategic effects are carried into actual battle setup.
 const GeneralMind = preload("res://scripts/general_mind.gd")
+const Profiles=preload("res://scripts/officer_profiles.gd")
 const SAVE_PATH = "user://gunryak_demo_v1.json"
 const NODES = [
     {"name":"한중","pos":[100,300],"links":[1,2],"scenario":0,"story":"촉군의 출발지. 보급을 정비한다."},
@@ -14,19 +15,19 @@ const EXTRA_SLOTS = [9,10,11,12]
 const NEW_CORPS = {"active":EXTRA_SLOTS,"troops":[3900,3700,3400,3500],
     "formations":["방진","어린진","안행진","봉시진"],"types":["보병","보병","궁병","기병"]}
 const OFFICERS = [
-    {"name":"왕평","personality":"신중","stats":[92,76,72,88,92],"specialty":"방진"},
-    {"name":"마속","personality":"균형","stats":[52,47,89,55,58],"specialty":"정찰"},
-    {"name":"위연","personality":"공격","stats":[84,93,69,81,46],"specialty":"돌격"},
-    {"name":"강유","personality":"균형","stats":[83,79,88,85,80],"specialty":"정찰"},
-    {"name":"관흥","personality":"공격","stats":[74,87,61,72,85],"specialty":"돌격"},
-    {"name":"장익","personality":"신중","stats":[82,72,73,78,90],"specialty":"방진"},
-    {"name":"요화","personality":"신중","stats":[76,75,69,78,90],"specialty":"방진"},
-    {"name":"마대","personality":"공격","stats":[77,83,65,77,85],"specialty":"돌격"},
-    {"name":"오의","personality":"균형","stats":[79,73,74,80,87],"specialty":"정찰"},
-    {"name":"장포","personality":"공격","stats":[79,88,63,77,85],"specialty":"방진"},
-    {"name":"진도","personality":"신중","stats":[84,82,74,82,88],"specialty":"방진"},
-    {"name":"등지","personality":"균형","stats":[77,66,85,83,89],"specialty":"정찰"},
-    {"name":"오반","personality":"공격","stats":[78,83,66,77,82],"specialty":"돌격"}
+    {"name":"왕평","personality":"신중","stats":Profiles.DATA["왕평"][1],"specialty":"방진"},
+    {"name":"마속","personality":"균형","stats":Profiles.DATA["마속"][1],"specialty":"정찰"},
+    {"name":"위연","personality":"공격","stats":Profiles.DATA["위연"][1],"specialty":"돌격"},
+    {"name":"강유","personality":"균형","stats":Profiles.DATA["강유"][1],"specialty":"정찰"},
+    {"name":"관흥","personality":"공격","stats":Profiles.DATA["관흥"][1],"specialty":"돌격"},
+    {"name":"장익","personality":"신중","stats":Profiles.DATA["장익"][1],"specialty":"방진"},
+    {"name":"요화","personality":"신중","stats":Profiles.DATA["요화"][1],"specialty":"방진"},
+    {"name":"마대","personality":"공격","stats":Profiles.DATA["마대"][1],"specialty":"돌격"},
+    {"name":"오의","personality":"균형","stats":Profiles.DATA["오의"][1],"specialty":"정찰"},
+    {"name":"장포","personality":"공격","stats":Profiles.DATA["장포"][1],"specialty":"방진"},
+    {"name":"진도","personality":"신중","stats":Profiles.DATA["진도"][1],"specialty":"방진"},
+    {"name":"등지","personality":"균형","stats":Profiles.DATA["등지"][1],"specialty":"정찰"},
+    {"name":"오반","personality":"공격","stats":Profiles.DATA["오반"][1],"specialty":"돌격"}
 ]
 var state: Dictionary = {}
 var six_armies: bool = false
@@ -180,6 +181,7 @@ func prepare(target: int, sim) -> bool:
             u[key] = minf(100.0,float(officer["stats"][j])+level)
         u["specialty"] = officer["specialty"]
         u["mind"] = GeneralMind.initial(u)
+        sim.Skills.attach(u,u["name"],"")
         u["rations"] = clampf(70.0+float(state["food"])*0.12,70.0,100.0)
     var scale: float = float(state["garrison"][target])/100.0 * [0.82,1.0,1.18][int(state["difficulty"])]
     for unit in sim.units:

@@ -3,7 +3,7 @@ const Legacy=preload("res://scripts/campaign.gd")
 const Field=preload("res://scripts/northern_field.gd")
 const Skills=preload("res://scripts/field_skills.gd")
 const EXTRA := ["조운","황충","유봉","향총","나헌","양의","부첨","동윤","윤상","이엄","고상","장남"]
-const INNATE := ["square","decoy","charge","link","counter","shield","last","pursue","rally","fury","iron","inspire","dash","relief","rapid","strike","screen","bridge","reshape","bastion","regroup","ambush","siege","wing","chain"]
+const EXTRA_SPECIALTIES := ["돌격","정찰","돌격","방진","방진","정찰","방진","정찰","정찰","방진","돌격","돌격"]
 const TYPES := ["보병","궁병","기병","궁병","기병","보병","보병","보병","궁병","기병","기병","보병"]
 const SHAPES := ["방진","안행진","봉시진","학익진","봉시진","방진","방진","어린진","안행진","봉시진","봉시진","횡대"]
 const TROOPS := [4500,3500,3200,4000,3800,4500,3900,3700,3400,3500,3600,3800]
@@ -14,9 +14,11 @@ var save_error: String=""
 
 func _init() -> void:
     for i in EXTRA.size():
-        var profile: Dictionary=Legacy.OFFICERS[[7,1,4,0,10,3,8,11,9,5,2,12][i]].duplicate(true)
-        profile["name"]=EXTRA[i]
-        officers.append(profile)
+        var officer: String=EXTRA[i]
+        var entry: Array=Skills.Profiles.DATA[officer]
+        var aggression: int=entry[0][1]
+        officers.append({"name":officer,"stats":entry[1],"specialty":EXTRA_SPECIALTIES[i],
+            "personality":"공격" if aggression>=66 else ("신중" if aggression<=40 else "균형")})
     reset()
 
 func reset() -> void:
@@ -34,7 +36,7 @@ func assign(slot: int,officer: int) -> bool:
 
 func equip(officer: int,id: String) -> bool:
     if not preparing() or officer<0 or officer>=officers.size(): return false
-    if id!="" and (id not in state["items"] or id==INNATE[officer]): return false
+    if id!="" and id not in state["items"]: return false
     var key:=str(officer)
     if id!="":
         var former: Variant=state["gear"].find_key(id)
@@ -66,14 +68,12 @@ func prepare(target: int,sim) -> bool:
         u["initial_troops"]=u["troops"]
         u["formation"]=SHAPES[i] if u["type"]==TYPES[i] else {"보병":"횡대","궁병":"안행진","기병":"봉시진"}[u["type"]]
         u["mind"]=Legacy.GeneralMind.initial(u)
-        Skills.attach(u,INNATE[idx],state["gear"].get(str(idx),""))
+        Skills.attach(u,u["name"],state["gear"].get(str(idx),""))
     for u in sim.units:
         if u["side"]!=1: continue
         u["troops"]=clampf(u["troops"]*[0.88,1.03,1.16][state["difficulty"]],3000,5000)
         u["initial_troops"]=u["troops"]
-        if target>=3:
-            var role: String=("rapid" if u["type"]=="궁병" else ("charge" if u["type"]=="기병" else "square"))
-            Skills.attach(u,role,["","counter","wing","rally"][mini(3,target/4)])
+        Skills.attach(u,u["name"],["","counter","wing","rally"][mini(3,target/4)])
     Field.opening_orders(sim)
     sim.chapter["enemy_initial"]=sim.total_troops(1)
     state["pending"]=target
@@ -156,7 +156,7 @@ func load_save() -> bool:
     distinct.clear()
     for key in parsed.gear:
         var id: Variant=parsed.gear[key]
-        if not key.is_valid_int() or str(int(key))!=key or int(key)<0 or int(key)>=officers.size() or id not in parsed["items"] or distinct.has(id) or id==INNATE[int(key)]: return false
+        if not key.is_valid_int() or str(int(key))!=key or int(key)<0 or int(key)>=officers.size() or id not in parsed["items"] or distinct.has(id): return false
         distinct[id]=true
     state=parsed
     return true

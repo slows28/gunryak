@@ -1,6 +1,6 @@
 """Bake the offline relief from shadedrelief.jpg and Natural Earth GeoJSON.
 
-Usage: python art_source/render_northern_atlas.py shadedrelief.jpg rivers.geojson countries.geojson
+Usage: python art_source/render_northern_atlas.py shadedrelief.jpg rivers.geojson
 Projection bounds and canvas size come from the game map so that its sites stay registered.
 """
 import argparse
@@ -23,7 +23,7 @@ def coordinates(script, name, constructor):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for arg in ("relief", "rivers", "countries"):
+    for arg in ("relief", "rivers"):
         parser.add_argument(arg, type=Path)
     args = parser.parse_args()
     script = (ROOT / "scripts/northern_atlas.gd").read_text()
@@ -65,20 +65,6 @@ def main():
             main_river = feature["properties"]["name"] in ("Wei", "Han")
             ink.line(path, fill="#e3d9bc", width=6 if main_river else 4)
             ink.line(path, fill="#548086" if main_river else "#839795", width=3 if main_river else 2)
-
-    # A modern country outline is used only in the small location map.
-    left, top = 14 * SCALE, 151 * SCALE
-    ink.rectangle((left, top, 133 * SCALE, 245 * SCALE), fill="#364841", outline="#d3c197", width=2)
-    def locator(lon, lat):
-        return left + (8 + (lon - 73) * 1.72) * SCALE, top + (6 + (54 - lat) * 1.90) * SCALE
-    china = next(f for f in json.loads(args.countries.read_text())["features"]
-                 if f["properties"]["ADM0_A3"] == "CHN")
-    for rings in china["geometry"]["coordinates"]:
-        ink.polygon([locator(lon, lat) for lon, lat in rings[0]], fill="#adaf93")
-        for hole in rings[1:]:
-            ink.polygon([locator(lon, lat) for lon, lat in hole], fill="#364841")
-    viewport = (locator(west, north), locator(east, south))
-    ink.rectangle(viewport, fill="#a8422e", outline="#f7d891", width=2)
 
     # A ground scale calculated at the center latitude of this plate.
     mean_lat = math.radians((south + north) / 2)

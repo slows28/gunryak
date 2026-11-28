@@ -20,6 +20,7 @@ func _replay() -> void:
             game._quit_game(1)
             return
     game._launch_campaign_battle(11)
+    game.sim.signature_seed=game.sim.rng.seed
     game._start()
     var sim = game.sim
     var focus: Dictionary = {}

@@ -235,7 +235,7 @@ func _draw_map(canvas: Control) -> void:
             canvas.draw_arc(fort,29,0,TAU,48,GOLD,3,true)
         elif campaign.available(i):
             canvas.draw_arc(fort,27,0,TAU,48,Color(GOLD,0.75),1.5,true)
-        canvas.draw_texture_rect_region(atlas,Rect2(fort-Vector2(24,26),Vector2(48,48)),Rect2(6*128,5*128,128,128))
+        Theater.draw_mark(canvas,[Theater.Mark.CITY,Theater.Mark.PASS,Theater.Mark.FIELD,Theater.Mark.PASS,Theater.Mark.BRIDGE,Theater.Mark.CITY][i],fort,32,GOLD)
         canvas.draw_texture_rect_region(atlas,Rect2(fort+Vector2(14,-25),Vector2(20,27)),Rect2((6 if ours else 7)*128,4*128,128,128))
         var label: String = str(node["name"])
         var plate := _site_label(i)

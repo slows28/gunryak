@@ -22,6 +22,10 @@ const SITES := [
     ["장안 외곽", Vector2(108.65, 34.30), Vector2(589, 65)],
     ["장안", Vector2(108.86, 34.30), Vector2(635, 116)],
 ]
+enum Mark { FIELD, CITY, PASS, BRIDGE }
+const MARKS := [Mark.FIELD,Mark.CITY,Mark.PASS,Mark.PASS,Mark.FIELD,Mark.FIELD,Mark.CITY,Mark.CITY,Mark.FIELD,Mark.BRIDGE,Mark.FIELD,Mark.FIELD,Mark.CITY]
+const MARK_ART := preload("res://assets/art/theater_marks.svg")
+const MARK_NAMES := ["야전","성곽","고개","도하"]
 const INK := Color("#373b32")
 const PAPER := Color("#f2e3c3")
 const VERMILION := Color("#973c2a")
@@ -62,7 +66,10 @@ func _draw() -> void:
     _map_text(face,"진 령 산 맥",Vector2(306,163),15,Color("#5a614b"))
     _map_text(face,"위수",Vector2(646,91),13,Color("#345f66"))
     _map_text(face,"한수",Vector2(460,241),13,Color("#345f66"))
-    _map_text(face,"중국 내 위치",Vector2(21,236),12,PAPER,Color("#334641"))
+    for i in MARK_NAMES.size():
+        var at:=Vector2(22+(i%2)*64,203+floori(float(i)/2)*24)
+        draw_mark(self,i,at,18,INK)
+        _map_text(face,MARK_NAMES[i],at+Vector2(13,5),13,INK)
     draw_dashed_line(Vector2(545,241),Vector2(568,241),INK,1.3,4,true,true)
     _map_text(face,"전장 진행 순서",Vector2(574,245),12,INK)
     for i in SITES.size():
@@ -83,15 +90,19 @@ func _draw_site(i: int, face: Font) -> void:
     var px:=15 if current else 14
     var plate:=_label_rect(center,caption,px,face)
     draw_line(point,point.clamp(plate.position,plate.end),ink,1.1,true)
-    if current: draw_arc(point,8,0,TAU,32,VERMILION,1.6,true)
+    if current: draw_arc(point,7,0,TAU,32,VERMILION,1.6,true)
     draw_circle(point,4.5,ink,true,-1,true)
     if not current and not held: draw_circle(point,2.6,PAPER,true,-1,true)
-    var baseline:=Vector2(plate.position.x,center.y+face.get_ascent(px)-face.get_height(px)/2)
-    if current:
-        draw_rect(plate,VERMILION)
-    else:
-        draw_string_outline(face,baseline,caption,HORIZONTAL_ALIGNMENT_CENTER,plate.size.x,px,4,PAPER)
-    draw_string(face,baseline,caption,HORIZONTAL_ALIGNMENT_CENTER,plate.size.x,px,PAPER if current else ink)
+    var color:=PAPER if current else ink
+    draw_rect(plate,VERMILION if current else Color(PAPER,0.85))
+    var at:=Vector2(plate.position.x+10,center.y)
+    draw_mark(self,MARKS[i],at,17,color)
+    var baseline:=Vector2(at.x+10,center.y+face.get_ascent(px)-face.get_height(px)/2)
+    draw_string(face,baseline,site[0],HORIZONTAL_ALIGNMENT_LEFT,-1,px,color)
+
+static func draw_mark(canvas: Control,kind: int,at: Vector2,extent: float,tint: Color) -> void:
+    var side:=Vector2.ONE*extent
+    canvas.draw_texture_rect_region(MARK_ART,Rect2(at-side/2,side),Rect2(kind*64,0,64,64),tint)
 
 func _label_rect(center: Vector2, caption: String, px: int, face: Font) -> Rect2:
     var extent:=Vector2(ceilf(face.get_string_size(caption,HORIZONTAL_ALIGNMENT_LEFT,-1,px).x)+8,20)

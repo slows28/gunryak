@@ -28,6 +28,14 @@ var difficulty: OptionButton
 var reward_bar: HBoxContainer
 var canvas: Atlas
 var slot:=0
+var portraits: Array[TextureRect]=[]
+var commander_portrait: TextureRect
+var card_skills: Array[Label]=[]
+var trait_names: Array[Label]=[]
+var trait_tracks: Array[ColorRect]=[]
+var trait_pins: Array[ColorRect]=[]
+var strength: Label
+const TYPE_COLORS := {"보병":Color("#a6bb9d"),"궁병":Color("#b6c6ce"),"기병":Color("#d6b58a")}
 
 func configure(model,face: Font,_art: Texture2D,start: Callable,exit: Callable) -> void:
     campaign=model
@@ -54,41 +62,79 @@ func _ready() -> void:
     canvas.mouse_filter=Control.MOUSE_FILTER_IGNORE
     add_child(canvas)
     brief=text("",48,371,683,43,16,Paper)
-    text("출전 군단",48,429,215,32,20,Gold)
+    block(Rect2(30,420,724,2),Color("#897955"))
+    text("출진 군단",48,426,160,34,22,Gold)
+    strength=text("",210,428,510,30,15,Paper)
+    strength.horizontal_alignment=HORIZONTAL_ALIGNMENT_RIGHT
     var group:=ButtonGroup.new()
     for i in campaign.state.active.size():
-        var card:=button("",48+(i%4)*173,471+floori(float(i)/4)*54,162,_select_corps.bind(i))
-        card.size.y=45
+        var card:=button("",46+(i%4)*174,466+floori(float(i)/4)*59,167,_select_corps.bind(i))
+        card.size.y=54
         card.toggle_mode=true
         card.button_group=group
-        card.add_theme_font_size_override("font_size",17)
-        var selected:=StyleBoxFlat.new()
-        selected.bg_color=Color("#514b38")
-        selected.border_color=Gold
-        selected.set_border_width_all(1)
-        selected.set_corner_radius_all(4)
-        card.add_theme_stylebox_override("pressed",selected)
-        card.add_theme_stylebox_override("hover_pressed",selected)
+        card.alignment=HORIZONTAL_ALIGNMENT_LEFT
+        card.add_theme_font_size_override("font_size",16)
+        for mode in ["normal","hover","pressed","hover_pressed"]:
+            var box:=StyleBoxFlat.new()
+            box.bg_color={"normal":Color("#243534"),"hover":Color("#344541"),"pressed":Color("#484739"),"hover_pressed":Color("#534e3e")}[mode]
+            box.border_color=Gold if mode.ends_with("pressed") else Color("#495a50")
+            box.set_border_width_all(1)
+            box.border_width_left=3
+            box.content_margin_left=53
+            box.content_margin_top=1
+            box.content_margin_bottom=20
+            card.add_theme_stylebox_override(mode,box)
+        var portrait:=TextureRect.new()
+        portrait.position=Vector2(6,5)
+        portrait.size=Vector2(40,44)
+        portrait.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
+        portrait.stretch_mode=TextureRect.STRETCH_KEEP_ASPECT_COVERED
+        portrait.mouse_filter=Control.MOUSE_FILTER_IGNORE
+        card.add_child(portrait)
+        portraits.append(portrait)
+        card_skills.append(_card_label(card,Vector2(53,28),Vector2(109,20),13,Gold))
         corps_buttons.append(card)
-    commander_heading=text("",800,123,250,40,26,Paper)
+    block(Rect2(799,116,58,51),Color("#897955"))
+    commander_portrait=TextureRect.new()
+    commander_portrait.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
+    commander_portrait.stretch_mode=TextureRect.STRETCH_KEEP_ASPECT_COVERED
+    place(commander_portrait,800,117,56,49)
+    commander_heading=text("",870,116,205,41,26,Paper)
     type_choice=option(1078,123,144)
     for t in ["보병","궁병","기병"]: type_choice.add_item(t)
     type_choice.item_selected.connect(func(i):
         if campaign.preparing(): campaign.state.types[slot]=type_choice.get_item_text(i); persist(); refresh())
-    army=text("",802,165,426,30,15,Gold)
-    officer_choice=option(800,211,261)
+    army=text("",802,166,426,28,16,Paper)
+    for i in Skills.Profiles.AXES.size():
+        var x:=803+106*i
+        var label:=text("",x,193,94,23,14,Gold)
+        label.horizontal_alignment=HORIZONTAL_ALIGNMENT_CENTER
+        trait_names.append(label)
+        var track:=ColorRect.new()
+        track.color=Color("#60726b")
+        place(track,x+5,221,84,3)
+        track.mouse_filter=Control.MOUSE_FILTER_IGNORE
+        trait_tracks.append(track)
+        var pin:=ColorRect.new()
+        pin.color=Gold
+        place(pin,x+5,218,4,9)
+        pin.mouse_filter=Control.MOUSE_FILTER_IGNORE
+        trait_pins.append(pin)
+    officer_choice=option(800,242,261)
     for o in campaign.officers: officer_choice.add_item("%s · %s · 판단 %d" % [o["name"],o["personality"],o["stats"][3]])
     officer_choice.item_selected.connect(func(i): assign_button.disabled=not campaign.preparing() or i==campaign.state.active[slot])
-    assign_button=button("장수 교체",1073,211,149,func():
+    assign_button=button("장수 교체",1073,242,149,func():
         if campaign.assign(slot,officer_choice.selected): persist();refresh())
-    block(Rect2(800,273,422,1),Color("#45514c"))
-    innate=text("",802,284,420,83,16,Paper)
-    equipped=text("",802,375,420,32,18,Gold)
+    block(Rect2(800,294,422,1),Color("#45514c"))
+    innate=text("",802,298,420,99,15,Paper)
+    innate.add_theme_constant_override("line_spacing",0)
+    innate.add_theme_constant_override("paragraph_spacing",0)
+    equipped=text("",802,402,420,29,18,Gold)
     owner_list=ItemList.new()
     owner_list.add_theme_font_size_override("font_size",15)
-    place(owner_list,800,419,226,143)
+    place(owner_list,800,438,226,124)
     owner_list.item_selected.connect(func(_i): _describe())
-    description=text("",1041,416,186,151,15,Paper)
+    description=text("",1041,434,186,140,15,Paper)
     equip_button=button("",800,581,422,_change_gear)
     reward_bar=HBoxContainer.new()
     place(reward_bar,40,661,1170,45)
@@ -101,6 +147,16 @@ func _ready() -> void:
     action.size.y=59
     get_parent()._primary_button(action)
     refresh()
+
+func _card_label(card: Button,at: Vector2,extent: Vector2,px: int,ink: Color) -> Label:
+    var label:=Label.new()
+    label.position=at
+    label.size=extent
+    label.add_theme_font_size_override("font_size",px)
+    label.add_theme_color_override("font_color",ink)
+    label.mouse_filter=Control.MOUSE_FILTER_IGNORE
+    card.add_child(label)
+    return label
 
 func place(node: Control,x:int,y:int,w:int,h:int) -> void:
     node.position=Vector2(x,y)
@@ -149,9 +205,6 @@ func _describe() -> void:
     var idx: int=campaign.state.active[slot]
     var name_text: String=campaign.officers[idx].name
     var owner: Variant=campaign.state.gear.find_key(id)
-    if id==campaign.INNATE[idx]:
-        equip_button.text="고유 전술과 동일"
-        return
     if owner==str(idx): equip_button.text="%s · 장착 해제" % name_text
     elif owner!=null: equip_button.text="%s → %s · 장비 이전" % [campaign.officers[int(owner)].name,name_text]
     else: equip_button.text="%s에게 장착" % name_text
@@ -174,17 +227,31 @@ func refresh() -> void:
     var chapter: Array=Field.CHAPTERS[int(s.stage)-1]
     summary.text="%02d장   %s" % [s.stage,chapter[0]]
     brief.text="장안 함락 · 북벌 완수" if s.complete else ("%s 승전 · 아래에서 전리품 하나를 고르세요." % chapter[0] if s.reward else chapter[3])
+    strength.text="%d개 군단   ·   총 병력 %s명" % [s.active.size(),get_parent()._number_text(campaign.TROOPS.reduce(func(a,b): return a+b,0))]
     for i in s.active.size():
         var name_text: String=campaign.officers[s.active[i]].name
-        corps_buttons[i].text="%s   ·   %s" % [name_text,s.types[i]]
+        var card:=corps_buttons[i]
+        card.text="%s · %s" % [name_text,s.types[i]]
+        portraits[i].texture=get_parent()._commander_icon(name_text,0)
+        card_skills[i].text=Skills.title(name_text)
+        card_skills[i].add_theme_color_override("font_color",TYPE_COLORS[s.types[i]])
         corps_buttons[i].tooltip_text="%d군  %s  ·  병력 %d명" % [i+1,name_text,campaign.TROOPS[i]]
         corps_buttons[i].set_pressed_no_signal(i==slot)
+    commander_portrait.texture=portraits[slot].texture
     commander_heading.text="%s  ·  제%d군" % [campaign.officers[idx].name,slot+1]
     officer_choice.select(idx)
     type_choice.select(["보병","궁병","기병"].find(s.types[slot]))
-    army.text="%s · 판단력 %d · 병력 %s명" % [campaign.officers[idx].personality,campaign.officers[idx].stats[3],campaign.TROOPS[slot]]
-    var innate_lines:=Skills.describe(campaign.INNATE[idx]).split("\n")
-    innate.text="고유 전술   %s\n%s\n%s" % [Skills.CATALOG[campaign.INNATE[idx]][1],innate_lines[1],innate_lines[2]]
+    var officer: Dictionary=campaign.officers[idx]
+    var stats: Array=officer.stats
+    army.text="통솔 %d    무력 %d    지력 %d    판단 %d    충성 %d" % stats
+    var axes: Array=Skills.Profiles.DATA[officer.name][0]
+    for i in axes.size():
+        var poles: Array=Skills.Profiles.AXES[i]
+        trait_names[i].text="%s · %s" % poles
+        trait_names[i].tooltip_text="%s %d / %s %d" % [poles[0],100-axes[i],poles[1],axes[i]]
+        trait_names[i].mouse_filter=Control.MOUSE_FILTER_PASS
+        trait_pins[i].position.x=trait_tracks[i].position.x+(trait_tracks[i].size.x-4)*axes[i]/100.0
+    innate.text="고유기   %s\n%s\n전반 80%% · 후반 65%%   |   각 1회 판정 · 재사용 16초" % [Skills.title(officer.name),Skills.describe_signature(officer.name)]
     var gear: String=s.gear.get(str(idx),"")
     equipped.text="장착 장비   "+("없음" if gear=="" else str(Skills.CATALOG[gear][0]))
     owner_list.clear()

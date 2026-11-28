@@ -828,6 +828,7 @@ func _start() -> void:
     automatic_night_fog = false
     read_messengers.clear()
     next_combat_ms.clear()
+    if not sim.started and sim.signature_seed==0: sim.signature_seed=randi()
     sim.start()
     if fog_enabled: _refresh_visibility()
     last_audio_clock=-100.0
@@ -1189,6 +1190,7 @@ func _refresh_commander_desk() -> void:
     selected_label.text="%s  ·  %s명" % [str(unit["name"]),_number_text(roundi(corps["troops"]))]
     details_label.text="%s · %s" % [unit["type"],unit["formation"]]
     if leader_state!="건재": details_label.text+=" · "+leader_state
+    if unit.get("stagger",{}).get("end",-1.0)>sim.battle_time: details_label.text+=" · 돌격 혼란"
     details_label.modulate=_mood_color(mood)
     readiness_label.text="사기 %d · 응집 %d" % [int(unit["morale"]),int(unit["cohesion"])]
     if int(unit["rations"])<35:
@@ -1203,7 +1205,7 @@ func _refresh_commander_desk() -> void:
         str(unit["name"]),str(unit["type"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"])]
     if unit.has("skill_ids"):
         var names:=PackedStringArray()
-        for id in unit["skill_ids"]: names.append(WarSim.Skills.CATALOG[id][1])
+        for id in unit["skill_ids"]: names.append(WarSim.Skills.title(id))
         details_label.tooltip_text+="\n전술  "+" / ".join(names)
     if sim.six_armies:
         details_label.tooltip_text+="\n협동 타격 %d · 상성 우위 타격 %d · 측후방 피해 %d" % [
@@ -4112,7 +4114,7 @@ func _show_outcome() -> void:
         for skill_id in unit.get("skill_ids",[]):
             var stat: Dictionary=unit["skill_stats"].get(skill_id,{})
             if stat.get("uses",0)>0:
-                _body_text(info,12,COL_MUTED).text="%s %d회 · %s" % [WarSim.Skills.CATALOG[skill_id][1],stat.uses,WarSim.Skills.effect_stat(skill_id,stat.effect)]
+                _body_text(info,12,COL_MUTED).text="%s %d회 · %s" % [WarSim.Skills.title(skill_id),stat.uses,WarSim.Skills.effect_stat(skill_id,stat.effect)]
         stats.mouse_filter=Control.MOUSE_FILTER_PASS
         stats.tooltip_text="장수 판단 %d회" % corps["decisions"]
     for child in reward_options.get_children(): reward_options.remove_child(child); child.queue_free()
@@ -4939,6 +4941,8 @@ func _field_art(tile:int,rect:Rect2,tint:Color=Color.WHITE)->void:
     var region:=Rect2(float(tile%4)*256.0,float(floori(float(tile)/4.0))*256.0,256,256)
     map_layer.draw_texture_rect_region(FIELDCRAFT,rect,region,tint)
 
+const NORTHERN_OFFICERS=preload("res://assets/art/northern_officers.webp")
+const NORTHERN_OFFICER_NAMES=["요화","마대","오의","조운","황충","유봉","향총","나헌","양의","부첨","동윤","윤상","이엄","고상","장남"]
 const FIELD_OFFICERS = preload("res://assets/art/field_officers.webp")
 const FIELD_OFFICER_NAMES = ["장포","진도","등지","오반","문빙","서황","학소","조진"]
 
@@ -4946,7 +4950,12 @@ func _commander_icon(name:String,side:int)->AtlasTexture:
     var icon:=AtlasTexture.new()
     var id: int=PORTRAIT_NAMES.find(name)
     var added:=FIELD_OFFICER_NAMES.find(name)
-    if added>=0:
+    var northern:=NORTHERN_OFFICER_NAMES.find(name)
+    if northern>=0:
+        icon.atlas=NORTHERN_OFFICERS
+        icon.region=Rect2((northern%5)*256,floori(float(northern)/5)*256,256,256)
+        icon.filter_clip=true
+    elif added>=0:
         icon.atlas=FIELD_OFFICERS
         icon.region=Rect2((added%4)*256,floori(float(added)/4.0)*256,256,256)
         icon.filter_clip=true
