@@ -84,6 +84,10 @@ func direct_contacts() -> void:
             check(sim.combat_contacts[a.id].skill_bonus==0.0 and a.skill_stats[officer].uses==1,"following volley normal")
         else:
             check(b.has("stagger") and a.charges==1,"only impacted enemy receives temporary disorder")
+            a.tactical_order="사수"
+            a.tactical_until=4.0
+            Skills.tick(sim,a)
+            check(a.field_skill.is_empty() and b.stagger.get("end",0.0)>sim.battle_time,"changing the rider's orders preserves the landed impact")
             sim.battle_time+=0.1
             sim._combat(0.1)
             check(sim.combat_contacts[b.id].stagger_saved>0 and a.skill_stats[officer].effect>0,"disorder reduces actual retaliation")

@@ -2095,7 +2095,10 @@ func _combat(dt: float) -> void:
         if entry["skill_bonus"]>0.0:
             entry["attacker_stat"]["effect"]+=float(entry["skill_bonus"])*allocation
         if entry["skill_saved"]>0.0: entry["defender_stat"]["effect"]+=minf(remaining,float(entry["skill_saved"])*allocation)
-        if not entry["stagger"].is_empty(): defender["stagger"]=entry["stagger"]
+        if not entry["stagger"].is_empty():
+            # The landed impact persists if the rider receives another order.
+            var impact: Dictionary=entry["stagger"]
+            defender["stagger"]={"end":impact["end"],"power":impact["power"],"stat":impact["stat"]}
         if entry["stagger_saved"]>0.0: entry["stagger_credit"]["effect"]+=float(entry["stagger_saved"])*allocation
         for key in ["attacker_stat","defender_stat","stagger_credit","stagger"]: entry.erase(key)
         entry["damage"]=actual_damage
