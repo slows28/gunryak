@@ -41,10 +41,11 @@ func _ready() -> void:
     paper.size=size
     add_child(paper)
     var art:=TextureRect.new()
+    art.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
     art.texture=ART
     art.position=Vector2(516,0)
     art.size=Vector2(764,800)
-    art.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
+    art.mouse_filter=Control.MOUSE_FILTER_IGNORE
     art.stretch_mode=TextureRect.STRETCH_KEEP_ASPECT_COVERED
     add_child(art)
     var wash:=GradientTexture2D.new()

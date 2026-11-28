@@ -1,7 +1,7 @@
 extends Control
 const Field=preload("res://scripts/northern_field.gd")
 const Skills=preload("res://scripts/field_skills.gd")
-const Art=preload("res://scripts/terrain_art.gd")
+const Atlas=preload("res://scripts/northern_atlas.gd")
 const Ink=Color("#182728")
 const Gold=Color("#dbc08a")
 const Paper=Color("#ede3ce")
@@ -26,13 +26,8 @@ var action: Button
 var equip_button: Button
 var difficulty: OptionButton
 var reward_bar: HBoxContainer
-var route_texture: Texture2D
-var canvas: Control
+var canvas: Atlas
 var slot:=0
-
-class Route extends Control:
-    var paint: Callable
-    func _draw(): paint.call(self)
 
 func configure(model,face: Font,_art: Texture2D,start: Callable,exit: Callable) -> void:
     campaign=model
@@ -44,7 +39,7 @@ func _ready() -> void:
     size=Vector2(1280,800)
     mouse_filter=Control.MOUSE_FILTER_STOP
     block(Rect2(0,0,1280,800),Color("#152021"))
-    block(Rect2(30,110,724,290),Ink)
+    block(Rect2(30,105,724,310),Ink)
     block(Rect2(30,420,724,230),Ink)
     block(Rect2(776,110,474,540),Color("#223132"))
     text("북벌 전역",39,19,325,26,16,Gold)
@@ -53,13 +48,12 @@ func _ready() -> void:
     for t in ["입문 · 전체 관전 가능","보통 · 아군 정찰","어려움 · 아군 정찰"]: difficulty.add_item("난이도   "+t)
     difficulty.item_selected.connect(func(i):
         if campaign.preparing(): campaign.state.difficulty=i;persist())
-    canvas=Route.new()
-    canvas.position=Vector2(42,119)
-    canvas.size=Vector2(700,220)
-    canvas.paint=_route
+    canvas=Atlas.new()
+    canvas.position=Vector2(42,110)
+    canvas.size=Atlas.MAP_SIZE
     canvas.mouse_filter=Control.MOUSE_FILTER_IGNORE
     add_child(canvas)
-    brief=text("",48,342,683,54,16,Paper)
+    brief=text("",48,371,683,43,16,Paper)
     text("출전 군단",48,429,215,32,20,Gold)
     var group:=ButtonGroup.new()
     for i in campaign.state.active.size():
@@ -139,34 +133,6 @@ func option(x:int,y:int,w:int) -> OptionButton:
 func persist() -> void:
     status.text="출전 기록 저장됨" if campaign.save() else campaign.save_error
 
-func _make_route() -> void:
-    var nodes: Array=[]
-    for i in Field.CHAPTERS.size():
-        var pos:=_route_point(i)*Vector2(820.0/700.0,570.0/220.0)
-        nodes.append({"pos":[pos.x,pos.y],"links":[i+1] if i<12 else []})
-    route_texture=Art.campaign_map(nodes,[])
-
-func _route_point(i:int) -> Vector2:
-    var row:=floori(float(i)/5.0)
-    var col:=i%5 if row%2==0 else 4-i%5
-    return Vector2(68+col*140,28+row*75)
-func _route(layer:Control) -> void:
-    if route_texture!=null: layer.draw_texture_rect(route_texture,Rect2(Vector2.ZERO,layer.size),false,Color("#938d7c"))
-    for i in Field.CHAPTERS.size():
-        var point:=_route_point(i)
-        if i>0: layer.draw_line(_route_point(i-1),point,Color("#bfa874"),2,true)
-    for i in Field.CHAPTERS.size():
-        var point:=_route_point(i)
-        var current:bool=i+1==campaign.state.stage
-        var past:bool=i+1<campaign.state.stage or campaign.state.complete
-        layer.draw_circle(point,8,Color("#273637"))
-        layer.draw_circle(point,5,Gold if current else (Color("#6eabbd") if past else Color("#ac8170")))
-        if current: layer.draw_arc(point,11,0,TAU,28,Gold,2,true)
-        var title:String=Field.CHAPTERS[i][0].get_slice(" ",0)
-        if i in [11,12]: title="장안 외곽" if i==11 else "장안 궁성"
-        var b:=point+Vector2(-48,24)
-        layer.draw_string_outline(font,b,title,HORIZONTAL_ALIGNMENT_CENTER,96,14,4,Color("#293331"))
-        layer.draw_string(font,b,title,HORIZONTAL_ALIGNMENT_CENTER,96,14,Paper)
 func _select_corps(index: int) -> void:
     slot=index
     refresh()
@@ -243,5 +209,4 @@ func refresh() -> void:
         reward_bar.add_child(b)
     action.disabled=s.reward>0
     action.text="북벌 완수 · 타이틀" if s.complete else "작전 지도 열기"
-    if visible and route_texture==null: _make_route()
-    canvas.queue_redraw()
+    canvas.set_progress(s.stage,s.complete)

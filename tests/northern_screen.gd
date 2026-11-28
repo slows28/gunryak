@@ -33,6 +33,24 @@ func press_key(code: Key) -> void:
         root.push_input(key,true)
     await process_frame
 
+func check_atlas(prep: Control) -> void:
+    var atlas=prep.canvas
+    var face: Font=atlas.get_theme_default_font()
+    var bounds:=Rect2(Vector2.ZERO,atlas.size)
+    expect(atlas.SITES.size()==prep.Field.CHAPTERS.size(),"every campaign chapter has a map site")
+    for chapter in atlas.SITES.size():
+        var labels: Array[Rect2]=[]
+        for i in atlas.SITES.size():
+            var site: Array=atlas.SITES[i]
+            var name_text: String=site[0]
+            expect(str(prep.Field.CHAPTERS[i][0]).begins_with(name_text),"map sites match chapter order")
+            expect(bounds.has_point(atlas.project_point(site[1])),"geographic position inside theater")
+            var label: Rect2=atlas._label_rect(site[2],"%02d %s" % [i+1,name_text],15 if i==chapter else 14,face)
+            expect(bounds.encloses(label),"full chapter label in frame")
+            for other in labels: expect(not other.intersects(label),"neighboring chapter names stay separate")
+            labels.append(label)
+    expect(prep.brief.position.y>=atlas.get_rect().end.y,"briefing stays below the map")
+
 func review_roster() -> void:
     var ids: Array=game.sim.command_ids(0)
     var area: Rect2=game.corps_grid.get_global_rect()
@@ -87,6 +105,10 @@ func _play():
     game.campaign.save_path="user://northern-screen-%s.json" % Time.get_ticks_usec()
     menu.refresh("")
     if not menu.record_available: expect(menu.primary.text=="북벌 시작" and not menu.new_record.visible,"first visit has a single campaign action")
+    var portrait: TextureRect
+    for image_node in menu.find_children("*","TextureRect",false,false):
+        if image_node.texture==menu.ART: portrait=image_node
+    expect(is_instance_valid(portrait) and menu.get_global_rect().encloses(portrait.get_global_rect()),"full title portrait fits the viewport")
     await frame("00-title")
     for i in 9:
         await press_key(KEY_TAB)
@@ -105,6 +127,8 @@ func _play():
     if menu.record_available: await click_at(menu.new_record.get_global_rect().get_center())
     else: await click_at(menu.primary.get_global_rect().get_center())
     var prep=game.strategy_view
+    check_atlas(prep)
+    expect(prep.canvas.stage==1,"theater opens at Qishan")
     for i in prep.corps_buttons.size():
         var card: Button=prep.corps_buttons[i]
         expect(card.is_visible_in_tree() and card.text.contains(game.campaign.state.types[i]),"all troop types visible before departure")
@@ -206,7 +230,7 @@ func _play():
     expect(game.reward_options.get_global_rect().end.y<=game.campaign_next.global_position.y and game.campaign_next.get_global_rect().end.y<=game.reward_options.get_parent().get_parent().get_global_rect().end.y-6,"reward and navigation fit without overlap")
     game.reward_options.get_child(0).pressed.emit()
     game.campaign_next.pressed.emit()
-    expect(prep.visible and game.campaign.state.stage==2,"next stage preparation")
+    expect(prep.visible and game.campaign.state.stage==2 and prep.canvas.stage==2,"next stage preparation and theater marker")
     prep.owner_list.select(3)
     prep.owner_list.item_selected.emit(3)
     await click_at(prep.equip_button.get_global_rect().get_center())
