@@ -3676,7 +3676,7 @@ func _relief_decision(ally: Dictionary, sender: Dictionary) -> String:
         return "본진 수비를 우선"
     var threat:=_nearest_visible_enemy(ally)
     var engaged: bool=not threat.is_empty() and (ally["pos"] as Vector2).distance_to(threat["pos"])<130
-    var cooperation: float=ally["mind"]["profile"]["cooperation"]
+    var cooperation: float=GeneralMind.profile_for(ally)["cooperation"]
     var relief_margin: float=(cooperation-50.0)*0.16
     if ally["personality"]=="신중" and (engaged or ally["rations"]<35-relief_margin or ally["morale"]<65-relief_margin):
         return "신중한 판단 · 자군 방어를 우선"

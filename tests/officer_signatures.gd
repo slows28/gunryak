@@ -24,7 +24,10 @@ func _initialize() -> void:
     check(north.prepare(13,field),"Chang'an deploy")
     for u in field.units:
         check(u.skill_ids.front()==u.name and u.mind.profile.has("cooperation"),"field officer "+u.name)
-    var old_profile: Dictionary=field.find_unit(0).mind.profile
+    var restored:=field.find_unit(0)
+    restored.mind.profile.erase("cooperation")
+    check(Sim.GeneralMind.profile_for(restored).cooperation==Skills.Profiles.DATA[restored.name][0][2],"previous battle recordings recover missing traits")
+    var old_profile: Dictionary=restored.mind.profile
     check(field.swap_generals(0,1) and field.find_unit(1).mind.profile==old_profile and field.find_unit(1).skill_ids[0]==field.find_unit(1).name,"order map transfers personality and signature together")
     direct_contacts()
     eligible_days()

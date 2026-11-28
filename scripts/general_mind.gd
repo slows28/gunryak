@@ -21,15 +21,24 @@ static func traits(u: Dictionary) -> Dictionary:
     t["discipline"]=axes[3]
     return t
 
+# Older recorded battles carry the previous three-trait profile.
+static func profile_for(u: Dictionary) -> Dictionary:
+    var mind: Dictionary=u.get("mind",{})
+    var profile: Dictionary=mind.get("profile",{})
+    if not profile.has("cooperation"):
+        profile=traits(u)
+        mind["profile"]=profile
+    return profile
+
 # Bounded decision thresholds, not direct attack/defense bonuses.
 static func initiative_threshold(u: Dictionary) -> float:
     var m: Dictionary=u.get("mind",{})
-    var t: Dictionary=m["profile"] if m.has("profile") else traits(u)
+    var t:=profile_for(u)
     return clampf(1.30+(float(m.get("stress",25.0))-25.0)*0.003-(float(m.get("confidence",65.0))-65.0)*0.003-(float(t["initiative"])-55.0)*0.0015,1.12,1.55)
 
 static func confidence_to_refuse(u: Dictionary) -> float:
     var m: Dictionary=u.get("mind",{})
-    return clampf(float(u["loyalty"])*0.65+float(m.get("trust",u["loyalty"]))*0.35+(float(m.get("profile",{}).get("discipline",50))-50.0)*0.12,0.0,100.0)
+    return clampf(float(u["loyalty"])*0.65+float(m.get("trust",u["loyalty"]))*0.35+(float(profile_for(u)["discipline"])-50.0)*0.12,0.0,100.0)
 
 static func initial(u: Dictionary) -> Dictionary:
     var personality: String=str(u["personality"])
@@ -91,7 +100,7 @@ static func update(u: Dictionary,now: float) -> Dictionary:
     var routed: bool=bool(u["routed"])
     var personality: String=str(u["personality"])
     var target_stress: float=12.0+(100.0-morale)*0.30+(100.0-cohesion)*0.19+fatigue*0.19+loss_delta*240.0+(25.0 if surrounded else 0.0)+(28.0 if routed else 0.0)
-    var profile: Dictionary=m["profile"]
+    var profile:=profile_for(u)
     target_stress+=(65.0-float(profile["composure"]))*0.22
     if personality=="신중": target_stress+=7.0
     if str(u["general_state"])!="건재": target_stress+=12.0
