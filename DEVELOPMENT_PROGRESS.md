@@ -1406,3 +1406,39 @@ Godot 4.7.2 정적 구조 및 엔진 검사 20개가 통과했다. 실행 명령
 검증 환경은 Godot 4.7.2, Xvfb·Mesa OpenGL이었다. `python3 tools_check_structure.py`를 통과했다. `python3 tools_run_engine_tests.py --godot /usr/local/bin/godot --project . --timeout 700`로 실행하고, 종전 회의일과 같은 날 재파견을 가정하던 시험을 새 규칙으로 고친 뒤 남은 항목부터 재개했다. 동일한 게임 코드에서 엔진 검사 29개가 모두 통과했다. 실행 내역과 통합 결과는 `test_results/group-orders-4533017/engine_test_report.json`에 있다.
 
 `tests/screenshot.gd`의 게임 화면 75장과 `tests/northern_screen.gd`의 캠페인 화면 12장을 확보했다. 전선 압박 보고보다 먼저 같은 교전의 구원 요청이 발송될 수 있어, 전령 검사는 발신 장수·작성 시점·실제로 돌아온 회신을 함께 확인한다. 원본은 `test_results/group-orders-4533017/`에 보관했다. Windows ZIP에는 실행 파일 하나가 들어 있고 압축 해제 전후의 실행 파일 해시가 일치했다. Wine에서 실제 실행 파일의 메뉴·출전·복귀·종료를 확인했다.
+
+## 2026-11-28 지형에 따른 진군과 돌격 접촉
+
+기준 커밋은 `8d84b2a`, 수정한 실행 코드는 `6038053`이다. 기존 게임은 숲과 습지에서 감속하고 고지에서 아래쪽으로 쏘는 궁병을 우대했다. 이번 변경은 다리를 건너는 속도, 실제로 달려온 거리, 맞은 대열이 서 있는 지면과 첫 타격 거리를 조정했다.
+
+| 지형 | 기병 이동 속도 | 충분히 가속한 기병의 첫 충격 |
+|---|---:|---:|
+| 평지 | 100% | 122% |
+| 도로 | 123% | 100% |
+| 고지 | 74% | 80% |
+| 교량 | 78% | 60% |
+| 갈대밭 | 63% | 60% |
+| 숲 | 53% | 45% |
+| 습지 | 48% | 36% |
+
+이동은 평지 보속, 충격은 같은 병력·진형·속도로 도로의 적을 맞힌 경우를 기준으로 한다. 험지 수치는 단단한 땅에서 달려온 선두가 경계에 선 적을 맞힐 때 적용된다. 기병 자신이 숲이나 습지에 들어서는 순간 축적한 돌격 거리는 사라진다. 평지 가산은 32~86 거리의 직선 접근에 따라 붙으며 급선회·정지로 초기화된다. 양측 기병 AI는 이미 관측한 측면 후보의 점수를 매길 때 표적의 지형도 고려한다.
+
+위연과 장합을 같은 지형 시험장에 두고 같은 명령·병력·시각·카메라로 재생했다. 수정 전에는 선두 간격 24.13에서 충격이 기록됐다. 수정 후에는 앞줄이 8.89까지 좁혀진 다음 피해와 밀림이 발생했다. 전투 기록의 첫 충격 성분은 364.43에서 444.29로 변했다. 방진이 버티면 뒤까지 밀림을 그리지 않으며, 보병끼리의 교전은 실제 찌르기와 비틀거림 자세에 맞춰 상체가 움직인다. [같은 시각의 수정 전후 화면](docs/terrain-charge-contact.jpg)
+
+전투 계산은 `scripts/war_sim.gd`, 측면 선정은 `scripts/mounted_vanguard.gd`, 반응과 자세는 `scripts/front_view.gd`와 `scripts/game.gd`, 지도 설명은 `scripts/order_map.gd`에 있다. 회귀 검사는 `tests/combat_upgrades.gd`와 `tests/terrain_range.gd`에서 수행한다. 비교 영상은 `tests/fixtures/record_ground_charge.gd`로 얻은 실제 게임 프레임을 사용했다.
+
+Godot 4.7.2에서 다음 명령으로 검증했다. 정적 검사는 생성 캐시를 제외한 `git archive`에서 실행했고, 엔진·화면 검사는 독립 체크아웃과 저장 디렉터리를 사용했다.
+
+```sh
+python3 tools_check_structure.py
+python3 tools_run_engine_tests.py --godot /usr/local/bin/godot --project . --timeout 700
+xvfb-run -a -s '-screen 0 1280x800x24' godot --rendering-driver opengl3 --audio-driver Dummy --path . --script res://tests/screenshot.gd
+xvfb-run -a -s '-screen 0 1280x800x24' godot --rendering-driver opengl3 --audio-driver Dummy --path . --script res://tests/northern_screen.gd
+godot --headless --path . --export-release 'Windows Desktop' /tmp/Gunryak.exe
+```
+
+엔진 검사 29개가 통과했다. 각 PNG 파일을 열어 전장 화면 75장과 캠페인 화면 12장의 크기와 내용을 검사했다. 기산의 관흥 피격 재생에서는 마속이 같은 적을 실제로 타격했고, 별도의 4군단 연계 재생에서도 지원 타격이 나왔다. 실제 Windows 실행 파일은 Wine에서 메뉴·연습전·전투·복귀·종료를 통과했다. 결과와 원본 이미지는 `test_results/terrain-charge-6038053/`에, ZIP과 6.4초짜리 무음 비교 영상은 작업공간 `shared/downloads/gunryak-6038053/`에 보관했다.
+
+기존 3부대 단기 모형의 전술·시나리오 고정 조합 20개 중 7개에서 이전판과 승패가 달라졌다. 단기 천수 돌파전에서는 난수 시드 4개와 전령 대응 전술 4개를 조합한 16전에서 아군이 0승이었다. 성문은 9전에서 파괴됐으며, 최종 패배 사유는 시간 초과 13회, 본진 함락 3회였다. 성문 파괴 뒤 거점까지 보병을 보내고 유지할 수 있는지 점검할 필요가 있다. 이 단기 회귀 모형은 25분 북벌 캠페인과 다른 전장·임무를 사용한다.
+
+실제 북벌 2장에서는 시드 137과 시작 장비로 부대를 나눠 두 거점을 확보해 18분에 승리했다. 병력은 출전 시 아군 45,400명·적군 52,792명, 종료 시 각각 27,258명·34,149명이었다. 무공의 첫 보병 교전을 4.25배로 확대한 Mesa llvmpipe 화면에서는 144프레임 구간이 이전판 10.7 FPS, 수정판 11.2 FPS였다. 두 판의 첫 교전 위치와 장수는 달랐다. 이 수치는 클라우드 소프트웨어 렌더링 측정값으로, 저사양 실기에서 대규모 확대 전투를 매끄럽게 유지하는 일은 남아 있다.
