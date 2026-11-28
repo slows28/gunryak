@@ -95,15 +95,42 @@ func field_run(side: int) -> void:
     var first_sortie:=-1
     var first_hit:=-1
     var chosen:=-1
+    var outside_lag:=0.0
+    var most_turn:=0.0
+    var previous_center: Vector2=horse.pos
     for tick in 420:
         sim.step(0.1)
         if not directory.is_empty(): game._update_contact_fronts(0.1)
+        elif not baseline: game._step_riders(0.1)
+        if not baseline and horse.action in ["협동 우회","돌파"]:
+            var tracks: Dictionary=game.rider_tracks[horse.id]
+            for i in tracks.end.size():
+                var change:=absf(angle_difference(tracks.from_heading[i],tracks.heading[i]))
+                most_turn=maxf(most_turn,change)
+                outside_lag=maxf(outside_lag,Vector2(tracks.end[i]).distance_to(tracks.raw[i]))
+                var move: Vector2=tracks.end[i]-tracks.start[i]
+                check(move.length()<=1.22*previous_center.distance_to(horse.pos)+4.5,"individual rider stride stays bounded on a turn")
+                if move.length()>1.2:
+                    check(move.normalized().dot(Vector2.from_angle(tracks.heading[i]))>0.98,"moving rider follows its own heading")
+        previous_center=horse.pos
         if first_contact<0 and sim._in_melee(foot,foe): first_contact=tick
         if first_sortie<0 and horse.action=="협동 우회":
             first_sortie=tick
             chosen=int(horse.get("flank_target",-1))
-        if first_hit<0 and horse.damage_dealt>0: first_hit=tick
+        if first_hit<0 and horse.damage_dealt>0:
+            first_hit=tick
+            if not baseline:
+                var close_rider:=false
+                var foe_files: Array=sim.formation_slots(foe)
+                for rider: Vector2 in game.rider_tracks[horse.id].end:
+                    for point: Vector2 in foe_files:
+                        if rider.distance_to(point)<=34: close_rider=true; break
+                    if close_rider: break
+                check(close_rider,"first damage has a rider on the enemy line")
         if side==0 and tick==108: await capture("wing",horse)
+    if not baseline:
+        print("RIDER_TURN side=",side," peak_degrees=",rad_to_deg(most_turn)," outside_lag=",outside_lag)
+        check(most_turn<=0.441 and outside_lag>4.0,"riders turn through the bend over successive strides")
     print("RELIEF side=",side," contact=",first_contact," sortie=",first_sortie," target=",chosen," first_hit=",first_hit," commits=",horse.flank_commits," damage=",roundi(horse.damage_dealt))
     check(first_contact>=0 and first_sortie>=first_contact and chosen==foe.id,"actual infantry contact precedes target selection on both sides")
     check(horse.flank_commits>0 and first_hit>=first_sortie and horse.damage_dealt>0,"ride the flank and land a real hit")

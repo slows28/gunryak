@@ -35,7 +35,8 @@ const TITLE_ART = preload("res://assets/art/title_art.webp")
 const TROOP_ATLAS_SCALE := 0.25
 const SOLDIER_SCALE: float = 0.72
 const MAP_TOP_LEFT: Vector2 = Vector2(16, 142)
-const MAP_SIZE: Vector2 = Vector2(934, 532)
+const MAP_SIZE := Vector2(934,532)
+var field_extent := MAP_SIZE
 const MINIMAP_AREA = Rect2(1128,609,126,80)
 const COL_BG: Color = Color("#131a22")
 const COL_PANEL: Color = Color("#1c2732")
@@ -85,6 +86,8 @@ var combat_focus_pair:=Vector2i(-1,-1)
 var contact_fronts: Dictionary={}
 var fronts_by_unit: Dictionary={}
 var deformed_slot_cache: Dictionary={}
+const MountedMotion=preload("res://scripts/mounted_motion.gd")
+var rider_tracks: Dictionary={}
 var infantry_feet: Dictionary = {}
 var enemy_intel: Label
 var mission_choice: OptionButton
@@ -120,7 +123,11 @@ var mind_dialog: AcceptDialog
 var mind_report: RichTextLabel
 var mind_button: Button
 var battle_feed: PanelContainer
-var corps_scroll: ScrollContainer
+var command_panel: Control
+var panel_toggle: Button
+var overview_button: Button
+var sound_button: Button
+var corps_grid: GridContainer
 var general_cards: Array[BattleHud.CorpsCard]=[]
 var map_label_areas: Array[Rect2]=[]
 var sector_cards: Array[BattleHud.SectorCard]=[]
@@ -150,7 +157,7 @@ var plan_actions: Array[Button] = []
 var map_layer: Control
 var map_clip: Control
 var camera_zoom: float = 1.0
-var camera_center: Vector2 = MAP_SIZE * 0.5
+var camera_center: Vector2 = field_extent * 0.5
 var visibility_texture: ImageTexture
 var dust_texture: ImageTexture
 var visibility_stamp: float = -100.0
@@ -364,49 +371,11 @@ func _build_interface() -> void:
         button.toggle_mode=true
         button.mouse_default_cursor_shape=Control.CURSOR_POINTING_HAND
         objective_buttons.append(button)
-    _label("지휘 본부",Vector2(970,69),Vector2(156,32),23,COL_TEXT)
-    friendly_tab=_button("아군",Vector2(970,108),Vector2(91,28),_show_friendly_roster)
-    enemy_tab=_button("적군 10",Vector2(1067,108),Vector2(91,28),_show_enemy_roster)
-    fog_button=_button("전체 시야",Vector2(1164,108),Vector2(92,28),func(): _toggle_fog(not fog_enabled))
-    friendly_tab.toggle_mode=true
-    enemy_tab.toggle_mode=true
-    fog_button.toggle_mode=true
-    fog_button.tooltip_text="전체 관전과 정찰 제한 전환 · V"
-    enemy_list=ItemList.new()
-    enemy_list.position=Vector2(970,143)
-    enemy_list.size=Vector2(286,181)
-    enemy_list.add_theme_font_size_override("font_size",13)
-    enemy_list.fixed_icon_size=Vector2i(23,23)
-    enemy_list.add_theme_constant_override("v_separation",5)
-    add_child(enemy_list)
-    enemy_list.item_selected.connect(_inspect_enemy_row)
-    enemy_list.hide()
-    mission_choice = _options(Vector2(970,482),["중앙 진격","북측 확보","남측 우회","본진 방어","전열 엄호","측후방 기동","구원 지원"])
-    mission_choice.item_selected.connect(_on_choices_changed)
-    mission_choice.hide()
-    policy_choice = _options(Vector2(970,520),["현장 판단","명령 엄수","재량 위임","횡대 유지","종대 유지","방진 유지","어린진 유지","학익진 유지","봉시진 유지","안행진 유지"])
-    policy_choice.item_selected.connect(_on_choices_changed)
-    policy_choice.hide()
-    apply_btn = _button("작전 적용 / 전령 보내기",Vector2(970,554),Vector2(286,40),_apply_order)
-    apply_btn.hide()
-    live_order_button=_button("작전 지도 열기",Vector2(970,554),Vector2(286,40),func():
-        if sim.finished: outcome_dialog.show()
-        else: _open_order_map())
-    _primary_button(live_order_button)
-    live_order_button.add_theme_font_size_override("font_size",16)
-    mind_button=_button("장수 보고",Vector2(1144,70),Vector2(112,28),_open_mind_report)
-    mind_button.tooltip_text="전체 장수의 심리와 최근 명령 · G"
-    selected_label = _label("",Vector2(1057,151),Vector2(190,25),20,COL_TEXT)
-    details_label = _label("",Vector2(1057,177),Vector2(190,18),13,COL_TEXT)
-    readiness_label = _label("",Vector2(1057,198),Vector2(190,18),13,COL_MUTED)
-    for label in [selected_label,details_label,readiness_label]:
-        label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
-    combat_exchange=_label("",Vector2(978,229),Vector2(268,22),13,COL_GOLD)
-    combat_exchange.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
-    _build_commander_desk()
-    enemy_intel=_label("",Vector2(978,431),Vector2(268,104),15,COL_TEXT)
-    enemy_intel.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    enemy_intel.hide()
+    _build_command_panel()
+    panel_toggle=_button("지휘 접기 ›",Vector2(1165,69),Vector2(91,31),_toggle_command_panel)
+    panel_toggle.toggle_mode=true
+    panel_toggle.set_pressed_no_signal(true)
+    panel_toggle.tooltip_text="지휘 본부 열기·닫기"
     feed_toggle=_button("전황 기록 보기",Vector2(818,675),Vector2(132,21),_toggle_feed)
     feed_toggle.add_theme_font_size_override("font_size",12)
     notice_label = _label("",Vector2(124,675),Vector2(685,21),13,COL_MUTED)
@@ -429,29 +398,17 @@ func _build_interface() -> void:
     map_detail_button.tooltip_text = "군단 진형과 전술 이동 경로 표시 전환"
     _build_planning_dialog()
     _build_mind_report()
-    _button("브리핑",Vector2(970,609),Vector2(70,34),_open_briefing)
-    _button("도움말",Vector2(1048,609),Vector2(70,34),_open_demo_help)
-    _button("초기화",Vector2(970,651),Vector2(70,34),_reset)
-    retreat_button=_button("철수",Vector2(1048,651),Vector2(70,34),_ask_retreat)
     contact_button=_button("최근 교전",Vector2(316,632),Vector2(94,32),_focus_combat)
     contact_button.tooltip_text="가장 최근에 관측한 교전으로 이동 · 다시 누르면 다른 교전 · C"
     _label("아군 군단",Vector2(17,674),Vector2(102,23),16,COL_GOLD)
     _build_battle_feed()
-    var next_corps:=_button("다음 군단 ›",Vector2(1153,672),Vector2(111,25),func():
-        corps_scroll.scroll_horizontal=0 if corps_scroll.scroll_horizontal>250 else int(corps_scroll.get_h_scroll_bar().max_value))
-    next_corps.add_theme_font_size_override("font_size",12)
-    corps_scroll=ScrollContainer.new()
-    corps_scroll.get_h_scroll_bar().value_changed.connect(func(offset: float):
-        next_corps.text="‹ 처음 군단" if offset>250 else "다음 군단 ›")
-    corps_scroll.position=Vector2(16,699)
-    corps_scroll.size=Vector2(1248,101)
-    corps_scroll.vertical_scroll_mode=ScrollContainer.SCROLL_MODE_DISABLED
-    corps_scroll.follow_focus=true
-    add_child(corps_scroll)
-    var strip:=HBoxContainer.new()
-    strip.add_theme_constant_override("separation",8)
-    corps_scroll.add_child(strip)
-    _ensure_cards(strip,WarSim.FIELD_CORPS)
+    corps_grid=GridContainer.new()
+    corps_grid.position=Vector2(16,701)
+    corps_grid.size=Vector2(1248,94)
+    corps_grid.add_theme_constant_override("h_separation",5)
+    corps_grid.add_theme_constant_override("v_separation",4)
+    add_child(corps_grid)
+    _ensure_cards(WarSim.FIELD_CORPS)
     _build_sector_board()
     situation_btn = _button("긴급 보고",Vector2(830,58),Vector2(120,45),_open_situations)
     dispatch_headline=_button("",Vector2(417,675),Vector2(395,21),_review_home_alert)
@@ -463,34 +420,103 @@ func _build_interface() -> void:
     dispatch_headline.hide()
     _build_messenger_card()
 
-func _label(message: String, where: Vector2, extent: Vector2, font_size: int, color: Color) -> Label:
+func _build_command_panel() -> void:
+    command_panel=Control.new()
+    command_panel.mouse_filter=Control.MOUSE_FILTER_IGNORE
+    add_child(command_panel)
+    _label("지휘 본부",Vector2(970,69),Vector2(156,32),23,COL_TEXT,command_panel)
+    friendly_tab=_button("아군",Vector2(970,108),Vector2(91,28),_show_friendly_roster,command_panel)
+    enemy_tab=_button("적군 10",Vector2(1067,108),Vector2(91,28),_show_enemy_roster,command_panel)
+    fog_button=_button("전체 시야",Vector2(1164,108),Vector2(92,28),func(): _toggle_fog(not fog_enabled),command_panel)
+    friendly_tab.toggle_mode=true
+    enemy_tab.toggle_mode=true
+    fog_button.toggle_mode=true
+    fog_button.tooltip_text="전체 관전과 정찰 제한 전환 · V"
+    enemy_list=ItemList.new()
+    enemy_list.position=Vector2(970,143)
+    enemy_list.size=Vector2(286,181)
+    enemy_list.add_theme_font_size_override("font_size",13)
+    enemy_list.fixed_icon_size=Vector2i(23,23)
+    enemy_list.add_theme_constant_override("v_separation",5)
+    command_panel.add_child(enemy_list)
+    enemy_list.item_selected.connect(_inspect_enemy_row)
+    enemy_list.hide()
+    mission_choice = _options(Vector2(970,482),["중앙 진격","북측 확보","남측 우회","본진 방어","전열 엄호","측후방 기동","구원 지원"],command_panel)
+    mission_choice.item_selected.connect(_on_choices_changed)
+    mission_choice.hide()
+    policy_choice = _options(Vector2(970,520),["현장 판단","명령 엄수","재량 위임","횡대 유지","종대 유지","방진 유지","어린진 유지","학익진 유지","봉시진 유지","안행진 유지"],command_panel)
+    policy_choice.item_selected.connect(_on_choices_changed)
+    policy_choice.hide()
+    apply_btn = _button("작전 적용 / 전령 보내기",Vector2(970,554),Vector2(286,40),_apply_order,command_panel)
+    apply_btn.hide()
+    live_order_button=_button("작전 지도 열기",Vector2(970,554),Vector2(286,40),func():
+        if sim.finished: outcome_dialog.show()
+        else: _open_order_map())
+    _primary_button(live_order_button)
+    live_order_button.add_theme_font_size_override("font_size",16)
+    mind_button=_button("장수 보고",Vector2(1079,70),Vector2(81,28),_open_mind_report,command_panel)
+    mind_button.tooltip_text="전체 장수의 심리와 최근 명령 · G"
+    selected_label = _label("",Vector2(1057,151),Vector2(190,25),20,COL_TEXT,command_panel)
+    details_label = _label("",Vector2(1057,177),Vector2(190,18),13,COL_TEXT,command_panel)
+    readiness_label = _label("",Vector2(1057,198),Vector2(190,18),13,COL_MUTED,command_panel)
+    for label in [selected_label,details_label,readiness_label]:
+        label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    combat_exchange=_label("",Vector2(978,229),Vector2(268,22),13,COL_GOLD,command_panel)
+    combat_exchange.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
+    _build_commander_desk()
+    enemy_intel=_label("",Vector2(978,431),Vector2(268,104),15,COL_TEXT,command_panel)
+    enemy_intel.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    enemy_intel.hide()
+    _button("브리핑",Vector2(970,609),Vector2(70,34),_open_briefing,command_panel)
+    _button("도움말",Vector2(1048,609),Vector2(70,34),_open_demo_help,command_panel)
+    _button("초기화",Vector2(970,651),Vector2(70,34),_reset,command_panel)
+    retreat_button=_button("철수",Vector2(1048,651),Vector2(70,34),_ask_retreat,command_panel)
+
+func _toggle_command_panel() -> void:
+    var overview := is_equal_approx(camera_zoom,_overview_zoom())
+    command_panel.visible=not command_panel.visible
+    panel_toggle.set_pressed_no_signal(command_panel.visible)
+    panel_toggle.text="지휘 접기 ›" if command_panel.visible else "‹ 지휘 열기"
+    field_extent=MAP_SIZE if command_panel.visible else Vector2(corps_grid.size.x,MAP_SIZE.y)
+    map_clip.size=field_extent
+    map_layer.size=field_extent
+    overview_button.position.x=MAP_TOP_LEFT.x+field_extent.x-62.0
+    sound_button.position.x=overview_button.position.x-60.0
+    live_order_button.position=Vector2(970,554) if command_panel.visible else Vector2(970,69)
+    live_order_button.size=Vector2(286,40) if command_panel.visible else Vector2(183,31)
+    if overview: camera_zoom=_overview_zoom()
+    _clamp_camera(sector_selection,objective_focus)
+    map_layer.queue_redraw()
+    queue_redraw()
+
+func _label(message: String, where: Vector2, extent: Vector2, font_size: int, color: Color, parent: Control=null) -> Label:
     var element := Label.new()
     element.text = message
     element.position = where
     element.size = extent
     element.add_theme_font_size_override("font_size", font_size)
     element.add_theme_color_override("font_color", color)
-    add_child(element)
+    (parent if parent!=null else self).add_child(element)
     return element
 
-func _button(message: String, where: Vector2, extent: Vector2, handler: Callable) -> Button:
+func _button(message: String, where: Vector2, extent: Vector2, handler: Callable, parent: Control=null) -> Button:
     var element := Button.new()
     element.text = message
     element.position = where
     element.size = extent
     element.add_theme_font_size_override("font_size", 14)
-    add_child(element)
+    (parent if parent!=null else self).add_child(element)
     element.pressed.connect(handler)
     return element
 
-func _options(where: Vector2, choices: Array[String]) -> OptionButton:
+func _options(where: Vector2, choices: Array[String], parent: Control=null) -> OptionButton:
     var element := OptionButton.new()
     element.position = where
     element.size = Vector2(295, 36)
     element.add_theme_font_size_override("font_size", 14)
     for choice in choices:
         element.add_item(choice)
-    add_child(element)
+    (parent if parent!=null else self).add_child(element)
     return element
 
 func _build_commander_desk() -> void:
@@ -500,7 +526,7 @@ func _build_commander_desk() -> void:
     commander_scroll.horizontal_scroll_mode=ScrollContainer.SCROLL_MODE_DISABLED
     commander_scroll.vertical_scroll_mode=ScrollContainer.SCROLL_MODE_RESERVE
     commander_scroll.add_theme_stylebox_override("panel",_ui_box(Color("#17222c")))
-    add_child(commander_scroll)
+    command_panel.add_child(commander_scroll)
     var sections := VBoxContainer.new()
     sections.size_flags_horizontal=Control.SIZE_EXPAND_FILL
     sections.add_theme_constant_override("separation",7)
@@ -552,13 +578,14 @@ func _build_battle_feed() -> void:
     event_label=_body_text(lines,13,COL_TEXT)
     battle_feed.hide()
 
-func _ensure_cards(strip: Control,count: int) -> void:
+func _ensure_cards(count: int) -> void:
     for i in range(general_cards.size(),count):
         var card:=BattleHud.CorpsCard.new()
-        card.custom_minimum_size=Vector2(201,88)
+        card.custom_minimum_size=Vector2(0,44)
+        card.size_flags_horizontal=Control.SIZE_EXPAND_FILL
         card.pressed.connect(_select_general_card.bind(i))
         card.report_requested.connect(_open_situations)
-        strip.add_child(card)
+        corps_grid.add_child(card)
         general_cards.append(card)
 
 func _ensure_friendly_selection() -> void:
@@ -709,7 +736,6 @@ func _focus_combat() -> void:
     queue_redraw()
 
 func _on_unit_selected(index: int) -> void:
-    if index>=0 and index<general_cards.size(): corps_scroll.ensure_control_visible(general_cards[index])
     var ids: Array[int]=sim.command_ids(0)
     if index<0 or index>=ids.size(): return
     selected_id=ids[index]
@@ -913,7 +939,7 @@ func _can_edge_pan() -> bool:
 func _edge_pan(point: Vector2) -> Vector2:
     var screen := Rect2(Vector2.ZERO,size)
     if not screen.has_point(point): return Vector2.ZERO
-    var field := Rect2(MAP_TOP_LEFT,MAP_SIZE)
+    var field := Rect2(MAP_TOP_LEFT,field_extent)
     var bounds := field if field.has_point(point) else screen
     var margin := 18.0
     var near_edge := (bounds.position+Vector2.ONE*margin-point)/margin
@@ -1338,6 +1364,7 @@ func _clear_journal() -> void:
     fronts_by_unit.clear()
     deformed_slot_cache.clear()
     infantry_feet.clear()
+    rider_tracks.clear()
     arrival_messages.clear()
     journal_events.clear()
     journal_keys.clear()
@@ -1410,6 +1437,7 @@ func _refresh_general_cards(reports: Array[Dictionary]) -> void:
             if recipient.has("parent_id"): order="분견대 "+order
             courier_orders[leader]=str(courier_orders[leader])+", "+order if courier_orders.has(leader) else order
     var ids: Array[int]=sim.command_ids(0)
+    corps_grid.columns=maxi(1,ids.size() if ids.size()<=6 else ceili(ids.size()*0.5))
     for i in range(general_cards.size()):
         var card:=general_cards[i]
         if i>=ids.size():
@@ -1436,7 +1464,9 @@ func _refresh_general_cards(reports: Array[Dictionary]) -> void:
         card.report_link.visible=card.report_id>=0
         card.report_link.accessibility_name=officer+" 야전 보고 열기"
         card.accessibility_description="도착한 야전 보고 있음" if card.report_link.visible else ""
-        card.tooltip_text="%s  ·  단축키 %d\n기분: %s\n판단: %s\n관측: %s\n우려: %s\n최근 명령: %s" % [officer,i+1,mood,reason,mind.get("observed",""),mind.get("concern",""),mind.get("last_order","")]
+        var shortcut := "  ·  단축키 %d" % ((i+1)%10) if i<10 else ""
+        card.tooltip_text="%s%s\n기분: %s\n판단: %s\n관측: %s\n우려: %s\n최근 명령: %s" % [officer,shortcut,mood,reason,mind.get("observed",""),mind.get("concern",""),mind.get("last_order","")]
+        if kind=="전령": card.tooltip_text+="\n전령: "+detail
         if not suggestion.is_empty(): card.tooltip_text+="\n건의: "+suggestion
 
 # Three live fronts, persistent and clickable. Display counts are actual current
@@ -1590,7 +1620,7 @@ func _battle_brief() -> String:
     return "교전·사격 %d개 부대  |  가한 피해 %s  ·  아군 손실 %s" % [fighting,_number_text(roundi(own_damage)),_number_text(roundi(own_loss))]
 
 func _gui_input(event: InputEvent) -> void:
-    if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and _minimap_rect().has_point(event.position):
+    if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and command_panel.visible and _minimap_rect().has_point(event.position):
         camera_zoom = maxf(1.0,camera_zoom)
         camera_center = (event.position-_minimap_rect().position)*sim.field_size.x/MINIMAP_AREA.size.x
         _clamp_camera()
@@ -1598,7 +1628,7 @@ func _gui_input(event: InputEvent) -> void:
         queue_redraw()
         accept_event()
         return
-    if event is InputEventScreenTouch and Rect2(MAP_TOP_LEFT,MAP_SIZE).has_point(event.position):
+    if event is InputEventScreenTouch and Rect2(MAP_TOP_LEFT,field_extent).has_point(event.position):
         if event.pressed:
             touch_origin = event.position
             touch_dragged = false
@@ -1606,7 +1636,7 @@ func _gui_input(event: InputEvent) -> void:
             _map_select(event.position)
         accept_event()
         return
-    if event is InputEventScreenDrag and Rect2(MAP_TOP_LEFT,MAP_SIZE).has_point(event.position):
+    if event is InputEventScreenDrag and Rect2(MAP_TOP_LEFT,field_extent).has_point(event.position):
         if touch_origin.distance_to(event.position) > 10.0:
             touch_dragged = true
             camera_center -= event.relative/camera_zoom
@@ -1615,13 +1645,13 @@ func _gui_input(event: InputEvent) -> void:
             queue_redraw()
         accept_event()
         return
-    if event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_MIDDLE) != 0 and Rect2(MAP_TOP_LEFT,MAP_SIZE).has_point(event.position):
+    if event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_MIDDLE) != 0 and Rect2(MAP_TOP_LEFT,field_extent).has_point(event.position):
         camera_center -= event.relative / camera_zoom
         _clamp_camera()
         map_layer.queue_redraw()
         accept_event()
         return
-    if event is InputEventMouseButton and event.pressed and Rect2(MAP_TOP_LEFT,MAP_SIZE).has_point(event.position):
+    if event is InputEventMouseButton and event.pressed and Rect2(MAP_TOP_LEFT,field_extent).has_point(event.position):
         if event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
             _change_zoom(0.25 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -0.25, event.position)
             accept_event()
@@ -1630,7 +1660,7 @@ func _gui_input(event: InputEvent) -> void:
         _map_select(event.position)
 
 func _map_select(mouse_pos: Vector2) -> void:
-    if not Rect2(MAP_TOP_LEFT, MAP_SIZE).has_point(mouse_pos):
+    if not Rect2(MAP_TOP_LEFT, field_extent).has_point(mouse_pos):
         return
     if not sim.started and map_mode != "선택":
         var field_pos: Vector2 = _world_mouse(mouse_pos)
@@ -1671,7 +1701,7 @@ func _map_select(mouse_pos: Vector2) -> void:
 func _draw() -> void:
     draw_rect(Rect2(0,0,1280,800),COL_BG)
     draw_style_box(desk_plaque,Rect2(0,0,1280,56))
-    draw_rect(Rect2(0,56,954,86),Color("#182725"))
+    draw_rect(Rect2(0,56,954 if command_panel.visible else 1280,86),Color("#182725"))
     draw_texture_rect(Materials.WALNUT,Rect2(0,694,1280,106),false,Color("#8e978c"))
     draw_line(Vector2(369,8),Vector2(369,44),Color("#59615a"))
     draw_line(Vector2(953,8),Vector2(953,44),Color("#59615a"))
@@ -1680,16 +1710,17 @@ func _draw() -> void:
     var elapsed: float=clampf(sim.operation_elapsed()/maxf(1.0,sim.operation_limit()),0,1)
     draw_rect(Rect2(383,51,555,2),Color("#354653"))
     if elapsed>0.0: draw_rect(Rect2(383,51,555*elapsed,2),COL_GOLD)
-    draw_rect(Rect2(MAP_TOP_LEFT,MAP_SIZE),Color("#19232d"))
-    draw_rect(Rect2(MAP_TOP_LEFT,MAP_SIZE).grow(1),COL_LINE,false)
-    draw_style_box(desk_plaque,Rect2(961,61,303,632))
-    var hero_top: float=333.0 if observing_enemy else 143.0
-    draw_rect(Rect2(970,hero_top,286,85),Color("#263747"))
-    draw_rect(Rect2(970,hero_top,3,85),COL_RED if observing_enemy else COL_BLUE)
-    draw_line(Vector2(970,601),Vector2(1256,601),COL_LINE,1.0)
+    draw_rect(Rect2(MAP_TOP_LEFT,field_extent),Color("#19232d"))
+    draw_rect(Rect2(MAP_TOP_LEFT,field_extent).grow(1),COL_LINE,false)
+    if command_panel.visible:
+        draw_style_box(desk_plaque,Rect2(961,61,303,632))
+        var hero_top: float=333.0 if observing_enemy else 143.0
+        draw_rect(Rect2(970,hero_top,286,85),Color("#263747"))
+        draw_rect(Rect2(970,hero_top,3,85),COL_RED if observing_enemy else COL_BLUE)
+        draw_line(Vector2(970,601),Vector2(1256,601),COL_LINE,1.0)
+        _draw_minimap()
     draw_line(Vector2(16,698),Vector2(1264,698),Color("#76664c"),1.0)
     _draw_force_balance()
-    _draw_minimap()
 
 func _draw_force_balance() -> void:
     # Current manpower share, not win probability; no data in recon mode.
@@ -1732,12 +1763,12 @@ func _draw_field_site(kind: int,p: Vector2,scale_factor: float,tint: Color=Color
     map_layer.draw_texture_rect_region(FIELD_SITES,area,Rect2(kind*384,0,384,384),tint)
 
 func _draw_map(_canvas: Control) -> void:
-    map_layer.draw_set_transform(MAP_SIZE * 0.5 - camera_center * camera_zoom, 0.0, Vector2.ONE * camera_zoom)
+    map_layer.draw_set_transform(field_extent * 0.5 - camera_center * camera_zoom, 0.0, Vector2.ONE * camera_zoom)
     map_label_areas.clear()
-    var screen_corner: Vector2=camera_center-MAP_SIZE*0.5/camera_zoom
-    map_label_areas.append(Rect2(screen_corner+Vector2(MAP_SIZE.x-60,4)/camera_zoom,Vector2(56,56)/camera_zoom))
-    map_label_areas.append(Rect2(screen_corner+Vector2(8,MAP_SIZE.y-46)/camera_zoom,Vector2(397,37)/camera_zoom))
-    map_label_areas.append(Rect2(screen_corner+Vector2(MAP_SIZE.x-126,MAP_SIZE.y-46)/camera_zoom,Vector2(122,37)/camera_zoom))
+    var screen_corner: Vector2=camera_center-field_extent*0.5/camera_zoom
+    map_label_areas.append(Rect2(screen_corner+Vector2(field_extent.x-60,4)/camera_zoom,Vector2(56,56)/camera_zoom))
+    map_label_areas.append(Rect2(screen_corner+Vector2(8,field_extent.y-46)/camera_zoom,Vector2(397,37)/camera_zoom))
+    map_label_areas.append(Rect2(screen_corner+Vector2(field_extent.x-126,field_extent.y-46)/camera_zoom,Vector2(122,37)/camera_zoom))
     var dispatch_controls: Array[Button] = [messenger_card]
     dispatch_controls.append_array(arrival_rows)
     for card in dispatch_controls:
@@ -1791,7 +1822,7 @@ func _draw_map(_canvas: Control) -> void:
             var progress: float = clampf(float(site["progress"]) / sim.capture_duration(), 0.0, 1.0)
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60, 4)), Color("#243138"))
             map_layer.draw_rect(Rect2(site_pos + Vector2(-30, 11), Vector2(60.0 * progress, 4)), COL_BLUE if int(site["challenger"]) == 0 else COL_RED)
-    var field_view := Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom).grow(125.0)
+    var field_view := Rect2(camera_center-field_extent*0.5/camera_zoom,field_extent/camera_zoom).grow(125.0)
     if detailed_map:
         for site in sim.terrain_posts:
             var point: Vector2=site["pos"]
@@ -1873,7 +1904,7 @@ func _draw_map(_canvas: Control) -> void:
     for report in sim.incoming_reports:
         if report.get("side",0)==1 and fog_enabled and not sim.player_can_see(report["rider"]["pos"]): continue
         var rider: Vector2=report["rider"]["pos"]
-        if not Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom).grow(35).has_point(rider): continue
+        if not Rect2(camera_center-field_extent*0.5/camera_zoom,field_extent/camera_zoom).grow(35).has_point(rider): continue
         var k:=1.0/camera_zoom
         _paint_tile(42,Rect2(rider-Vector2(9,10)*k,Vector2(18,20)*k))
         map_layer.draw_circle(rider+Vector2(7,-6)*k,3*k,COL_GOLD)
@@ -2027,7 +2058,7 @@ func _draw_map(_canvas: Control) -> void:
 # Trees and soldiers share a foot-position sort. A unit behind a tree is
 # partially hidden instead of being painted on top of the tree canopy.
 func _visible_trees() -> Array[Dictionary]:
-    var view:=Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom).grow(75.0)
+    var view:=Rect2(camera_center-field_extent*0.5/camera_zoom,field_extent/camera_zoom).grow(75.0)
     var result: Array[Dictionary]=[]
     for tree in forest_instances:
         if view.has_point(tree["pos"]): result.append(tree)
@@ -2156,7 +2187,27 @@ func _update_contact_fronts(dt: float) -> void:
                 continue
         if not fronts_by_unit.has(key.x): fronts_by_unit[key.x]=[]
         fronts_by_unit[key.x].append(front)
-    if sim.six_armies: _step_infantry_feet(dt)
+    if sim.six_armies:
+        _step_infantry_feet(dt)
+        _step_riders(dt)
+
+func _step_riders(dt: float) -> void:
+    for unit in sim.units:
+        if unit["type"]!="기병": continue
+        var id: int=unit["id"]
+        if unit["troops"]<=0 or not _visible_unit(unit):
+            rider_tracks.erase(id)
+            continue
+        var previous: Dictionary=rider_tracks.get(id,{})
+        if previous.get("tick",-1)==sim.step_count: continue
+        var raw:=_visual_slots(unit)
+        if raw.is_empty(): continue
+        var slots:=_contact_slots(unit,raw)
+        var core:=mini(slots.size(),clampi(ceili(float(unit["troops"])/180.0),1,24))
+        var state:=MountedMotion.advance(sim,unit,slots,core,previous,dt)
+        state["raw"]=raw
+        rider_tracks[id]=state
+
 
 func _step_infantry_feet(dt: float) -> void:
     var prior := {}
@@ -2517,7 +2568,7 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         var id: int=int(unit["id"])
         var cacheable: bool=sim.started and not sim.paused and not sim.finished
         if not cacheable or not formation_render_cache.has(id):
-            var sampled: Dictionary = infantry_feet.get(id, {})
+            var sampled: Dictionary = rider_tracks.get(id,{}) if unit["type"]=="기병" else infantry_feet.get(id, {})
             if cacheable and sampled.get("tick", -1) == sim.step_count:
                 formation_render_cache[id] = sampled["raw"]
             else:
@@ -2526,7 +2577,7 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
         if slots.is_empty(): continue
         var display_slots: Array[Vector2]=slots
         if fronts_by_unit.has(id):
-            if not deformed_slot_cache.has(id):
+            if not cacheable or not deformed_slot_cache.has(id) or deformed_slot_cache[id].size()!=slots.size():
                 deformed_slot_cache[id]=_contact_slots(unit,slots)
             display_slots=deformed_slot_cache[id]
         var core: int=mini(slots.size(),clampi(ceili(float(unit["troops"])/180.0),1,24)) if sim.six_armies else slots.size()
@@ -2565,7 +2616,8 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             var advance: Vector2 = center - previous_centers[id]
             for file in range(core): file_steps.append(slots[file] - Vector2(prior[file]) - advance)
         var blend := 1.0 - clampf(step_buffer / 0.1, 0.0, 1.0)
-        var feet: Dictionary = infantry_feet.get(id, {})
+        var feet: Dictionary = rider_tracks.get(id,{}) if unit["type"]=="기병" else infantry_feet.get(id, {})
+        var riding: bool=unit["type"]=="기병" and sim.started and feet.get("tick",-1)==sim.step_count and feet.get("core",-1)==core
         var tracked: bool = sim.started and unit["type"] == "보병" and feet.get("tick", -1) == sim.step_count and feet.get("core", -1) == core
         var a: PackedVector2Array = feet.get("start", PackedVector2Array())
         var b: PackedVector2Array = feet.get("end", PackedVector2Array())
@@ -2589,12 +2641,12 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
             var look_angle := -INF
             @warning_ignore("integer_division")
             var person: int = (index / core) * 24 + (index % core) if sim.six_armies else index
-            if tracked and index < b.size():
+            if (tracked or riding) and index < b.size():
                 file_step = b[index] - a[index]
                 var alpha := 1.0 if sim.finished else 1.0 - blend
                 point = a[index].lerp(b[index], alpha)
                 look_angle = lerp_angle(feet["from_heading"][index], feet["heading"][index], alpha)
-                stride_angle = (walked[index] - file_step.length() * (1.0-alpha)) * TAU / 13.0 + float(person)*2.39996
+                stride_angle = (walked[index] - file_step.length() * (1.0-alpha)) * TAU / (21.0 if riding else 13.0) + float(person)*2.39996
             if scatter>0.0:
                 var seed_index := person if unit["type"] == "보병" else index
                 point+=Vector2(sin(float(seed_index)*7.3),cos(float(seed_index)*5.7))*scatter
@@ -2603,6 +2655,8 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
                 local_target=targets[index%core]
                 if local_target!=Vector2.INF and slots[index].distance_squared_to(local_target)>reach*reach:
                     local_target=Vector2.INF
+            if riding and local_target!=Vector2.INF and point.distance_squared_to(local_target)>reach*reach:
+                local_target=Vector2.INF
             var swing_at: float = unit["last_visual"]
             if two_fronts and not file_opponents.is_empty(): swing_at = swing_times.get(file_opponents[index % core], -100.0)
             var nearby: bool = index < local_owners.size() and local_owners[index] >= 0
@@ -2698,7 +2752,12 @@ func _draw_formation_ink(units: Array[Dictionary], field_view: Rect2) -> void:
         if count<3: continue
         var anchors: Array[Vector2]=slots.slice(0,count)
         var offset:=_render_offset(id,center)
-        for i in range(count): anchors[i]+=offset
+        var riders: Dictionary=rider_tracks.get(id,{})
+        if sim.started and not sim.finished and riders.get("tick",-1)==sim.step_count and riders["core"]==count:
+            var alpha:=clampf(step_buffer/0.1,0.0,1.0)
+            for i in count: anchors[i]=Vector2(riders["start"][i]).lerp(riders["end"][i],alpha)
+        else:
+            for i in count: anchors[i]+=offset
         # Let the two occupied bodies read as one scrum. Keep the rear colour
         # as an allegiance cue while the solid outlines fade at contact.
         var mix := 0.0
@@ -2827,7 +2886,7 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     var accent: Color = COL_BLUE if side == 0 else COL_RED
     var selected: bool = int(unit["id"]) == (observed_enemy_id if observing_enemy else selected_id)
     var inv: float = 1.0/camera_zoom
-    var view := Rect2(camera_center-MAP_SIZE*0.5*inv,MAP_SIZE*inv).grow(-4.0*inv)
+    var view := Rect2(camera_center-field_extent*0.5*inv,field_extent*inv).grow(-4.0*inv)
     if not view.grow(35.0).has_point(p):
         return
     var state: String = ""
@@ -2872,7 +2931,7 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     var attachment: Vector2 = chosen.get_center()
     if selected or detailed_map:
         map_layer.draw_line(p,attachment,Color(accent,0.38),0.8*inv,true)
-    var screen_origin: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
+    var screen_origin: Vector2 = field_extent*0.5-camera_center*camera_zoom
     map_layer.draw_set_transform(screen_origin+chosen.position*camera_zoom,0.0,Vector2.ONE)
     var pixel_size: Vector2 = chosen.size*camera_zoom
     var rect := Rect2(Vector2.ZERO,pixel_size)
@@ -3125,12 +3184,12 @@ func _public_event(message: String) -> bool:
 func _build_map_layer() -> void:
     map_clip = Control.new()
     map_clip.position = MAP_TOP_LEFT
-    map_clip.size = MAP_SIZE
+    map_clip.size = field_extent
     map_clip.clip_contents = true
     map_clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
     add_child(map_clip)
     var layer := RenderLayer.new()
-    layer.size = MAP_SIZE
+    layer.size = field_extent
     layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
     layer.texture_filter=CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
     layer.painter = _draw_map
@@ -3138,7 +3197,7 @@ func _build_map_layer() -> void:
     map_layer = layer
 
 func _world_mouse(p: Vector2) -> Vector2:
-    return (p - MAP_TOP_LEFT - MAP_SIZE*0.5)/camera_zoom + camera_center
+    return (p - MAP_TOP_LEFT - field_extent*0.5)/camera_zoom + camera_center
 
 func _clamp_camera(focused_sector: int=-1, focused_objective: int=-1) -> void:
     if objective_focus!=focused_objective:
@@ -3149,7 +3208,7 @@ func _clamp_camera(focused_sector: int=-1, focused_objective: int=-1) -> void:
         sector_selection=focused_sector
         for i in range(sector_cards.size()):
             sector_cards[i].set_pressed_no_signal(i==focused_sector)
-    var half: Vector2 = MAP_SIZE*0.5/camera_zoom
+    var half: Vector2 = field_extent*0.5/camera_zoom
     camera_center.x = clampf(camera_center.x,minf(half.x,sim.field_size.x*0.5),maxf(sim.field_size.x-half.x,sim.field_size.x*0.5))
     camera_center.y = clampf(camera_center.y,minf(half.y,sim.field_size.y*0.5),maxf(sim.field_size.y-half.y,sim.field_size.y*0.5))
 
@@ -3162,7 +3221,7 @@ func _change_zoom(delta: float, cursor: Vector2 = Vector2.INF) -> void:
     queue_redraw()
 
 func _overview_zoom() -> float:
-    return minf(MAP_SIZE.x/sim.field_size.x,MAP_SIZE.y/sim.field_size.y)
+    return minf(field_extent.x/sim.field_size.x,field_extent.y/sim.field_size.y)
 
 func _reset_camera() -> void:
     render_clock = sim.battle_time
@@ -3188,14 +3247,15 @@ func _build_presentation() -> void:
     _button("＋",Vector2(26,632),Vector2(33,32),func(): _change_zoom(0.25)).tooltip_text="전장 확대"
     _button("－",Vector2(65,632),Vector2(33,32),func(): _change_zoom(-0.25)).tooltip_text="전장 축소"
     _button("장수",Vector2(104,632),Vector2(68,32),_focus_selected).tooltip_text="선택한 장수로 이동 · F"
-    _button("전체",Vector2(888,632),Vector2(52,32),_reset_camera).tooltip_text="전장 전체 보기 · Home"
-    _button("음향",Vector2(828,632),Vector2(54,32),_toggle_sound)
+    overview_button=_button("전체",Vector2(888,632),Vector2(52,32),_reset_camera)
+    overview_button.tooltip_text="전장 전체 보기 · Home"
+    sound_button=_button("음향",Vector2(828,632),Vector2(54,32),_toggle_sound)
     var card := RenderLayer.new()
     card.position = Vector2(974,343)
     card.size = Vector2(68,68)
     card.mouse_filter = Control.MOUSE_FILTER_IGNORE
     card.painter = _draw_portrait
-    add_child(card)
+    command_panel.add_child(card)
     portrait = card
     brief_dialog = AcceptDialog.new()
     brief_dialog.title = "군략 · 작전 브리핑"
@@ -3286,7 +3346,7 @@ func _draw_minimap() -> void:
             draw_circle(origin+(unit["pos"] as Vector2)*factor,2.8,COL_BLUE if int(unit["side"]) == 0 else COL_RED)
     for site in sim.outposts:
         draw_circle(origin+(site["pos"] as Vector2)*factor,3.0,COL_GOLD,false,1.2)
-    var visible_size: Vector2 = MAP_SIZE/camera_zoom
+    var visible_size: Vector2 = field_extent/camera_zoom
     var viewport := Rect2(origin+(camera_center-visible_size*0.5)*factor,visible_size*factor)
     draw_rect(viewport.intersection(mini_rect),COL_GOLD,false,1.4)
     draw_rect(mini_rect,Color("#9caa9b"),false,1.0)
@@ -3302,8 +3362,8 @@ func _draw_portrait(canvas: Control) -> void:
 func _draw_terrain_texture() -> void:
     # Small compass and a clean frame give orientation without repeated labels.
     # Compass stays at a constant screen size instead of growing with zoom.
-    var offset: Vector2=MAP_SIZE*0.5-camera_center*camera_zoom
-    map_layer.draw_set_transform(Vector2(MAP_SIZE.x-33,30),0.0,Vector2.ONE)
+    var offset: Vector2=field_extent*0.5-camera_center*camera_zoom
+    map_layer.draw_set_transform(Vector2(field_extent.x-33,30),0.0,Vector2.ONE)
     map_layer.draw_circle(Vector2.ZERO,23,Color(0.08,0.12,0.13,0.72))
     map_layer.draw_arc(Vector2.ZERO,22,0.0,TAU,40,Color(COL_GOLD,0.65),1.0,true)
     for i in range(8):
@@ -3374,7 +3434,8 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
         dressing = false
         if not visual_contact and moving: direction = file_step.normalized()
         elif not visual_contact: direction = unit["facing"]
-        pose = (0 if sin(stride_angle) >= 0.0 else 1) if moving else -1
+        if kind==0 or not visual_contact:
+            pose = (0 if sin(stride_angle) >= 0.0 else 1) if moving else -1
     if look_angle != -INF: direction = Vector2.from_angle(look_angle)
     if stroke_age != -INF:
         pose = InfantryMotion.contact_pose(stroke_age)
@@ -3420,7 +3481,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     elif pose==2 and kind==2: p-=direction*0.8*SOLDIER_SCALE
     var variation: float=0.95+float(posmod(index*17+int(unit["id"])*7,11))*0.012
     var shade: Color = Color(0.95,0.88,0.79,accent.a) if hit else Color(variation,variation,variation,accent.a)
-    var map_offset: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
+    var map_offset: Vector2 = field_extent*0.5-camera_center*camera_zoom
     # A shared shadow under each small file keeps densely packed feet readable.
     if camera_zoom>=1.10 and draw_shadow:
         map_layer.draw_set_transform(map_offset+(ground+Vector2(2.5,1.0)*SOLDIER_SCALE)*camera_zoom,0.0,Vector2(1.0,0.45)*camera_zoom)
@@ -3458,7 +3519,7 @@ func _sample_battle_losses() -> void:
             recent_losses[id]={"count":change,"time":sim.battle_time,"pos":u["pos"],"side":u["side"]}
 
 func _draw_fallen(view: Rect2) -> void:
-    var offset: Vector2 = MAP_SIZE * 0.5 - camera_center * camera_zoom
+    var offset: Vector2 = field_extent * 0.5 - camera_center * camera_zoom
     for entry in sim.fallen_marks:
         var point: Vector2 = entry["point"]
         if not view.has_point(point) or (fog_enabled and not sim.finished and not sim.player_can_see(point)): continue
@@ -3470,7 +3531,7 @@ func _draw_fallen(view: Rect2) -> void:
 
 func _draw_loss_markers() -> void:
     if not sim.started or sim.finished or camera_zoom<0.70: return
-    var offset: Vector2=MAP_SIZE*0.5-camera_center*camera_zoom
+    var offset: Vector2=field_extent*0.5-camera_center*camera_zoom
     for id in recent_losses:
         var item: Dictionary=recent_losses[id]
         var age: float=maxf(0.0,render_clock-float(item["time"]))
@@ -3480,7 +3541,7 @@ func _draw_loss_markers() -> void:
         var p: Vector2=offset+(item["pos"] as Vector2)*camera_zoom+Vector2(22,-40-age*18)
         var caption: String="-"+_number_text(int(item["count"]))
         var extent:=Vector2(korean_font.get_string_size(caption,HORIZONTAL_ALIGNMENT_LEFT,-1,14).x+4,20)
-        var box:=Rect2(camera_center+(p-MAP_SIZE*0.5-Vector2(1,16))/camera_zoom,extent/camera_zoom)
+        var box:=Rect2(camera_center+(p-field_extent*0.5-Vector2(1,16))/camera_zoom,extent/camera_zoom)
         var free:=true
         for prior in map_label_areas:
             if prior.grow(2/camera_zoom).intersects(box): free=false
@@ -3501,7 +3562,7 @@ func _combat_effect_visible(fx: Dictionary) -> bool:
 # Ground marks are laid down before the soldier and tree depth pass.
 func _draw_contact_scuffs(view: Rect2) -> void:
     if camera_zoom < 0.65: return
-    var offset := MAP_SIZE * 0.5 - camera_center * camera_zoom
+    var offset := field_extent * 0.5 - camera_center * camera_zoom
     for fx in sim.visual_effects:
         var age := maxf(0.0, render_clock - float(fx["time"]))
         if fx["kind"] == "화살" or age >= 0.72: continue
@@ -3558,8 +3619,8 @@ func _draw_combat_effects() -> void:
 func _draw_volley(fx: Dictionary, origin: Vector2, target: Vector2, age: float) -> void:
     var lanes: Array[Vector2]=[origin,target]
     if fx.has("arrow_lanes"): lanes=fx["arrow_lanes"]
-    var view_offset: Vector2=MAP_SIZE*0.5-camera_center*camera_zoom
-    var view:=Rect2(Vector2.ZERO,MAP_SIZE).grow(12.0)
+    var view_offset: Vector2=field_extent*0.5-camera_center*camera_zoom
+    var view:=Rect2(Vector2.ZERO,field_extent).grow(12.0)
     var arrow_height: float=maxf(1.38,1.0/camera_zoom)
     var arrow_rect:=Rect2(-3.65,-arrow_height*0.5,5.85,arrow_height)
     var arrow_count: int=10 if camera_zoom>=1.15 else (6 if camera_zoom>=0.75 else 3)
@@ -3709,8 +3770,8 @@ func _update_audio_and_warning() -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
     if event is InputEventKey and event.pressed and not event.echo:
         if is_instance_valid(order_view) and order_view.visible: return
-        if event.keycode >= KEY_1 and event.keycode <= KEY_6 and not title_screen.visible and not strategy_view.visible:
-            var index: int = int(event.keycode-KEY_1)
+        if event.keycode >= KEY_0 and event.keycode <= KEY_9 and not title_screen.visible and not strategy_view.visible:
+            var index: int = 9 if event.keycode==KEY_0 else int(event.keycode-KEY_1)
             _select_general_card(index)
             return
         match event.keycode:
@@ -4133,7 +4194,7 @@ func _launch_campaign_battle(target: int) -> bool:
     if not campaign.prepare(target,sim):
         return false
     campaign_active = true
-    _ensure_cards(general_cards[0].get_parent(),sim.command_ids(0).size())
+    _ensure_cards(sim.command_ids(0).size())
     battle_recorded = false
     strategy_view.hide()
     title_screen.hide()
@@ -4586,11 +4647,11 @@ func _primary_button(btn: Button) -> void:
 func _map_plate(value: String,p: Vector2,accent: Color,fs: int) -> Rect2:
     var pixel_font: int = clampi(roundi(float(fs)*camera_zoom),12,14)
     var w: float = korean_font.get_string_size(value,HORIZONTAL_ALIGNMENT_LEFT,-1,pixel_font).x+14.0
-    var origin: Vector2 = MAP_SIZE*0.5-camera_center*camera_zoom
+    var origin: Vector2 = field_extent*0.5-camera_center*camera_zoom
     map_layer.draw_set_transform(origin+p*camera_zoom,0.0,Vector2.ONE)
     var rect := Rect2(Vector2(-w*0.5,-12),Vector2(w,21))
     var world_rect:=Rect2(p+rect.position/camera_zoom,rect.size/camera_zoom)
-    var view:=Rect2(camera_center-MAP_SIZE*0.5/camera_zoom,MAP_SIZE/camera_zoom)
+    var view:=Rect2(camera_center-field_extent*0.5/camera_zoom,field_extent/camera_zoom)
     var blocked: bool=not view.encloses(world_rect)
     for prior in map_label_areas:
         if prior.grow(3.0/camera_zoom).intersects(world_rect): blocked=true
@@ -4653,7 +4714,7 @@ func _visual_slots(unit: Dictionary) -> Array[Vector2]:
 
 func _draw_march_dust(view: Rect2) -> void:
     if dust_texture == null or camera_zoom < 0.60: return
-    var offset := MAP_SIZE * 0.5 - camera_center * camera_zoom
+    var offset := field_extent * 0.5 - camera_center * camera_zoom
     var bounds := view.grow(55.0)
     for puff in sim.dust_effects:
         var foot: Vector2 = puff["pos"]
@@ -4675,8 +4736,8 @@ func _scenery_tile(tile: int,rect: Rect2,tint: Color=Color.WHITE) -> void:
     map_layer.draw_texture_rect_region(SCENERY_ART,rect,source,tint)
 
 func _draw_river_detail() -> void:
-    var top: float = maxf(0.0,camera_center.y-MAP_SIZE.y*0.5/camera_zoom)
-    var bottom: float = minf(sim.field_size.y,camera_center.y+MAP_SIZE.y*0.5/camera_zoom)
+    var top: float = maxf(0.0,camera_center.y-field_extent.y*0.5/camera_zoom)
+    var bottom: float = minf(sim.field_size.y,camera_center.y+field_extent.y*0.5/camera_zoom)
     for y in range(floori(top/23.0)*23,int(bottom)+1,23):
         if sim.near_crossing(float(y)): continue
         var phase: float=float(y)*0.151

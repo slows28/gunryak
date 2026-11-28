@@ -282,14 +282,14 @@ func _capture() -> void:
         var card=game.general_cards[i]
         var officer_id: int=game.sim.command_ids(0)[i]
         var expected_troops: String=game.call("_number_text",roundi(game.sim.corps_report(officer_id)["troops"]))+"명"
-        if not card.visible or card.commander.text!=game.sim.find_unit(officer_id)["name"] or card.strength.text!=expected_troops or card.action.text.is_empty() or card.mood.text.is_empty() or card.note.text.is_empty():
+        if not card.visible or card.commander.text!=game.sim.find_unit(officer_id)["name"] or card.strength.text!=expected_troops or card.action.text.is_empty() or not card.tooltip_text.contains("기분:") or not card.tooltip_text.contains("판단:"):
             push_error("VISUAL_CAPTURE_FAIL: commander card missing live state")
             quit(1)
             return
     var field := Rect2(game.MAP_TOP_LEFT,game.MAP_SIZE)
     var screen := Rect2(0,0,1280,800)
     var occupied: Array[Rect2]=[]
-    var strip: Rect2=game.corps_scroll.get_global_rect()
+    var strip: Rect2=game.corps_grid.get_global_rect()
     if strip.intersects(field) or not screen.encloses(strip):
         push_error("VISUAL_CAPTURE_FAIL: army strip covers battlefield")
         quit(1)
@@ -299,10 +299,10 @@ func _capture() -> void:
         for prior_box in occupied:
             if box.intersects(prior_box): quit(1); return
         occupied.append(box)
-    game.corps_scroll.ensure_control_visible(game.general_cards.back())
-    await process_frame
-    if not game.corps_scroll.get_global_rect().has_point(game.general_cards.back().get_global_rect().get_center()): quit(1); return
-    game.corps_scroll.scroll_horizontal=0
+        if not strip.encloses(box):
+            push_error("VISUAL_CAPTURE_FAIL: an assigned commander is outside the visible grid")
+            quit(1)
+            return
     game.sector_cards[2].pressed.emit()
     if not game.sector_cards[2].button_pressed or game.sector_selection!=2:
         push_error("VISUAL_CAPTURE_FAIL: south front focus did not respond")
@@ -1423,7 +1423,7 @@ func _capture_field_report() -> bool:
         push_error("VISUAL_CAPTURE_FAIL: issuing support did not retain the report and actual executor")
         return false
     var support_index: int=game.sim.command_ids(0).find(int(support["id"]))
-    if support_index<0 or game.general_cards[support_index].note_kind.text!="전령" or not game.general_cards[support_index].note.text.contains("지원"):
+    if support_index<0 or not game.general_cards[support_index].dispatch.is_visible_in_tree() or not game.general_cards[support_index].tooltip_text.contains("지원"):
         push_error("VISUAL_CAPTURE_FAIL: tactical courier is missing from the receiving commander's card")
         return false
     game.situation_dialog.get_ok_button().pressed.emit()

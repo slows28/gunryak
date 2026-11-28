@@ -1413,6 +1413,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         running_in = march.is_empty() and _can_run_in(unit, enemy, pos, goal)
         if long_operation and running_in:
             rate *= 1.0 + 0.55 * smoothstep(0.0, 80.0, unit["charge"])
+    var wheel_heading:=Vector2.ZERO
     var actual_move: Vector2 = Vector2.ZERO
     if pos.distance_to(goal) > (0.001 if not march.is_empty() else 2.0):
         if long_operation:
@@ -1428,6 +1429,14 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         if not structures.is_empty() and (str(unit["type"]) == "기병" or bool(unit["routed"])):
             goal = _detour_goal(unit,pos,goal)
         var new_pos: Vector2 = pos.move_toward(goal, rate * dt)
+        # A wing wheels out of its approach before accelerating at the front.
+        # Use the same bearing for actual movement and the rotating combat files.
+        var mounted_wing: bool=unit["type"]=="기병" and unit["flank_target"]>=0 and unit["action"] in ["협동 우회","돌파"]
+        if long_operation and mounted_wing and march.is_empty() and not prior_heading.is_zero_approx() and not on_river_channel(pos):
+            var course:=pos.direction_to(goal)
+            wheel_heading=prior_heading.rotated(clampf(prior_heading.angle_to(course),-2.8*dt,2.8*dt))
+            var alignment:=maxf(0.0,wheel_heading.dot(course))
+            new_pos=pos+wheel_heading*minf(pos.distance_to(goal),rate*dt*alignment*alignment)
         # Once the files meet, spend only the available forward room. A
         # lateral order or a withdrawal can still slide along or leave the line.
         if long_operation and march.is_empty() and not enemy.is_empty() and unit["type"] != "궁병" and unit["contact_target_id"] == enemy["id"]:
@@ -1469,7 +1478,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     # A pre-aligned column starts on its ordered bearing at deployment.
     var deployed: bool = step_count <= 1 and march.get("phase", "") == "연계 행군"
     if long_operation and not deployed and not prior_heading.is_zero_approx():
-        var desired: Vector2 = unit["facing"]
+        var desired: Vector2 = wheel_heading if not wheel_heading.is_zero_approx() else unit["facing"]
         if meeting_contact or (march.is_empty() and actual_move.is_zero_approx() and not enemy.is_empty() and unit["contact_target_id"] == enemy["id"] and not unit["routed"]):
             desired = pos.direction_to(enemy["pos"])
         var turn_rate := 2.8 if unit["type"] == "기병" else 2.1

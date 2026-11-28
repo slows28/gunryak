@@ -33,26 +33,23 @@ class CorpsCard extends ReadoutButton:
     var commander: Label
     var strength: Label
     var action: Label
-    var mood: Label
-    var note_kind: Label
-    var note: Label
-    var rule: ColorRect
+    var dispatch: Label
     var portrait_name: String
 
     func _init() -> void:
         theme_type_variation = &"CorpsCard"
         toggle_mode = true
-        ink(Rect2(8,8,50,53),Color("#b19b74"))
+        ink(Rect2(5,4,36,36),Color("#a48e65"))
         portrait = TextureRect.new()
-        portrait.position = Vector2(9,9)
-        portrait.size = Vector2(48,51)
+        portrait.position = Vector2(6,5)
+        portrait.size = Vector2(34,34)
         portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
         portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
         portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
         add_child(portrait)
         report_link = Button.new()
-        report_link.position = Vector2(8,8)
-        report_link.size = Vector2(50,53)
+        report_link.position = Vector2(5,4)
+        report_link.size = Vector2(36,36)
         report_link.flat = true
         report_link.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
         report_link.tooltip_text = "이 장수의 야전 보고 열기"
@@ -61,21 +58,29 @@ class CorpsCard extends ReadoutButton:
             report_link.add_theme_stylebox_override(state,clear)
         add_child(report_link)
         report_link.pressed.connect(func(): report_requested.emit(report_id))
-        var report_mark := line(Rect2(0,0,48,17),11,Color.WHITE,HORIZONTAL_ALIGNMENT_CENTER)
+        var report_mark := line(Rect2(0,0,36,16),11,Color.WHITE,HORIZONTAL_ALIGNMENT_CENTER)
         report_mark.reparent(report_link,false)
-        report_mark.position = Vector2(1,36)
+        report_mark.position = Vector2(0,20)
         report_mark.text = "보고 ›"
         var stamp := StyleBoxFlat.new()
         stamp.bg_color = Color("#8d3d2e")
         report_mark.add_theme_stylebox_override("normal",stamp)
         report_link.hide()
-        commander = line(Rect2(66,4,57,26),19,Color.WHITE)
-        strength = line(Rect2(123,6,70,22),14,Color.WHITE,HORIZONTAL_ALIGNMENT_RIGHT)
-        action = line(Rect2(66,31,73,25),15,Color.WHITE)
-        mood = line(Rect2(141,32,52,24),12,Color.WHITE,HORIZONTAL_ALIGNMENT_RIGHT)
-        rule = ink(Rect2(8,66,185,1),Color.WHITE)
-        note_kind = line(Rect2(9,69,31,22),12,Color.WHITE)
-        note = line(Rect2(43,69,150,22),13,Color.WHITE)
+        commander = line(Rect2(47,1,1,22),16,Color.WHITE)
+        strength = line(Rect2(0,2,1,20),13,Color.WHITE,HORIZONTAL_ALIGNMENT_RIGHT)
+        action = line(Rect2(47,22,1,20),13,Color.WHITE)
+        dispatch = line(Rect2(0,22,1,19),12,Color.WHITE,HORIZONTAL_ALIGNMENT_RIGHT)
+        resized.connect(_fit_lines)
+        _fit_lines()
+
+    func _fit_lines() -> void:
+        var right := size.x-8.0
+        strength.position.x=right-66.0
+        strength.size.x=66.0
+        commander.size.x=maxf(1.0,strength.position.x-commander.position.x-2.0)
+        dispatch.position.x=right-28.0
+        dispatch.size.x=28.0
+        action.size.x=maxf(1.0,(dispatch.position.x-3.0 if dispatch.visible else right)-action.position.x)
 
     func present(officer: String, troops: String, activity: String, feeling: String,
             mood_color: Color, kind: String, message: String, selected: bool) -> void:
@@ -83,18 +88,14 @@ class CorpsCard extends ReadoutButton:
         commander.text = officer
         strength.text = troops
         action.text = activity
-        mood.text = feeling
-        note_kind.text = kind
-        note.text = message
+        dispatch.text = kind if kind=="전령" else ""
+        dispatch.visible = not dispatch.text.is_empty()
+        _fit_lines()
         var primary := Color("#292c24") if selected else Color("#f5ecdb")
-        var secondary := Color("#484b3d") if selected else Color("#c5cebe")
         commander.modulate = primary
-        strength.modulate = secondary
-        action.modulate = primary
-        mood.modulate = Color("#4c4634") if selected else mood_color
-        rule.color = Color("#a99c7e") if selected else Color("#43514c")
-        note_kind.modulate = Color("#694c26") if selected else Color("#e0bb7e")
-        note.modulate = primary if kind!="판단" else secondary
+        strength.modulate = Color("#484b3d") if selected else Color("#c5cebe")
+        action.modulate = Color("#4c4634") if selected else mood_color
+        dispatch.modulate = Color("#694c26") if selected else Color("#e0bb7e")
         accessibility_name = "%s, %s, %s, %s. %s, %s" % [officer,troops,activity,feeling,kind,message]
 
 class SectorCard extends ReadoutButton:

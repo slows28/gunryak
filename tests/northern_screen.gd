@@ -13,6 +13,53 @@ func frame(filename: String) -> void:
     await process_frame
     await RenderingServer.frame_post_draw
     expect(root.get_texture().get_image().save_png(folder+"/"+filename+".png")==OK,filename)
+func click_at(at: Vector2) -> void:
+    var motion:=InputEventMouseMotion.new()
+    motion.position=at
+    root.push_input(motion,true)
+    for down in [true,false]:
+        var event:=InputEventMouseButton.new()
+        event.position=at
+        event.button_index=MOUSE_BUTTON_LEFT
+        event.pressed=down
+        root.push_input(event,true)
+    await process_frame
+
+func review_roster() -> void:
+    var ids: Array=game.sim.command_ids(0)
+    var area: Rect2=game.corps_grid.get_global_rect()
+    var seen: Array[Rect2]=[]
+    for i in ids.size():
+        var card=game.general_cards[i]
+        var bounds: Rect2=card.get_global_rect()
+        expect(card.is_visible_in_tree() and area.encloses(bounds),"all commanders on screen at once")
+        for other in seen: expect(not bounds.intersects(other),"commander cards remain separate")
+        seen.append(bounds)
+        expect(card.commander.text==game.sim.find_unit(ids[i]).name,"roster shows the real commander")
+    var orig: Vector2=game.camera_center
+    await click_at(game.panel_toggle.get_global_rect().get_center())
+    expect(not game.commander_scroll.is_visible_in_tree() and game.map_clip.size.x>1200,"panel closes and releases map space")
+    var cursor:=Vector2(1140,430)
+    var anchor: Vector2=game._world_mouse(cursor)
+    var wheel:=InputEventMouseButton.new()
+    wheel.position=cursor
+    wheel.button_index=MOUSE_BUTTON_WHEEL_UP
+    wheel.pressed=true
+    var zoom: float=game.camera_zoom
+    root.push_input(wheel,true)
+    wheel.pressed=false
+    root.push_input(wheel,true)
+    expect(game.camera_zoom>zoom and game._world_mouse(cursor).distance_to(anchor)<0.1,"expanded battlefield zoom anchors under the cursor")
+    var last=game.general_cards[ids.size()-1]
+    await click_at(last.action.get_global_rect().get_center())
+    expect(game.selected_id==ids.back() and not game.command_panel.visible,"last commander selects without reopening inspector")
+    await frame("03-expanded")
+    await click_at(game.panel_toggle.get_global_rect().get_center())
+    expect(game.commander_scroll.is_visible_in_tree() and game.map_clip.size==game.MAP_SIZE and last.button_pressed,"reopening restores selected inspector")
+    game._select_general_card(0)
+    game.camera_center=orig
+    game._clamp_camera()
+
 func _play():
     folder=ProjectSettings.globalize_path("res://test_results/northern_screen")
     if not OS.get_cmdline_user_args().is_empty(): folder=OS.get_cmdline_user_args()[0]
@@ -71,6 +118,7 @@ func _play():
     game._clamp_camera()
     game._refresh_hud()
     await frame("03-live")
+    await review_roster()
     # Complete the first chapter through the same objective resolver used during play.
     sim.battle_time=sim.LONG_OBJECTIVE_OPEN+1
     sim.turn=12
