@@ -68,6 +68,9 @@ static func _local_help(sim, unit: Dictionary, ally: Dictionary) -> bool:
     if here.distance_squared_to(point)>185.0*185.0 or sim._river_separates(here,point): return false
     if unit.mission in ["예비 대기","본진 방어","철수","보급기지 수색"] or unit.troops<600 or unit.cohesion<40 or unit.morale<35: return false
     if unit.has_destination and unit.mission=="지역 사수" and point.distance_to(unit.order_destination)>135.0: return false
+    # A mounted vanguard already covering its sector answers through its own
+    # wait/flank/charge sequence, which commits to a rider's real contact.
+    if unit.type=="기병" and (unit.has("mounted_anchor") or unit.flank_phase>0 or unit.action in ["기병 대기","협동 우회","측면 우회","돌파"]): return false
     if unit.type=="궁병" and unit.ammo<12: return false
     return true
 
