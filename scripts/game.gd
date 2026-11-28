@@ -365,8 +365,12 @@ func _build_interface() -> void:
     status_label = _label("",Vector2(969,29),Vector2(288,20),12,COL_MUTED)
     status_label.clip_text=true
     status_label.mouse_filter=Control.MOUSE_FILTER_PASS
-    _label("승리 목표",Vector2(17,103),Vector2(114,17),12,COL_GOLD)
-    objective_label=_label("",Vector2(17,119),Vector2(331,20),14,COL_TEXT)
+    _label("목표",Vector2(17,108),Vector2(31,23),13,COL_GOLD)
+    objective_label=_label("",Vector2(52,102),Vector2(298,38),13,COL_TEXT)
+    objective_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    objective_label.max_lines_visible=2
+    objective_label.vertical_alignment=VERTICAL_ALIGNMENT_CENTER
+    objective_label.mouse_filter=Control.MOUSE_FILTER_PASS
     objective_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
     for i in range(3):
         var button:=_button("",Vector2.ZERO,Vector2(196,31),_focus_objective.bind(i))
@@ -681,7 +685,11 @@ func _field_action(u: Dictionary) -> String:
         var response: Dictionary = sim.rear_responses.get(u["id"], {})
         if not response.is_empty(): return "앞뒤 교전" if response["front"] >= 0 else "후방으로 전환"
         if u["type"] == "기병" and u["charge"] >= 32.0: return "돌격 가속"
-        if not u.get("field_choice",{}).is_empty(): return u["action"]
+        var choice: Dictionary=u.get("field_choice",{})
+        if u["side"]==0 and choice.get("rally_cover",false):
+            var ally: Dictionary=sim.find_unit(choice["ally"])
+            if not ally.is_empty(): return str(ally["name"])+(" 엄호" if u["type"]=="궁병" else " 지원")
+        if not choice.is_empty(): return u["action"]
         var age: float=sim.battle_time-float(u.get("last_visual",-100.0))
         if age>=0.0 and age<0.95:
             if str(u["type"])=="궁병": return "사격 중"
