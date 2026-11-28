@@ -88,7 +88,10 @@ func _initialize() -> void:
     sim.couriers.back()["pos"]=sim.find_unit(2)["pos"]
     sim.step(0.1)
     check(sim.find_unit(2)["assigned_link"]==-1 and not sim.march_plans.has(2),"delivery removes the old link on the same movement tick")
-    check(sim.issue_map_order(2,"지정 위치 이동",courier_target,0),"new linked march can be ordered during battle")
+    check(not sim.issue_map_order(2,"지정 위치 이동",courier_target,0),"a second letter must await the next command day")
+    sim.turn=9
+    sim.battle_time=8.0*sim.turn_duration()
+    check(sim.issue_map_order(2,"지정 위치 이동",courier_target,0),"new linked march can be ordered on day nine")
     sim.couriers.back()["pos"]=sim.find_unit(2)["pos"]
     sim.step(0.1)
     check(sim.march_plans.has(2) and sim.march_plans[0]["forward"].dot(Vector2.DOWN)>0.9,"delivered destination rotates the connected group")

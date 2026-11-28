@@ -1601,21 +1601,32 @@ func _capture_messenger() -> bool:
     game.situation_dialog.get_ok_button().pressed.emit()
     await process_frame
     if sim.paused or game.messenger_id==letter["id"]: return false
-    for tick in range(450):
-        if letter.has("relief_answer"): break
-        sim.step(0.1)
-    if not letter.has("relief_answer"): return false
-    game._refresh_hud()
+    # The first hit can send the local riders before the next pressure report.
+    var request: Dictionary={}
+    for candidate in sim.situation_reports:
+        if candidate["unit_id"]!=letter["unit_id"] or not candidate.has("relief_destination"): continue
+        var age: float=letter["written_at"]-candidate["written_at"]
+        if age>=0.0 and age<30.0 and (request.is_empty() or candidate["written_at"]>request["written_at"]): request=candidate
+    if request.is_empty(): return false
     var reply: Button=null
-    for row in game.arrival_rows:
-        if row.visible and letter["relief_answer"] in row.text: reply=row
+    var answer: String=""
+    for tick in range(450):
+        if request.has("relief_answer"):
+            game._refresh_hud()
+            for returned in str(request["relief_answer"]).split(" / ",false):
+                for row in game.arrival_rows:
+                    if row.visible and returned in row.text:
+                        reply=row
+                        answer=returned
+            if reply!=null: break
+        sim.step(0.1)
     if reply==null or reply.position.x>40 or sim.paused: return false
     if not await _deployment_frame("relief_return_left.png"): return false
     reply.pressed.emit()
     await process_frame
-    if not game.journal_dialog.visible or letter["relief_answer"] not in str(game.journal_events): return false
+    if not game.journal_dialog.visible or answer not in str(game.journal_events): return false
     if not await _deployment_frame("relief_reply_inbox.png"): return false
-    print("RELIEF_RETURNED ",letter["relief_answer"])
+    print("RELIEF_RETURNED ",answer)
     game.journal_dialog.hide()
     return true
 

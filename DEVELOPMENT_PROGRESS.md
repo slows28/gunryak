@@ -1390,3 +1390,19 @@ Godot 4.7.2 정적 구조 및 엔진 검사 20개가 통과했다. 실행 명령
 - 로컬 Windows x64 빌드는 `/workspace/Gunryak-Windows-27273ef.zip`이며 55,901,094바이트다. SHA-256은 `b000677b462780a8439ea8370caa55cdf8000088ccd61a3fd548df2ec26f43ba`다. ZIP의 실행 파일과 Wine에서 구동한 파일을 SHA-256으로 대조했고, 메뉴에서 편성·작전 지도·개전·일시정지·복귀·종료까지 통과했다.
 - 새 체크아웃에서 `python3 tools_check_structure.py`를 실행했다. Godot 4.7.2와 Xvfb 1280×800, Mesa llvmpipe에서 `godot --rendering-driver opengl3 --audio-driver Dummy --path . --script res://tests/screenshot.gd`와 `res://tests/northern_screen.gd`를 실행했다. 전장·작전·장수 정보 75장 및 출진·보상·재개 12장을 확인했다. 기존 6거점 지도는 거점과 지명을 각각 클릭해 같은 위치가 선택되는지 확인했다. 북벌 13장에서는 장안이 성곽 기호로 강조됐다. 비교 화면, 고유기 명중 원본, 실행 로그는 `test_results/officer-profiles-27273ef/`에 있다.
 - `python3 tools_run_engine_tests.py --godot /usr/local/bin/godot --project . --timeout 700`에서 최종 실행판의 엔진 검사 28/28을 통과했다. 야전 연주·전투 음향·본진 및 구원·대규모 전투·장수 심리·실제 장면 전환을 포함한다. [장수 데이터](scripts/officer_profiles.gd) · [고유기 회귀 검사](tests/officer_signatures.gd)
+
+## 2026-11-28 연계 군단의 행군과 피격 대응
+
+실행판 `4533017`, 작업 브랜치 `work/demo-field-intent`. 출발 기준은 `f08af17`이며 직전 게임 실행판은 `27273ef`다. 변경 전 작전 지도와 캠페인 화면은 `tests/northern_screen.gd`로 캡처했다. 변경 후 기산에서 복수 선택, 개별 전령 이동, 실제 타격과 구원 회신을 검증했다.
+
+- 작전 지도에서 여러 군단에 목적지와 행동을 함께 지정할 수 있다. 전부 파견할 수 있을 때 지시를 확정한다. 개전 시 전령이 군단별로 출발하며 먼저 받은 장수가 다른 장수의 임무까지 바꾸지 않는다. 행군 속도는 가장 느린 군단에 맞추고, 병종마다 자리를 잡는다. 개별 명령을 받은 군단은 연계에서 이탈한다. [작전 지도](docs/linked-corps-orders.jpg)
+- 개전 후 첫 전체 명령은 3일차에 내리고 이후 5·7일차처럼 이틀 간격으로 회의한다. 같은 날 같은 군단에 재파견할 수 없다. 피격 부대의 첫 구원 요청은 본진과 연락 가능한 인근 군단 최대 두 곳으로 간다. 수락 여부는 전령이 도착한 뒤 장수가 결정하고 회신은 본진으로 돌아온다. 한 교전의 연속 피격은 같은 요청을 반복 발송하지 않는다.
+- 연계 군단은 마지막 피격 방향으로 움직인다. 궁병은 사격 거리를 잡고 수비대는 담당 구역을 지키며, 기병은 보병이 적을 붙들고 있는지 확인한다. 대열이 교전할 때는 실제 타격 상대 쪽으로 회두한다. 타격이 겹치거나 현장을 벗어나는 상황에서는 기존 포위 이탈과 후방 대응이 우선한다.
+- 실제 기산 개전부터 관흥·왕평·위연·마속에게 중앙 공격을 지시했다. 4일차까지 위연·마속·왕평에게 동료 지원 판단이 기록됐고, 왕평은 지원 대상이 상대하던 적군에 피해를 입혔다. 경로상의 거리와 교전 상태에 따라 지원 판단과 첫 타격 시점에는 차이가 있었다. 한 번의 재생으로 집계했으며 전체 스테이지의 지원 성공률은 측정하지 않았다. [실제 교전](docs/qishan-linked-relief.jpg)
+- 스킬 선정 시 발동 장수 위치로 카메라를 옮기고 약 0.22초 뒤 기술명을 표시한다. 관측하지 못한 적 장수는 건너뛰고, 수동 시점 이동이 들어오면 연출을 끝낸다. 피해와 사기 등 전투 판정은 기존 시뮬레이션 시점에 적용한다. [실제 발동 화면](docs/commander-skill-focus.jpg)
+
+구현은 `order_map.gd`, `war_sim.gd`, `linked_march.gd`, `rally_orders.gd`, `field_skills.gd`, `game.gd`에 반영했다. 기산 재생은 `godot --path . --script res://tests/group_orders.gd -- <캡처 디렉터리> --field`로 재현할 수 있다. 다음 점검 대상으로 교량을 사이에 둔 양익 동시 피격 시 지원 이동 시간과 장수 스킬이 겹칠 때의 관전 편의성을 남긴다.
+
+검증 환경은 Godot 4.7.2, Xvfb·Mesa OpenGL이었다. `python3 tools_check_structure.py`를 통과했다. `python3 tools_run_engine_tests.py --godot /usr/local/bin/godot --project . --timeout 700`로 실행하고, 종전 회의일과 같은 날 재파견을 가정하던 시험을 새 규칙으로 고친 뒤 남은 항목부터 재개했다. 동일한 게임 코드에서 엔진 검사 29개가 모두 통과했다. 실행 내역과 통합 결과는 `test_results/group-orders-4533017/engine_test_report.json`에 있다.
+
+`tests/screenshot.gd`의 게임 화면 75장과 `tests/northern_screen.gd`의 캠페인 화면 12장을 확보했다. 전선 압박 보고보다 먼저 같은 교전의 구원 요청이 발송될 수 있어, 전령 검사는 발신 장수·작성 시점·실제로 돌아온 회신을 함께 확인한다. 원본은 `test_results/group-orders-4533017/`에 보관했다. Windows ZIP에는 실행 파일 하나가 들어 있고 압축 해제 전후의 실행 파일 해시가 일치했다. Wine에서 실제 실행 파일의 메뉴·출전·복귀·종료를 확인했다.

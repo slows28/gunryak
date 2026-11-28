@@ -271,7 +271,8 @@ func _check_capture() -> void:
     s.tactical_enabled=true
     check(s.place_post("본진",Vector2(162,1545)),"establish the isolated command post for the capture exercise")
     s.start()
-    s.battle_time=7.0*s.turn_duration()-1.0
+    var capture_at:=7.0*s.turn_duration()-1.0
+    s.battle_time=capture_at
     s.turn=7
     var c: Dictionary=s.commanders[0]
     var general:=s.find_unit(0)
@@ -289,7 +290,7 @@ func _check_capture() -> void:
     check(not s.request_order(0,"공격","현장 판단") and not s.request_tactical(0,"사수") and not s.order_retreat(),"captured strategist cannot issue commands or concede")
     s.paused=true
     s.step(0.1)
-    check(c["recover_at"]==expires and s.battle_time==89.0,"pause freezes confusion")
+    check(c["recover_at"]==expires and s.battle_time==capture_at,"pause freezes confusion")
     s.paused=false
     var origin: Vector2=general["pos"]
     for tick in range(149): s.step(0.1)

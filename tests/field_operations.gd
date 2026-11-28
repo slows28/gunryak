@@ -36,6 +36,10 @@ func _initialize() -> void:
     check(sim.issue_map_order(leader["id"],"지역 사수",anchor["pos"]),"send a fixed assignment by courier")
     sim.couriers.back()["pos"]=leader["pos"]
     sim._update_couriers(0.1)
+    check(not sim.issue_map_order(leader["id"],"자유 재량",Vector2.INF),"the day-five delivery does not reopen that army's dispatch slot")
+    sim.turn=6
+    check(not sim.issue_map_order(leader["id"],"자유 재량",Vector2.INF),"no strategic changes on the intervening day")
+    sim.turn=7
     check(leader["has_destination"] and sim.issue_map_order(leader["id"],"자유 재량",Vector2.INF) and leader["mission"]=="지역 사수","prior assignment stays in force until the free-role courier arrives")
     sim.couriers.back()["pos"]=leader["pos"]
     sim._update_couriers(0.1)
