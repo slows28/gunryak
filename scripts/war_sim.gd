@@ -7,7 +7,7 @@ const FieldJudgment = preload("res://scripts/field_judgment.gd")
 const RallyOrders = preload("res://scripts/rally_orders.gd")
 const MountedVanguard = preload("res://scripts/mounted_vanguard.gd")
 const BreakContact = preload("res://scripts/break_contact.gd")
-const Deployment = preload("res://scripts/corps_deployment.gd")
+const CorpsFormation = preload("res://scripts/corps_formation.gd")
 const StandingOrders = preload("res://scripts/standing_orders.gd")
 const LinkedMarch = preload("res://scripts/linked_march.gd")
 const GeneralMind = preload("res://scripts/general_mind.gd")
@@ -251,7 +251,7 @@ func reset() -> void:
     for unit in units:
         if unit["mission"] == "본진 방어" and unit["defense_set"]:
             unit["hq_defense_offset"] = Vector2(unit["defense_anchor"]) - _home_point(unit["side"])
-    Deployment.arrange(self)
+    CorpsFormation.prepare_all(self)
     _log("출전 편성 준비: " + scenario_title)
 
 func _add_unit(side: int, title: String, unit_type: String, disposition: String, ability: float, start: Vector2, mission: String, people: float) -> void:
@@ -1261,6 +1261,11 @@ func _decide(unit: Dictionary) -> void:
     if six_armies and action in ["지정 지역 사수","예비 대기","전열 유지"] and str(unit["type"])=="보병": wanted="방진"
     if six_armies and action in ["협동 엄호","궁병 보호","아군 보호"] and str(unit["type"])=="보병": wanted="방진"
     if six_armies and action in ["협동 우회","협동 대기"] and str(unit["type"])=="기병": wanted="봉시진"
+    if long_operation and six_armies:
+        if unit.type=="기병" and wanted=="봉시진" and terrain_at(pos) in ["숲","갈대밭","산지"]:
+            wanted="종대"
+        elif Skills.Profiles.formation_rating(unit)<65 and wanted in ["학익진","어린진"]:
+            wanted="횡대"
     if long_operation and float(unit["bridge_y"])>=0.0 and absf(pos.x-river_x(pos.y))<130.0:
         wanted="종대"
     if str(unit["policy"]).ends_with(" 유지") and str(unit["policy"]).replace(" 유지","") in LARGE_FORMATIONS and action != "패주":
@@ -1284,6 +1289,7 @@ func _order_formation(unit: Dictionary, wanted: String) -> void:
         for i in range(count): longest = maxf(longest, origins[i].distance_to(targets[i]))
         unit["drill"] = {"shape":wanted, "origins":origins, "targets":targets}
         duration = maxf(0.4, duration * clampf(longest / 2.1, 0.32, 1.5))
+    if long_operation: duration *= lerpf(1.16,0.90,float(Skills.Profiles.formation_rating(unit))/100.0)
     unit["next_formation"] = wanted
     unit["form_remaining"] = duration
     unit["form_duration"] = duration
@@ -2811,7 +2817,7 @@ func _set_general_profile(unit: Dictionary) -> void:
     unit["intelligence"] = profile[2]
     unit["judgment"] = profile[3]
     unit["loyalty"] = profile[4]
-    unit["deployment"] = Skills.Profiles.DEPLOYMENT.get(unit.name,roundi(a))
+    unit["formation_skill"] = Skills.Profiles.FORMATION_SKILL.get(unit.name,roundi(a))
 
 func _effective_stat(unit: Dictionary, key: String) -> float:
     if bool(unit["active_deputy"]):
@@ -3234,13 +3240,13 @@ func swap_generals(first_id: int, second_id: int) -> bool:
     var second: Dictionary = find_unit(second_id)
     if first.is_empty() or second.is_empty() or int(first["side"]) != 0 or int(second["side"]) != 0:
         return false
-    for key in ["name","personality","ability","leadership","martial","intelligence","judgment","loyalty","deployment","deputy_index","specialty","mind","skill_ids","field_skill","skill_stats","skill_ready"]:
+    for key in ["name","personality","ability","leadership","martial","intelligence","judgment","loyalty","formation_skill","deputy_index","specialty","mind","skill_ids","field_skill","skill_stats","skill_ready"]:
         var value: Variant=first.get(key)
         if second.has(key): first[key]=second[key]
         else: first.erase(key)
         if value!=null: second[key]=value
         else: second.erase(key)
-    Deployment.arrange(self)
+    CorpsFormation.prepare_all(self)
     return true
 
 # These staging points follow the actual scenario geometry. Victory sites stay
@@ -3368,6 +3374,7 @@ func deploy_corps(ids: Array, point: Vector2) -> String:
         unit.pos = placements[id]
         unit.goal = unit.pos
         unit.facing = Vector2.RIGHT
+        CorpsFormation.prepare(self,unit)
         if unit.defense_set: unit.defense_anchor = unit.pos
         if unit.has("hq_defense_offset"): unit.hq_defense_offset = unit.pos - _home_point(0)
         if unit.has("rally_origin"): unit.rally_origin = unit.pos
@@ -4852,6 +4859,7 @@ func issue_group_order(ids: Array, mission: String, destination: Vector2, encoun
             _send_map_letter(id,mission,destination,-1,order_group_serial,encounter)
         else:
             opening_letters[id]={"mission":mission,"destination":destination,"group":order_group_serial,"encounter":encounter}
+            CorpsFormation.prepare(self,find_unit(id))
     return true
 
 func _send_map_letter(id: int,mission: String,destination: Vector2,partner: int,group: int=0,encounter: String="") -> void:
@@ -4882,6 +4890,7 @@ func issue_map_order(id: int,mission: String,destination: Vector2,partner: int=-
     unit["waypoint_index"]=0
     unit["defense_set"]=false
     _received_rally_pin(unit,true)
+    CorpsFormation.prepare(self,unit)
     GeneralMind.order(unit,"사전 작전: "+mission,battle_time)
     return true
 

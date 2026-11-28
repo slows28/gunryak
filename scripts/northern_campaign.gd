@@ -63,7 +63,7 @@ func prepare(target: int,sim) -> bool:
         u["specialty"]=general["specialty"]
         u["ability"]=general["stats"][0]
         for j in 5: u[["leadership","martial","intelligence","judgment","loyalty"][j]]=general["stats"][j]
-        u["deployment"]=Skills.Profiles.DEPLOYMENT[u.name]
+        u["formation_skill"]=Skills.Profiles.FORMATION_SKILL[u.name]
         u["type"]=state["types"][i]
         u["troops"]=float(TROOPS[i])
         u["initial_troops"]=u["troops"]
@@ -76,7 +76,7 @@ func prepare(target: int,sim) -> bool:
         u["initial_troops"]=u["troops"]
         Skills.attach(u,u["name"],["","counter","wing","rally"][mini(3,target/4)])
     Field.opening_orders(sim)
-    sim.Deployment.arrange(sim)
+    sim.CorpsFormation.prepare_all(sim)
     sim.chapter["enemy_initial"]=sim.total_troops(1)
     state["pending"]=target
     return true

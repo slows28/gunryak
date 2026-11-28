@@ -16,6 +16,11 @@ static func signal_contact(sim, struck: Dictionary, attacker_id: int, source: Ve
             # Corps already on shared stations keep their existing ranked relief logic.
             if struck.id in member.get("rally_station",{}).get("members",[]) and Vector2(struck.pos).distance_to(struck.rally_station.point)<=115.0 and Vector2(member.pos).distance_to(member.rally_station.point)<=155.0: continue
             if not _local_help(sim,member,struck): continue
+            # A frontline already exchanging blows holds its engagement. Local
+            # reinforcements come from corps able to turn towards the caller.
+            var committed: int=member.get("last_strike_target",-1)
+            if committed>=0 and committed!=attacker_id and sim.battle_time-member.get("last_strike_at",-100.0)<3.0: continue
+            if sim.battle_time-member.last_hit<2.6 and member.get("last_attacker",-1)!=attacker_id: continue
         var prior: Dictionary=member.get("group_signal",{})
         var gap: float=Vector2(member["pos"]).distance_to(struck["pos"])
         if not prior.is_empty() and sim.battle_time<prior["expires"]:

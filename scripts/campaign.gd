@@ -166,6 +166,7 @@ func prepare(target: int, sim) -> bool:
         var officer: Dictionary = OFFICERS[idx]
         var person: Dictionary = state["roster"][idx]
         u["name"] = officer["name"]
+        u["formation_skill"] = sim.Skills.Profiles.FORMATION_SKILL[u.name]
         u["personality"] = officer["personality"]
         u["type"] = state["types"][i]
         u["formation"] = str(state["formations"][i]) if six_armies else ("종대" if u["type"] == "기병" else "횡대")
@@ -188,6 +189,7 @@ func prepare(target: int, sim) -> bool:
         if int(unit["side"]) == 1:
             unit["troops"] = clampf(roundf(float(unit["troops"])*scale),3000.0,5000.0) if six_armies else roundf(float(unit["troops"])*scale)
             unit["initial_troops"] = unit["troops"]
+    sim.CorpsFormation.prepare_all(sim)
     sim.reserve_limit[0] = mini(1 if six_armies else 2,floori(float(state["pool"])/(3000.0 if six_armies else 72.0)))
     return true
 

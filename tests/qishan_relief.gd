@@ -85,9 +85,11 @@ func campaign_opening() -> void:
     var hit_by:={}
     var hits_in_relief:={}
     sim.start()
-    for tick in 1050:
+    # The opening shape changes when Guan first reaches the enemy. Run until
+    # he has actually been struck and a helper damages that observed attacker.
+    for tick in 2100:
         sim.step(0.1)
-        if sim.finished: break
+        if sim.finished or (tick>=1050 and not hits_in_relief.is_empty()): break
         for hit in sim.combat_contacts.values():
             if hit.defender_id==guan.id: hit_by[hit.attacker_id]=true
         for u in sim.units:

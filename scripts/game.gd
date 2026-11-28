@@ -461,7 +461,7 @@ func _build_command_panel() -> void:
     mission_choice = _options(Vector2(970,482),["중앙 진격","북측 확보","남측 우회","본진 방어","전열 엄호","측후방 기동","구원 지원"],command_panel)
     mission_choice.item_selected.connect(_on_choices_changed)
     mission_choice.hide()
-    policy_choice = _options(Vector2(970,520),["현장 판단","명령 엄수","재량 위임","횡대 유지","종대 유지","방진 유지","어린진 유지","학익진 유지","봉시진 유지","안행진 유지"],command_panel)
+    policy_choice = _options(Vector2(970,520),["현장 판단","명령 엄수","재량 위임"],command_panel)
     policy_choice.item_selected.connect(_on_choices_changed)
     policy_choice.hide()
     apply_btn = _button("작전 적용 / 전령 보내기",Vector2(970,554),Vector2(286,40),_apply_order,command_panel)
@@ -802,9 +802,9 @@ func _apply_order() -> void:
     var mission: String = mission_choice.get_item_text(mission_choice.selected)
     var policy: String = policy_choice.get_item_text(policy_choice.selected)
     if not sim.started:
-        runtime_notice = "사전 작전 반영 완료" if sim.select_unit_mission(selected_id, mission, policy,int(sim.find_unit(selected_id).get("assigned_link",-1))) else "작전 설정 불가"
+        runtime_notice = "사전 작전 반영 완료" if sim.select_unit_mission(selected_id, mission, policy) else "작전 설정 불가"
     elif sim.strategic_order_day():
-        runtime_notice = "전령 출발 · 도착 전까지 기존 명령 유지" if sim.request_order(selected_id, mission, policy,int(sim.find_unit(selected_id).get("assigned_link",-1))) else "파견 불가 · 기존 전령 또는 부대 상태 확인"
+        runtime_notice = "전령 출발 · 도착 전까지 기존 명령 유지" if sim.request_order(selected_id, mission, policy) else "파견 불가 · 기존 전령 또는 부대 상태 확인"
     _select_unit()
     _refresh_hud()
     queue_redraw()
@@ -1650,7 +1650,7 @@ func _refresh_mind_report() -> void:
         var age: float=maxf(0.0,sim.battle_time-float(m["decision_at"]))*sim.operation_scale()
         var mood: String=str(m["mood"])
         lines.append("[color=#8ed5e7][b][font_size=19]%s[/font_size][/b][/color]  %s / %s  ·  [color=#%s]%s[/color]  ·  %d명" % [str(u["name"]),str(u["personality"]),str(u["type"]),_mood_color(mood).to_html(false),mood,roundi(float(u["troops"]))])
-        lines.append("자신감 %d   긴장 %d   명령 신뢰 %d   병사 사기 %d   |   판단력 %d · 배치 %d · %.1f초 전" % [roundi(float(m["confidence"])),roundi(float(m["stress"])),roundi(float(m["trust"])),roundi(float(u["morale"])),roundi(sim._effective_stat(u,"judgment")),u.deployment,age])
+        lines.append("자신감 %d   긴장 %d   명령 신뢰 %d   병사 사기 %d   |   판단력 %d · 진형 %d · %.1f초 전" % [roundi(float(m["confidence"])),roundi(float(m["stress"])),roundi(float(m["trust"])),roundi(float(u["morale"])),roundi(sim._effective_stat(u,"judgment")),sim.Skills.Profiles.formation_rating(u),age])
         lines.append("[color=#efc878][b]판단:[/b][/color] %s  →  %s" % [str(m["action"]),str(m["reason"])])
         lines.append("[color=#a6b6b4]관측:[/color] %s   |   [color=#a6b6b4]우려:[/color] %s" % [str(m["observed"]),str(m["concern"])])
         var pending: String=""

@@ -36,6 +36,7 @@ var raid_response: OptionButton
 var response_caption: Label
 var deploy_button: Button
 var task_caption: Label
+var drag_corps := -1
 var deployment_caption: Label
 var label_areas: Array[Rect2]=[]
 var council_reports: Button
@@ -138,7 +139,7 @@ func configure(owner_game: Control,used_font: Font) -> void:
         if index > 0: _choose_site(site_choice.get_item_metadata(index)))
     destination_label=_label("",Vector2(35,250),Vector2(276,42),13,SHEET_TEXT)
     destination_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
-    deploy_button=_button("배치 판단",Vector2(201,88),Vector2(109,29),_toggle_deployment)
+    deploy_button=_button("배치 편집",Vector2(201,88),Vector2(109,29),_toggle_deployment)
     deploy_button.toggle_mode=true
     _paper_button(deploy_button)
     task_caption=_label("임무",Vector2(35,296),Vector2(65,30),15,SHEET_MUTED)
@@ -238,6 +239,7 @@ func open(mid_battle:bool=false)->void:
     _refresh_site_choices()
     post_mode=""
     post_cursor=Vector2.INF
+    drag_corps=-1
     deploy_button.visible=not mid_battle
     deploy_button.set_pressed_no_signal(false)
     for post: String in post_buttons:
@@ -433,9 +435,9 @@ func _update_destination()->void:
     march_preview.tooltip_text=""
     if _shows_rally(officer):
         var station: Dictionary=officer["rally_station"]
-        var caption := "공동 집결 %d개 군단 · %s %s" % [station["count"],officer["name"],station["role"]]
-        if march_diagram.is_empty(): march_preview.text=caption
-        else: march_preview.tooltip_text=caption
+        var caption := "공동 집결 %d개 군단 · %s %s" % [station["count"],officer["type"],station["role"]]
+        march_preview.text=caption
+        if not march_diagram.is_empty(): march_preview.tooltip_text=march_diagram.caption
     _refresh_map_hint()
     _refresh_route_summary()
     _refresh_survey()
@@ -482,9 +484,9 @@ func _sync_sheet_mode() -> void:
     deployment_caption.visible=editing
     if editing:
         var unit: Dictionary=sim.find_unit(selected_id)
-        deployment_caption.text="%s · 배치 능력 %d\n%s  /  %s · %s" % [unit.name,unit.deployment,_grid_ref(unit.pos),unit.formation,unit.get("deployment_reason","")]
-        map_hint.text="출전 대형\n화살촉은 부대의 정면"
-        route_summary.text="군단을 누르면 장수의 배치 판단을 확인합니다."
+        deployment_caption.text="%s · 진형 운용 %d\n%s · %s\n%s" % [unit.name,sim.Skills.Profiles.formation_rating(unit),unit.formation,unit.get("formation_reason",""),_grid_ref(unit.pos)]
+        map_hint.text="파란 구역에 끌어 배치\n화살촉은 부대의 정면"
+        route_summary.text="위치는 직접 배치합니다. 진형은 장수가 결정합니다."
 
 func _refresh_map_hint() -> void:
     if post_mode=="":
@@ -533,18 +535,37 @@ func _toggle_deployment() -> void:
     if deploy_button.button_pressed:
         _set_post_mode("")
         _update_destination()
-        feedback.text="군단의 깃발을 누르면 출전 위치와 진형을 확인합니다."
+        feedback.text="군단 깃발을 끌거나 군단을 선택한 뒤 배치 구역 안의 땅을 누르세요."
     else:
         _update_destination()
     queue_redraw()
 
 func _deployment_input(event: InputEventMouseButton) -> void:
-    if event.pressed or not MAP.has_point(event.position): return
-    for id in sim.command_ids(0):
-        var unit: Dictionary=sim.find_unit(id)
-        if unit.troops>0 and _point(unit.pos).distance_to(event.position)<=15:
-            _pick_corps(id)
-            break
+    if event.pressed:
+        drag_corps=-1
+        for id in sim.command_ids(0):
+            var unit: Dictionary=sim.find_unit(id)
+            if unit.troops>0 and _point(unit.pos).distance_to(event.position)<=14:
+                drag_corps=id
+                break
+        press_origin=event.position if MAP.has_point(event.position) else Vector2.INF
+        return
+    if press_origin==Vector2.INF: return
+    var dragged:=press_origin.distance_to(event.position)>8
+    press_origin=Vector2.INF
+    if not MAP.has_point(event.position): return
+    if drag_corps>=0 and not dragged:
+        _pick_corps(drag_corps)
+        feedback.text="선택한 군단을 놓을 위치를 누르세요."
+    else:
+        if drag_corps>=0 and not recipients.has(drag_corps): _select(drag_corps)
+        var anchor: Dictionary=sim.find_unit(selected_id)
+        var point:=_world(event.position)
+        if drag_corps>=0: point+=Vector2(anchor.pos)-Vector2(sim.find_unit(drag_corps).pos)
+        var problem: String=sim.deploy_corps(recipients,point)
+        _update_destination()
+        feedback.text=problem if not problem.is_empty() else "%s 등 %d개 군단 배치 완료" % [anchor.name,recipients.size()]
+    drag_corps=-1
     accept_event()
     queue_redraw()
 
@@ -653,7 +674,6 @@ func _apply()->void:
     var members:=recipients.duplicate()
     var accepted: bool=sim.issue_group_order(recipients,action,destination,mode) if grouped else sim.issue_map_order(selected_id,action,destination,-1,mode)
     if accepted:
-        if not in_battle: sim.Deployment.arrange(sim)
         for id in recipients: drafts.erase(id)
         draft_dirty=false
         _select(selected_id)

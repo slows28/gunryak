@@ -46,8 +46,8 @@ const DATA := {
 }
 
 
-# Deployment is an independent 0–100 tuning value for selecting ground and ranks.
-const DEPLOYMENT := {
+# Proficiency in selecting and changing the shape of a corps, on a 0–100 scale.
+const FORMATION_SKILL := {
     "왕평":94,"마속":48,"위연":84,"강유":91,"관흥":73,"장익":87,"요화":82,
     "마대":83,"오의":86,"장포":71,"진도":89,"등지":81,"오반":77,"조운":93,
     "황충":88,"유봉":59,"향총":86,"나헌":92,"양의":79,"부첨":78,"동윤":74,
@@ -55,3 +55,6 @@ const DEPLOYMENT := {
     "곽회":93,"비요":76,"왕쌍":62,"문빙":88,"서황":91,"학소":96,"조진":85,
     "장호":76,"조휴":72,"진태":90,"등애":95,
 }
+
+static func formation_rating(unit: Dictionary) -> int:
+    return unit.get("formation_skill",FORMATION_SKILL.get(unit.name,roundi(unit.ability)))

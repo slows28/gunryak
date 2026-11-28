@@ -42,19 +42,45 @@ func _run() -> void:
     for u in sim.units: check(u.facing==(Vector2.RIGHT if u.side==0 else Vector2.LEFT),"opening facing "+u.name)
     await click(sheet.deploy_button.get_global_rect().get_center())
     var point:=Vector2(190,740)
-    var old: Vector2=foot.pos
     await click(sheet._point(point))
-    check(foot.pos==old and foot.facing==Vector2.RIGHT,"reviewing a location cannot drag the commander's station")
-    check(foot.deployment==94 and friend.deployment==48 and foot.has("deployment_reason"),"officers have personal deployment ratings")
-    sim.Deployment.arrange(sim)
-    check(foot.pos==old and not sheet.site_choice.visible and sheet.deployment_caption.text.contains("배치 능력"),"opening review shows the actual decision and repeated planning is stable")
-    var score: int=friend.deployment
-    friend.deployment=92
-    sim.Deployment.arrange(sim)
-    check(friend.formation=="안행진" and friend.pos.x<Vector2(friend.assembly_origin).x-55,"a skilled archer chooses a deeper screened rank")
-    friend.deployment=score
-    sim.Deployment.arrange(sim)
-    check(friend.formation=="횡대","a weaker deployment rating changes the actual opening shape")
+    check(Vector2(foot.pos).distance_to(point)<5 and foot.facing==Vector2.RIGHT,"the player chooses a station facing the enemy")
+    var old: Vector2=foot.pos
+    var ally_old: Vector2=friend.pos
+    check(not sim.deploy_corps([foot.id,friend.id],Vector2(2100,800)).is_empty() and foot.pos==old and friend.pos==ally_old,"invalid group placement is atomic")
+    var shift:=Vector2(75,65)
+    check(sim.deploy_corps([foot.id,friend.id],old+shift).is_empty() and foot.pos==old+shift and friend.pos==ally_old+shift,"group placement preserves relative spacing")
+    await click(sheet.group_button.get_global_rect().get_center())
+    var row: Rect2=sheet.roster.get_item_rect(1)
+    await click(sheet.roster.global_position+row.get_center())
+    var start: Vector2=sheet._point(foot.pos)
+    var end: Vector2=sheet._point(Vector2(foot.pos)+Vector2(30,32))
+    for down in [true,false]:
+        var drag:=InputEventMouseButton.new()
+        drag.button_index=MOUSE_BUTTON_LEFT
+        drag.position=start if down else end
+        drag.pressed=down
+        root.push_input(drag,true)
+    await process_frame
+    check(Vector2(foot.pos).distance_to(old+shift+Vector2(30,32))<5 and Vector2(friend.pos).distance_to(foot.pos+(ally_old-old))<2,"dragging two selected banners preserves their offset")
+    await click(sheet.group_button.get_global_rect().get_center())
+    var foot_chosen: Vector2=foot.pos
+    var chosen: Vector2=friend.pos
+    check(foot.formation_skill==94 and friend.formation_skill==48,"named officers have independent formation ratings")
+    sim.CorpsFormation.prepare(sim,friend)
+    check(friend.formation=="횡대" and sheet.deployment_caption.text.contains("진형 운용"),"less practiced archer chooses a familiar shooting line")
+    var score: int=friend.formation_skill
+    friend.formation_skill=92
+    sim.CorpsFormation.prepare(sim,friend)
+    check(friend.formation=="안행진" and friend.pos==chosen,"a practiced archer changes ranks at precisely the player's point")
+    sim._order_formation(friend,"종대")
+    var fast: float=friend.form_duration
+    sim.CorpsFormation.prepare(sim,friend)
+    friend.formation_skill=score
+    # Compare the same officer, shape, manpower and ground for a real reform.
+    sim._order_formation(friend,"종대")
+    check(friend.form_duration>fast,"formation skill shortens the same physical transition")
+    sim.CorpsFormation.prepare(sim,friend)
+    sheet._update_destination()
     await capture("deployment")
     await click(sheet.deploy_button.get_global_rect().get_center())
     var site: Dictionary=sim.planning_sites()[0]
@@ -69,6 +95,7 @@ func _run() -> void:
     await click(sheet._point(site.pos))
     check(foot.mission==sim.StandingOrders.RAID and foot.encounter=="철수","raid and disengagement are one order")
     game._start()
+    check(foot.pos==foot_chosen and friend.pos==chosen,"orders and battle launch preserve player placement")
     check(not sim.place_unit(0,point),"deployment is closed during battle")
     sim.turn=3
     check(sim.issue_map_order(0,sim.StandingOrders.RAID,site.pos,-1,"강행") and foot.encounter=="철수","new raid policy waits for its courier")
