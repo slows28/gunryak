@@ -30,6 +30,7 @@ class CorpsCard extends ReadoutButton:
     signal report_requested(report_id: int)
     var report_link: Button
     var report_id: int = -1
+    var troop_type: Label
     var commander: Label
     var strength: Label
     var action: Label
@@ -68,7 +69,8 @@ class CorpsCard extends ReadoutButton:
         report_link.hide()
         commander = line(Rect2(47,1,1,22),16,Color.WHITE)
         strength = line(Rect2(0,2,1,20),13,Color.WHITE,HORIZONTAL_ALIGNMENT_RIGHT)
-        action = line(Rect2(47,22,1,20),13,Color.WHITE)
+        troop_type = line(Rect2(47,22,32,19),12,Color.WHITE)
+        action = line(Rect2(83,22,1,19),13,Color.WHITE)
         dispatch = line(Rect2(0,22,1,19),12,Color.WHITE,HORIZONTAL_ALIGNMENT_RIGHT)
         resized.connect(_fit_lines)
         _fit_lines()
@@ -82,10 +84,11 @@ class CorpsCard extends ReadoutButton:
         dispatch.size.x=28.0
         action.size.x=maxf(1.0,(dispatch.position.x-3.0 if dispatch.visible else right)-action.position.x)
 
-    func present(officer: String, troops: String, activity: String, feeling: String,
+    func present(officer: String, arm: String, troops: String, activity: String, feeling: String,
             mood_color: Color, kind: String, message: String, selected: bool) -> void:
         set_pressed_no_signal(selected)
         commander.text = officer
+        troop_type.text = arm
         strength.text = troops
         action.text = activity
         dispatch.text = kind if kind=="전령" else ""
@@ -94,9 +97,10 @@ class CorpsCard extends ReadoutButton:
         var primary := Color("#292c24") if selected else Color("#f5ecdb")
         commander.modulate = primary
         strength.modulate = Color("#484b3d") if selected else Color("#c5cebe")
+        troop_type.modulate = Color("#58513a") if selected else Color("#d2be93")
         action.modulate = Color("#4c4634") if selected else mood_color
         dispatch.modulate = Color("#694c26") if selected else Color("#e0bb7e")
-        accessibility_name = "%s, %s, %s, %s. %s, %s" % [officer,troops,activity,feeling,kind,message]
+        accessibility_name = "%s, %s, %s, %s, %s. %s, %s" % [officer,arm,troops,activity,feeling,kind,message]
 
 class SectorCard extends ReadoutButton:
     var front: Label
@@ -120,7 +124,13 @@ class SectorCard extends ReadoutButton:
         own_bar = ink(Rect2(12,42,0,2),Color("#7ba9ac"))
         enemy_bar = ink(Rect2(12,42,0,2),Color("#bb8374"))
 
-    func present(row: Dictionary, own_text: String, enemy_text: String, limited: bool, selected: bool) -> void:
+    func present(row: Dictionary, own_text: String, enemy_text: String, limited: bool, selected: bool, detailed: bool) -> void:
+        var numbers := selected or detailed
+        own.visible = numbers
+        enemy.visible = numbers
+        front.position.y = 0 if numbers else 10
+        state.position.y = 1 if numbers else 11
+        state_band.position.y = state.position.y+2
         front.text = row["name"]
         state.text = row["state"]
         state_band.visible = int(row["contacts"])>0

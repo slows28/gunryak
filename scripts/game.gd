@@ -6,7 +6,7 @@ const Materials = preload("res://scripts/command_materials.gd")
 const BattleHud = preload("res://scripts/battle_hud.gd")
 const BattleAudio = preload("res://scripts/battle_audio.gd")
 const InfantryExchange = preload("res://scripts/infantry_exchange.gd")
-const INFANTRY_CONTACT = preload("res://assets/art/infantry_contact.svg")
+const FOOT_ART = preload("res://assets/art/foot_troops.png")
 const InfantryMotion = preload("res://scripts/infantry_motion.gd")
 const FrontView=preload("res://scripts/front_view.gd")
 const TerrainArt = preload("res://scripts/terrain_art.gd")
@@ -15,9 +15,7 @@ const CampaignView = preload("res://scripts/campaign_view.gd")
 const OrderMap = preload("res://scripts/order_map.gd")
 const PAINTED_ART = preload("res://assets/art/painted_atlas.webp")
 const FALLEN_ART := preload("res://assets/art/fallen_soldiers.svg")
-const SOLDIER_ART = preload("res://assets/art/soldier_sprites.svg")
 const MOUNTED_ART = preload("res://assets/art/mounted_lancers.png")
-const SOLDIER_MOTION = preload("res://assets/art/soldier_motion.svg")
 const BATTLE_ARROW = preload("res://assets/art/battle_arrow.png")
 const VOLLEY_ARROW_DELAYS: Array[float] = [0.0,0.041,0.013,0.056,0.026,0.066,0.034,0.006,0.049,0.020]
 const VOLLEY_ARROW_SPREAD: Array[Vector2] = [
@@ -32,8 +30,8 @@ const FIELD_SITES=preload("res://assets/art/field_sites.svg")
 const PORTRAIT_NAMES=["왕평","마속","위연","강유","관흥","장익","장합","손례","대릉","곽회","비요","왕쌍"]
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
 const TITLE_ART = preload("res://assets/art/title_art.webp")
-# The field atlas is rasterized at 24 px per 96-unit source cell.
-const TROOP_ATLAS_SCALE := 0.25
+const TROOP_CELL := 56
+const FOOT_ANCHOR := 47.0/56.0
 const SOLDIER_SCALE: float = 0.72
 const MAP_TOP_LEFT: Vector2 = Vector2(16, 142)
 const MAP_SIZE := Vector2(934,532)
@@ -366,6 +364,7 @@ func _build_interface() -> void:
     enemy_strength=_label("",Vector2(1156,2),Vector2(101,28),19,COL_TEXT)
     status_label = _label("",Vector2(969,29),Vector2(288,20),12,COL_MUTED)
     status_label.clip_text=true
+    status_label.mouse_filter=Control.MOUSE_FILTER_PASS
     _label("승리 목표",Vector2(17,103),Vector2(114,17),12,COL_GOLD)
     objective_label=_label("",Vector2(17,119),Vector2(331,20),14,COL_TEXT)
     objective_label.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -399,7 +398,7 @@ func _build_interface() -> void:
     journal_list.item_activated.connect(_visit_journal_event)
     journal_dialog.add_child(journal_list)
     map_detail_button = _button("전술 표시 · 간결",Vector2(178,632),Vector2(130,32),_toggle_map_detail)
-    map_detail_button.tooltip_text = "군단 진형과 전술 이동 경로 표시 전환"
+    map_detail_button.tooltip_text = "군단 이름·진형·이동 경로와 전선별 병력 표시"
     _build_planning_dialog()
     _build_mind_report()
     contact_button=_button("최근 교전",Vector2(316,632),Vector2(94,32),_focus_combat)
@@ -1041,7 +1040,7 @@ func _refresh_hud() -> void:
         phase_label.text=sim.operation_phase()+"  |  제한 "+_operation_clock(sim.operation_limit())
     elif sim.started:
         phase = "밤" if sim.night_depth() >= 0.5 else "낮"
-        phase_label.text = sim.operation_phase() + "  |  " + ("긴급 지휘력 %d / 4" % sim.command_points if sim.turn >= WarSim.COURIER_TURN else "초기 작전 수행 · 보고 수신")
+        phase_label.text = sim.operation_phase() + (" · 지휘력 %d/4" % sim.command_points if sim.turn>=WarSim.COURIER_TURN else "")
     turn_label.text = phase + "  " + _operation_clock(sim.operation_elapsed())
     clock_label.tooltip_text = sim.day_caption()
     _refresh_enemy_roster()
@@ -1049,7 +1048,8 @@ func _refresh_hud() -> void:
     friendly_strength.text=_number_text(sim.total_troops(0))
     enemy_strength.text=enemy_text
     var courier_totals := "전령 이동 %d · 도착 %d · 차단 %d" % [sim.couriers.size(),sim.delivered_orders,sim.intercepted_orders]
-    status_label.text = courier_totals
+    var supply_detail := ""
+    status_label.text = ""
     if sim.started:
         var covered := 0
         var alive := 0
@@ -1064,8 +1064,10 @@ func _refresh_hud() -> void:
             var left := sim.raid_seconds_left(base)
             if raid_seconds == 0 or left < raid_seconds: raid_seconds = left
         if raid_seconds > 0: activity = "기지 급습 · %d초" % raid_seconds
-        status_label.text = "배급 연결 %d/%d  ·  %s" % [covered,alive,activity]
-        if sim.couriers.size() > 0: status_label.text += "  ·  전령 %d" % sim.couriers.size()
+        supply_detail = "배급 연결 %d/%d · %s" % [covered,alive,activity]
+        if raid_seconds>0: status_label.text=activity
+        elif covered<alive: status_label.text="배급 대기 %d개 군단" % (alive-covered)
+        elif sim.couriers.size()>0: status_label.text="전령 이동 %d" % sim.couriers.size()
     var captured: bool=sim.commander_captured(0)
     if captured:
         status_label.text="전령 파견 중단   ·   보급부대 "+str(sim.supply_crews[0]["state"])
@@ -1075,6 +1077,7 @@ func _refresh_hud() -> void:
     if captured: status_label.tooltip_text=sim.command_status(0)
     elif own_guards == 0 and sim.started and not sim.finished:
         status_label.tooltip_text += " · 호위 없음: 적 접근 시 포획 위험"
+    if not supply_detail.is_empty(): status_label.tooltip_text+="\n"+supply_detail
     status_label.tooltip_text+="\n"+courier_totals+"\n보급부대 · %s · 잔존 전력 %d%%" % [sim.supply_crews[0]["state"],roundi(sim.supply_crews[0]["strength"])]
     if not sim.convoy.is_empty():
         var transport: Dictionary = sim.convoy_status()
@@ -1171,7 +1174,8 @@ func _refresh_commander_desk() -> void:
     var mood: String=str(mind.get("mood","준비"))
     var leader_state: String="부장 지휘" if bool(unit["active_deputy"]) else str(unit["general_state"])
     selected_label.text="%s  ·  %s명" % [str(unit["name"]),_number_text(roundi(corps["troops"]))]
-    details_label.text="%s · %s · %s" % [leader_state,mood,str(unit["formation"])]
+    details_label.text="%s · %s" % [unit["type"],unit["formation"]]
+    if leader_state!="건재": details_label.text+=" · "+leader_state
     details_label.modulate=_mood_color(mood)
     readiness_label.text="사기 %d · 응집 %d" % [int(unit["morale"]),int(unit["cohesion"])]
     if int(unit["rations"])<35:
@@ -1179,7 +1183,9 @@ func _refresh_commander_desk() -> void:
     elif str(unit["type"])=="궁병" and int(unit["ammo"])<35:
         readiness_label.text+=" · 화살 %d" % int(unit["ammo"])
     readiness_label.tooltip_text=str(unit.get("morale_news",""))
-    if sim.started: readiness_label.text+=" · "+("다음 배급 %d초" % ceili(unit.get("delivery_left",0.0)*sim.operation_scale()) if unit["supplied"] else "배급 중단")
+    if sim.started and not unit["supplied"]: readiness_label.text+=" · 배급 중단"
+    elif sim.started: readiness_label.tooltip_text+="\n다음 배급 %d초" % ceili(unit.get("delivery_left",0.0)*sim.operation_scale())
+    readiness_label.mouse_filter=Control.MOUSE_FILTER_PASS
     details_label.tooltip_text="%s · %s\n사기 %d · 응집 %d · 피로 %d\n군량 %d · 화살 %d" % [
         str(unit["name"]),str(unit["type"]),int(unit["morale"]),int(unit["cohesion"]),int(unit["fatigue"]),int(unit["rations"]),int(unit["ammo"])]
     if unit.has("skill_ids"):
@@ -1203,9 +1209,10 @@ func _refresh_commander_desk() -> void:
         decision_label.text = "정면 교전 유지 · 후열이 %s에 대응" % name_at_rear if reply["front"] >= 0 else "뒤에서 %s의 공격을 받아 대열 선회" % name_at_rear
     var proposal: String=str(mind.get("proposal",""))
     var concern: String=str(mind.get("concern",""))
-    commander_request.text="건의 없음" if proposal.is_empty() else proposal
-    if not concern.is_empty() and concern not in ["없음","-"]:
-        commander_request.text+="\n우려 "+concern
+    commander_request.text=proposal
+    if not concern.is_empty() and mood in ["지휘 불능","공황","위기감","불안","초조","압박","지침","동요"]:
+        commander_request.text+=("\n" if not proposal.is_empty() else "")+"우려 "+concern
+    commander_request.get_parent().visible=not commander_request.text.is_empty()
     live_order_label.text="%s → %s\n현재: %s" % [str(unit["mission"]),_goal_name(unit["goal"]),_field_action(unit)]
     var dispatch: Dictionary=sim.map_dispatches.get(selected_id,{})
     order_status_label.text=dispatch_line(selected_id)
@@ -1216,7 +1223,7 @@ func _refresh_commander_desk() -> void:
     order_status_label.visible=not order_status_label.text.is_empty()
     var result_lines: Array[String]=[]
     var last_order: String=str(mind.get("last_order",""))
-    if not last_order.is_empty() and not (delivered and last_order=="수령: "+str(dispatch["mission"])):
+    if last_order not in ["","초기 작전"] and not (delivered and last_order=="수령: "+str(dispatch["mission"])):
         result_lines.append(last_order)
     var response: String=_latest_command_response(selected_id)
     if not response.is_empty():
@@ -1230,24 +1237,21 @@ func _refresh_commander_desk() -> void:
     command_outcome.text="\n".join(result_lines)
     command_outcome.visible=not result_lines.is_empty()
     var observed: String=str(mind.get("observed",""))
-    var loss: String="누적 손실 "+_number_text(roundi(float(corps["casualties_taken"])))+"명"
+    var observations := PackedStringArray()
     var target: Dictionary=sim.find_unit(int(unit.get("contact_target_id",-1)))
     if not target.is_empty() and _visible_unit(target):
-        commander_observation.text="상대 %s · %s" % [str(target["name"]),loss]
-    else:
-        commander_observation.text=loss
+        observations.append("교전 상대 · "+str(target["name"]))
+    if roundi(corps["casualties_taken"])>0:
+        observations.append("누적 손실 "+_number_text(roundi(corps["casualties_taken"]))+"명")
     var notes: String=_latest_engagement_note(selected_id)
-    if not notes.is_empty():
-        commander_observation.text+="\n"+notes
-    if sim.six_armies:
-        var formation: String = unit["formation"]
-        var formation_note := WarSim.FormationDrill.role_text(formation)
-        if not str(unit["next_formation"]).is_empty():
-            formation_note = "%s 편성 중 · 전열 불안정" % unit["next_formation"]
-        if not formation_note.is_empty():
-            commander_observation.text += "\n%s · %s" % [formation,formation_note]
-    if not observed.is_empty():
-        commander_observation.text+="\n"+observed
+    if not notes.is_empty(): observations.append(notes)
+    if not str(unit["next_formation"]).is_empty():
+        observations.append("%s 편성 중 · 전열 불안정" % unit["next_formation"])
+    if observed not in ["","현재 시야 내 적 없음","아직 적을 관측하지 못함"]:
+        observations.append(observed)
+    commander_observation.text="\n".join(observations)
+    commander_observation.get_parent().visible=not observations.is_empty()
+    if sim.six_armies: details_label.tooltip_text+="\n"+WarSim.FormationDrill.role_text(unit["formation"])
 
 func _recent_corps_exchange(commander_id: int) -> Vector2:
     var members: Dictionary={commander_id:true}
@@ -1474,13 +1478,13 @@ func _refresh_general_cards(reports: Array[Dictionary]) -> void:
             card.portrait.texture=_commander_icon(officer,0)
             card.portrait_name=officer
         var troops: String=_number_text(roundi(sim.corps_report(ids[i])["troops"]))+"명"
-        card.present(officer,troops,_field_action(u),mood,_mood_color(mood),kind,detail,ids[i]==selected_id and not observing_enemy)
+        card.present(officer,u["type"],troops,_field_action(u),mood,_mood_color(mood),kind,detail,ids[i]==selected_id and not observing_enemy)
         card.report_id=reporting.get(ids[i],-1)
         card.report_link.visible=card.report_id>=0
         card.report_link.accessibility_name=officer+" 야전 보고 열기"
         card.accessibility_description="도착한 야전 보고 있음" if card.report_link.visible else ""
         var shortcut := "  ·  단축키 %d" % ((i+1)%10) if i<10 else ""
-        card.tooltip_text="%s%s\n기분: %s\n판단: %s\n관측: %s\n우려: %s\n최근 명령: %s" % [officer,shortcut,mood,reason,mind.get("observed",""),mind.get("concern",""),mind.get("last_order","")]
+        card.tooltip_text="%s · %s%s\n기분: %s\n판단: %s\n관측: %s\n우려: %s\n최근 명령: %s" % [officer,u["type"],shortcut,mood,reason,mind.get("observed",""),mind.get("concern",""),mind.get("last_order","")]
         if kind=="전령": card.tooltip_text+="\n전령: "+detail
         if not suggestion.is_empty(): card.tooltip_text+="\n건의: "+suggestion
 
@@ -1501,8 +1505,8 @@ func _refresh_sector_board() -> void:
     for i in range(3):
         var row: Dictionary=sector_snapshot[i]
         var card:=sector_cards[i]
-        card.present(row,_number_text(row["own"]),_number_text(row["enemy"]),fog_enabled and not sim.finished,sector_selection==i)
-        card.tooltip_text="구역 내 병력 합계 · 교전 중 공격 부대 %d개 · 아군 최대 전열 압박 %.0f%%\n클릭하면 이 전선을 봅니다." % [int(row["contacts"]),float(row["pressure"])*100.0]
+        card.present(row,_number_text(row["own"]),_number_text(row["enemy"]),fog_enabled and not sim.finished,sector_selection==i,detailed_map)
+        card.tooltip_text=card.own.text+" · "+card.enemy.text+"\n구역 내 병력 합계 · 교전 중 공격 부대 %d개 · 아군 최대 전열 압박 %.0f%%\n클릭하면 이 전선을 봅니다." % [int(row["contacts"]),float(row["pressure"])*100.0]
 
 func _refresh_objectives() -> void:
     objective_label.text=sim.scenario_goal
@@ -1751,6 +1755,7 @@ func _draw_force_balance() -> void:
 func _toggle_map_detail() -> void:
     detailed_map = not detailed_map
     map_detail_button.text = "전술 표시 · 상세" if detailed_map else "전술 표시 · 간결"
+    _refresh_sector_board()
     map_layer.queue_redraw()
 
 # Capture objectives are areas of terrain, not structures. Only sim.structures
@@ -2877,7 +2882,7 @@ func _draw_active_routes() -> void:
         var chosen: bool=int(u["id"])==(observed_enemy_id if observing_enemy else selected_id)
         if own and chosen and (not u.get("field_choice",{}).is_empty() or sim.march_plans.has(u["id"])): continue
         if not own and (not chosen or fog_enabled): continue
-        if not chosen and not detailed_map and camera_zoom>=0.85: continue
+        if not chosen and not detailed_map: continue
         if float(u.get("bridge_y",-1.0))>=0.0 and own and chosen: continue
         if not chosen and float(u.get("motion_speed",0.0))<2.0: continue
         var p: Vector2=u["pos"]
@@ -2916,11 +2921,11 @@ func _draw_unit_label(unit: Dictionary, occupied: Array[Rect2], visible_units: A
     # Place all unit text in viewport pixels; the camera never scales glyphs.
     var rich: bool = selected
     var label: String = str(unit["name"])
-    if rich or (detailed_map and camera_zoom>=0.9): label += "  "+_number_text(roundi(float(unit["troops"])))
+    if not detailed_map and not selected and state not in ["패주","포위","전사","부상","재집결"]: return
+    if detailed_map and (rich or camera_zoom>=0.9): label += "  "+_number_text(roundi(float(unit["troops"])))
     if rich and detailed_map: label += " · "+str(unit["formation"])
     if not state.is_empty() and (rich or state in ["패주","포위","전사","부상"]): label += " · "+state
-    if side==0 and selected:
-        label+=" / "+str(unit.get("mind",{}).get("mood","준비"))
+
     var fs: int = 14 if selected else 12
     var width: float = (korean_font.get_string_size(label,HORIZONTAL_ALIGNMENT_LEFT,-1,fs).x+18.0)*inv
     var height: float = (27.0 if selected else 21.0)*inv
@@ -3239,8 +3244,7 @@ func _clamp_camera(focused_sector: int=-1, focused_objective: int=-1) -> void:
             objective_buttons[i].set_pressed_no_signal(i==objective_focus)
     if sector_selection!=focused_sector:
         sector_selection=focused_sector
-        for i in range(sector_cards.size()):
-            sector_cards[i].set_pressed_no_signal(i==focused_sector)
+        _refresh_sector_board()
     var half: Vector2 = field_extent*0.5/camera_zoom
     camera_center.x = clampf(camera_center.x,minf(half.x,sim.field_size.x*0.5),maxf(sim.field_size.x-half.x,sim.field_size.x*0.5))
     camera_center.y = clampf(camera_center.y,minf(half.y,sim.field_size.y*0.5),maxf(sim.field_size.y-half.y,sim.field_size.y*0.5))
@@ -3406,14 +3410,13 @@ func _draw_terrain_texture() -> void:
     _draw_string("N",Vector2(-4,14),10,COL_TEXT)
     map_layer.draw_set_transform(offset,0.0,Vector2.ONE*camera_zoom)
 
-# Atlas rows: faction × infantry, archer, cavalry. Columns: profile, front, rear.
-func _soldier_region(unit: Dictionary) -> Rect2:
-    var kind: int = 1 if str(unit["type"])=="궁병" else (2 if str(unit["type"])=="기병" else 0)
-    var direction: Vector2 = unit["facing"]
-    var column: int = 0
-    if absf(direction.y)>absf(direction.x)*1.10:
-        column=1 if direction.y>0.0 else 2
-    return Rect2(column*96,(int(unit["side"])*3+kind)*96,96,96)
+# Each pose has side, near diagonal, front, far diagonal and rear views.
+# The other three directions mirror the corresponding lateral view.
+func _troop_view(direction: Vector2) -> int:
+    var elevation := absf(direction.y)
+    if elevation>0.924: return 2 if direction.y>0.0 else 4
+    if elevation>0.383: return 1 if direction.y>0.0 else 3
+    return 0
 
 # Read-only pose selection. Attack frames follow the actual emitted combat event.
 # The sim clock freezes in pause; marching phase is scaled to operation time.
@@ -3439,9 +3442,6 @@ func _stride_phase(unit: Dictionary, index: int) -> float:
     var cycle := 22.0 if unit["type"] == "기병" else 13.0
     return TAU * distance / cycle + index * 2.39996
 
-func _soldier_motion_region(base: Rect2,pose: int) -> Rect2:
-    return Rect2(base.position+Vector2(pose*288,0),base.size)
-
 func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, target: Vector2, bow_age: float, draw_shadow: bool, reaction: Vector2, file_step: Vector2, swing_at: float = -INF, stride_angle: float = -INF, stroke_age: float = -INF, look_angle: float = -INF, exchange_pose: int = -1) -> void:
     var direction: Vector2 = unit["facing"]
     if target!=Vector2.INF and not bool(unit["routed"]) and p.distance_squared_to(target)>0.1:
@@ -3449,7 +3449,7 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     var moving: bool = float(unit["stride_step"]) > 0.12 and sim.started and not sim.finished
     var kind: int = 1 if str(unit["type"])=="궁병" else (2 if str(unit["type"])=="기병" else 0)
     # The atlas uses a shared foot anchor. Taller silhouettes, compact lateral footprint.
-    var extent: Vector2 = (Vector2(20,20) if kind==2 else Vector2(9,13))*SOLDIER_SCALE
+    var extent := Vector2.ONE * (20.0 if kind==2 else 19.0) * SOLDIER_SCALE
     if not sim.six_armies: extent*=1.25
     # Front and rear ranks no longer perform the same thrust on every tick.
     var visual_contact: bool=target!=Vector2.INF
@@ -3519,42 +3519,28 @@ func _draw_soldier(p: Vector2, unit: Dictionary, accent: Color, index: int, targ
     if camera_zoom>=1.10 and draw_shadow:
         map_layer.draw_set_transform(map_offset+(ground+Vector2(2.5,1.0)*SOLDIER_SCALE)*camera_zoom,0.0,Vector2(1.0,0.45)*camera_zoom)
         map_layer.draw_circle(Vector2.ZERO,(7.0 if kind==2 else 4.8)*SOLDIER_SCALE,Color(0.04,0.05,0.035,0.30))
-    var column: int=0
-    if absf(direction.y)>absf(direction.x)*1.10: column=1 if direction.y>0.0 else 2
-    var region: Rect2=Rect2(column*96,(int(unit["side"])*3+kind)*96,96,96)
-    var mirror: float = -1.0 if region.position.x==0.0 and direction.x<0.0 else 1.0
-    var rotation: float=tilt*mirror if column==0 else tilt*0.35
-    if kind==2:
-        mirror = -1.0 if direction.x<0.0 else 1.0
-        rotation = tilt*mirror*absf(direction.x)*0.55
+    var view := _troop_view(direction)
+    var mirror := -1.0 if direction.x<0.0 and view not in [2,4] else 1.0
+    var rotation := tilt*mirror*absf(direction.x)*(0.55 if kind==2 else 1.0)
     map_layer.draw_set_transform(map_offset+p*camera_zoom,rotation,Vector2(mirror,1.0)*camera_zoom)
-    var art: Texture2D = SOLDIER_MOTION if pose>=0 else SOLDIER_ART
-    var source: Rect2 = _soldier_motion_region(region,pose) if pose>=0 else region
-    if exchange_pose>=0:
-        art=INFANTRY_CONTACT
-        source=Rect2((exchange_pose*3+column)*128,int(unit["side"])*96,128,96)
-        extent.x=extent.y*128.0/96.0
-    source = Rect2(source.position*TROOP_ATLAS_SCALE,source.size*TROOP_ATLAS_SCALE)
-    var foot_anchor := 0.90
+    var frame := 0
+    var art: Texture2D = FOOT_ART
+    var row := int(unit["side"])*2+kind
     if kind==2:
-        var elevation := absf(direction.y)
-        var view := 0
-        if elevation>0.924: view=2 if direction.y>0.0 else 4
-        elif elevation>0.383: view=1 if direction.y>0.0 else 3
-        var frame := 0
-        if pose>=2: frame=pose+3
-        elif moving:
-            var gait := stride_angle if stride_angle!=-INF else _stride_phase(unit,index)
-            frame = 1+posmod(floori(gait*4.0/TAU),4)
-        var coat := 1 if posmod(index*7+int(unit["id"]),11)<4 else 0
         art = MOUNTED_ART
-        source = Rect2((frame*5+view)*56,(int(unit["side"])*2+coat)*56,56,56)
-        foot_anchor = 47.0/56.0
-    map_layer.draw_texture_rect_region(art,Rect2(Vector2(-extent.x*0.5,-extent.y*foot_anchor),extent),source,shade)
-    if aiming==FrontView.BowPhase.DRAW and column==0 and camera_zoom>=1.35:
-        var draw: float=smoothstep(0.08,FrontView.VOLLEY_RELEASE,bow_age)
-        var hand:=Vector2(lerpf(0.25,-0.8,draw),-5.9)*SOLDIER_SCALE
-        map_layer.draw_texture_rect(BATTLE_ARROW,Rect2(hand-Vector2(0.40,0.85),Vector2(5.2,1.30)),false,shade)
+        row = int(unit["side"])*2 + (1 if posmod(index*7+int(unit["id"]),11)<4 else 0)
+        if pose>=2: frame=pose+3
+    elif kind==0:
+        if exchange_pose>=0: frame=5+exchange_pose
+        elif pose>=2: frame=[5,6,10,8][pose-2]
+    elif aiming!=FrontView.BowPhase.IDLE:
+        frame=4+int(aiming)
+    elif hit: frame=9
+    if frame==0 and moving:
+        var gait := stride_angle if stride_angle!=-INF else (file_phase if dressing else _stride_phase(unit,index))
+        frame=1+posmod(floori(gait*4.0/TAU),4)
+    var source := Rect2((frame*5+view)*TROOP_CELL,row*TROOP_CELL,TROOP_CELL,TROOP_CELL)
+    map_layer.draw_texture_rect_region(art,Rect2(Vector2(-extent.x*0.5,-extent.y*FOOT_ANCHOR),extent),source,shade)
     map_layer.draw_set_transform(map_offset,0.0,Vector2.ONE*camera_zoom)
 
 # Aggregate real casualties, never invent floating damage from decorative effects.
@@ -4080,25 +4066,28 @@ func _show_outcome() -> void:
         info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
         row.add_child(info)
         var name_label := Label.new()
-        name_label.text = "%s  ·  %s  ·  %d명 생존" % [str(unit["name"]),str(unit["general_state"]),int(unit["troops"])]
         name_label.add_theme_font_size_override("font_size",17)
         name_label.add_theme_color_override("font_color",COL_GOLD)
         info.add_child(name_label)
         var stats := Label.new()
         var corps: Dictionary = sim.corps_report(int(unit["id"]))
-        name_label.text = "%s · %s · 군단 %d명 생존" % [str(unit["name"]),str(unit["general_state"]),int(corps["troops"])]
-        stats.text = "피해 %d   손실 %d   이탈 %d   판단 %d   공적 %d" % [int(corps["damage_dealt"]),int(corps["casualties_taken"]),int(corps["deserted"]),int(corps["decisions"]),int(corps["merit"])]
+        name_label.text = "%s · %s   %s명 생존" % [unit["name"], unit["type"], _number_text(roundi(corps["troops"]))]
+        if unit["general_state"]!="건재": name_label.text+=" · "+str(unit["general_state"])
+        stats.text = "가한 피해 %s   손실 %s   공적 %d" % [_number_text(roundi(corps["damage_dealt"])),_number_text(roundi(corps["casualties_taken"])),corps["merit"]]
         stats.add_theme_font_size_override("font_size",14)
         info.add_child(stats)
-        var contact_summary := _body_text(info,12,COL_MUTED)
-        contact_summary.text="돌격 저지 %d회 · 후방 손실 %s명 · 패주 %d회" % [
-            int(corps["brace_stops"]),_number_text(roundi(corps["rear_losses"])),int(corps["rout_count"])]
-        if unit.has("skill_ids"):
-            var summaries:=PackedStringArray()
-            for skill_id in unit["skill_ids"]:
-                var stat: Dictionary=unit["skill_stats"].get(skill_id,{"uses":0,"effect":0.0})
-                summaries.append("%s %d회 · %s" % [WarSim.Skills.CATALOG[skill_id][1],stat.uses,WarSim.Skills.effect_stat(skill_id,stat.effect)])
-            contact_summary.text+="\n"+"   /   ".join(summaries)
+        var highlights := PackedStringArray()
+        if corps["deserted"]>=1: highlights.append("이탈 %s명" % _number_text(roundi(corps["deserted"])))
+        if corps["brace_stops"]>0: highlights.append("돌격 저지 %d회" % corps["brace_stops"])
+        if corps["rear_losses"]>=1: highlights.append("후방 손실 %s명" % _number_text(roundi(corps["rear_losses"])))
+        if corps["rout_count"]>0: highlights.append("패주 %d회" % corps["rout_count"])
+        if not highlights.is_empty(): _body_text(info,12,COL_MUTED).text=" · ".join(highlights)
+        for skill_id in unit.get("skill_ids",[]):
+            var stat: Dictionary=unit["skill_stats"].get(skill_id,{})
+            if stat.get("uses",0)>0:
+                _body_text(info,12,COL_MUTED).text="%s %d회 · %s" % [WarSim.Skills.CATALOG[skill_id][1],stat.uses,WarSim.Skills.effect_stat(skill_id,stat.effect)]
+        stats.mouse_filter=Control.MOUSE_FILTER_PASS
+        stats.tooltip_text="장수 판단 %d회" % corps["decisions"]
     for child in reward_options.get_children(): reward_options.remove_child(child); child.queue_free()
     reward_options.visible=campaign_active and campaign is North and campaign.state.reward>0
     if reward_options.visible:

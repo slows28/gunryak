@@ -161,14 +161,14 @@ func refresh() -> void:
     var s: Dictionary=campaign.state
     var idx:int=s.active[slot]
     var chapter: Array=Field.CHAPTERS[int(s.stage)-1]
-    summary.text="제갈량의 북벌   /   %02d · %s      %d개 군단 출전" % [s.stage,chapter[0],s.active.size()]
+    summary.text="%02d장  %s    ·    %d개 군단 출전" % [s.stage,chapter[0],s.active.size()]
     brief.text="장안 함락 · 북벌 완수" if s.complete else ("%s 승전 · 아래에서 전리품 하나를 고르십시오." % chapter[0] if s.reward else chapter[3])
     slot_choice.clear()
     for i in s.active.size(): slot_choice.add_item("%02d군  %s" % [i+1,campaign.officers[s.active[i]].name])
     slot_choice.select(slot)
     officer_choice.select(idx)
     type_choice.select(["보병","궁병","기병"].find(s.types[slot]))
-    army.text="%s · %s · 판단력 %d · 출전 병력 %s명" % [campaign.officers[idx].name,campaign.officers[idx].personality,campaign.officers[idx].stats[3],campaign.TROOPS[slot]]
+    army.text="%s · 판단력 %d · 병력 %s명" % [campaign.officers[idx].personality,campaign.officers[idx].stats[3],campaign.TROOPS[slot]]
     var innate_lines:=Skills.describe(campaign.INNATE[idx]).split("\n")
     innate.text="고유 전술   %s\n%s\n%s" % [Skills.CATALOG[campaign.INNATE[idx]][1],innate_lines[1],innate_lines[2]]
     var gear: String=s.gear.get(str(idx),"")

@@ -407,33 +407,13 @@ func _capture() -> void:
     if not _save_frame("battle_focus.png"):
         quit(1)
         return
-    # Validate all 18 atlas cells and all four facing choices without mutating units.
-    var atlas: Texture2D = load("res://assets/art/soldier_sprites.svg")
-    if atlas==null or atlas.get_size()!=Vector2(288,576)*game.TROOP_ATLAS_SCALE:
-        push_error("VISUAL_CAPTURE_FAIL: soldier atlas dimensions invalid")
-        quit(1)
-        return
-    var atlas_pixels: Image = atlas.get_image()
-    atlas_pixels.resize(288,576,Image.INTERPOLATE_NEAREST)
-    for side in range(2):
-        for kind in range(3):
-            for column in range(3):
-                var cell := Rect2i(column*96,(side*3+kind)*96,96,96)
-                if atlas_pixels.get_region(cell).get_used_rect().size.x<20:
-                    push_error("VISUAL_CAPTURE_FAIL: empty soldier sprite cell")
-                    quit(1)
-                    return
-                var sample: Dictionary = {"side":side,"type":["보병","궁병","기병"][kind],"facing":[Vector2.RIGHT,Vector2.DOWN,Vector2.UP][column]}
-                var region: Rect2 = game.call("_soldier_region",sample)
-                if region!=Rect2(cell):
-                    push_error("VISUAL_CAPTURE_FAIL: incorrect soldier facing atlas region")
-                    quit(1)
-                    return
-    var left_sample: Dictionary={"side":1,"type":"기병","facing":Vector2.LEFT}
-    if game.call("_soldier_region",left_sample)!=Rect2(0,480,96,96):
-        push_error("VISUAL_CAPTURE_FAIL: wrong mirrored profile")
-        quit(1)
-        return
+    var bearings := [Vector2.RIGHT,Vector2(1,1),Vector2.DOWN,Vector2(1,-1),Vector2.UP]
+    for view in bearings.size():
+        var facing: Vector2=bearings[view].normalized()
+        if game._troop_view(facing)!=view or game._troop_view(Vector2(-facing.x,facing.y))!=view:
+            push_error("VISUAL_CAPTURE_FAIL: troop atlas direction")
+            quit(1)
+            return
     var saved_zoom: float=game.camera_zoom
     var saved_center: Vector2=game.camera_center
     game.camera_zoom=2.5
@@ -448,7 +428,7 @@ func _capture() -> void:
     game.camera_center=saved_center
     game.call("_clamp_camera")
     game.map_layer.queue_redraw()
-    print("SOLDIER_ATLAS_PASS: 18 populated cells, all facing regions checked")
+    print("SOLDIER_ATLAS_PASS: all eight troop bearings checked")
     var scenery_atlas: Texture2D=load("res://assets/art/battlefield_detail.svg")
     if scenery_atlas==null or scenery_atlas.get_size()!=Vector2(768,512):
         push_error("VISUAL_CAPTURE_FAIL: scenery atlas dimensions invalid")
@@ -482,20 +462,21 @@ func _capture() -> void:
     game.call("_clamp_camera")
     game.map_layer.queue_redraw()
     print("SCENERY_ATLAS_PASS: six populated atlas regions and real bridge capture")
-    var motion_atlas: Texture2D=load("res://assets/art/soldier_motion.svg")
-    if motion_atlas==null or motion_atlas.get_size()!=Vector2(1728,576)*game.TROOP_ATLAS_SCALE:
-        push_error("VISUAL_CAPTURE_FAIL: motion atlas dimensions invalid")
-        quit(1)
-        return
-    var motion_pixels: Image=motion_atlas.get_image()
-    motion_pixels.resize(1728,576,Image.INTERPOLATE_NEAREST)
-    for row in range(6):
-        for col in range(18):
-            var cell:=Rect2i(col*96,row*96,96,96)
-            if motion_pixels.get_region(cell).get_used_rect().size.x<20:
-                push_error("VISUAL_CAPTURE_FAIL: empty motion atlas cell")
-                quit(1)
-                return
+    for art: Texture2D in [game.FOOT_ART,game.MOUNTED_ART]:
+        var pixels := art.get_image()
+        var frames := 11 if art==game.FOOT_ART else 9
+        var cell: int=game.TROOP_CELL
+        if pixels.get_size()!=Vector2i(cell*5*frames,cell*4):
+            push_error("VISUAL_CAPTURE_FAIL: troop atlas dimensions")
+            quit(1)
+            return
+        for row in 4:
+            for col in (5*frames):
+                var used := pixels.get_region(Rect2i(col*cell,row*cell,cell,cell)).get_used_rect()
+                if used.size.x<5 or used.size.y<17:
+                    push_error("VISUAL_CAPTURE_FAIL: empty rank or motion frame")
+                    quit(1)
+                    return
     var pose_unit: Dictionary={"type":"보병","motion_speed":0.0,"routed":false,"last_visual":10.0,"last_hit":-100.0,"contact_troops":4,"ammo":100.0}
     if game.call("_soldier_pose",pose_unit,1,10.04)!=3 or game.call("_soldier_pose",pose_unit,1,10.20)!=4 or game.call("_soldier_pose",pose_unit,1,10.43)!=2:
         push_error("VISUAL_CAPTURE_FAIL: attack pose timing incorrect")
@@ -515,7 +496,7 @@ func _capture() -> void:
         push_error("VISUAL_CAPTURE_FAIL: routed or frozen stride invalid")
         quit(1)
         return
-    print("SOLDIER_MOTION_PASS: 108 atlas cells and deterministic attack/march timing")
+    print("SOLDIER_MOTION_PASS: 400 atlas cells and deterministic attack/march timing")
 
 
     # Verify presentation-only density, the real high-resolution terrain and shared skin.

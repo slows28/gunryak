@@ -229,8 +229,8 @@ func open(mid_battle:bool=false)->void:
         roster.add_item("%s  %s명"%[u["name"],_troop_text(int(u["troops"]))],portrait)
         roster.set_item_tooltip(roster.item_count-1,str(u["type"])+" · "+str(u["mission"]))
         roster.set_item_metadata(roster.item_count-1,id)
-    feedback.text="거점을 선택하고 담당 군단의 행동을 확정하세요. 원하는 곳에 임시 거점을 세울 수 있습니다."
-    if mid_battle: feedback.text="5일차부터 전령을 보낼 수 있습니다. 명령은 전령이 도착하면 적용됩니다."
+    feedback.text="거점을 고른 뒤 군단의 행동을 확정하세요."
+    if mid_battle: feedback.text="5일차부터 명령을 보냅니다. 전령이 도착하면 적용됩니다."
     if sim.commander_captured(0):
         title.text="작전 지도   /   "+sim.scenario_title
         feedback.text=sim.command_status(0)
