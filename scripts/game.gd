@@ -2571,8 +2571,9 @@ func _visible_soldier_batch(visible_units: Array[Dictionary],field_view: Rect2) 
     for fx in sim.visual_effects:
         if sim.finished: break
         var age: float=render_clock-float(fx["time"])
-        if fx["kind"]=="화살" and age>=0.0 and age<FrontView.VOLLEY_RECOVERY+FrontView.volley_lane_delay(2) and _combat_effect_visible(fx):
-            volleys[int(fx["attacker_id"])]=fx
+        if fx["kind"]=="화살" and age>=0.0 and age<FrontView.VOLLEY_RECOVERY+FrontView.volley_lane_delay(2) and fx.has("attacker_id"):
+            if fx.get("side",-1)==0 or _knows_field_point(fx.get("visual_from",fx["from"])):
+                volleys[int(fx["attacker_id"])]=fx
         if fx.has("defender_id") and age >= 0.0 and age < (1.1 if fx["kind"] == "화살" else 0.26) and _combat_effect_visible(fx):
             _collect_impact(impacts, fx, age)
     for unit in visible_units:
@@ -3634,20 +3635,22 @@ func _draw_contact_scuffs(view: Rect2) -> void:
             map_layer.draw_set_transform(offset, 0.0, Vector2.ONE * camera_zoom)
 
 func _draw_combat_effects() -> void:
+    var watches: Array[Vector3]=[]
+    if fog_enabled and not sim.visual_effects.is_empty(): watches=sim.player_watch_posts()
     for fx in sim.visual_effects:
         var age := maxf(0.0, render_clock - float(fx["time"]))
         var arrow: bool = fx["kind"] == "화살"
         var show_note := detailed_map and camera_zoom >= 1.15 and age < 0.75
-        if not (arrow and age <= 1.10 or show_note) or not _combat_effect_visible(fx): continue
+        if not (arrow and age <= 1.10 or show_note): continue
         var p: Vector2 = fx.get("visual_from", fx["from"])
         var target: Vector2 = fx.get("visual_to", fx["to"])
-        if arrow: _draw_volley(fx, p, target, age)
-        if show_note:
+        if arrow and age<=1.10: _draw_volley(fx,p,target,age,watches)
+        if show_note and _combat_effect_visible(fx):
             var note: String = _engagement_note(fx)
             if not note.is_empty():
                 _map_plate(note, p.lerp(target, 0.5) + Vector2(0, -30.0), COL_GOLD, 11)
 
-func _draw_volley(fx: Dictionary, origin: Vector2, target: Vector2, age: float) -> void:
+func _draw_volley(fx: Dictionary, origin: Vector2, target: Vector2, age: float, watches: Array[Vector3]) -> void:
     var lanes: Array[Vector2]=[origin,target]
     if fx.has("arrow_lanes"): lanes=fx["arrow_lanes"]
     var view_offset: Vector2=field_extent*0.5-camera_center*camera_zoom
@@ -3658,7 +3661,6 @@ func _draw_volley(fx: Dictionary, origin: Vector2, target: Vector2, age: float) 
     for i in range(0,lanes.size(),2):
         var from: Vector2=lanes[i]
         var to: Vector2=lanes[i+1]
-        if fog_enabled and not sim.finished and (not sim.player_can_see(from) or not sim.player_can_see(to)): continue
         var airborne: float=FrontView.arrow_age(age,i>>1)
         if airborne<0.0: continue
         var direction: Vector2=(to-from).normalized()
@@ -3678,13 +3680,13 @@ func _draw_volley(fx: Dictionary, origin: Vector2, target: Vector2, age: float) 
             var arc_height: float=rise*(1.0+spread.y*0.28)
             var point: Vector2=FrontView.arrow_position(path_start,path_end,progress,arc_height)
             var screen: Vector2=view_offset+point*camera_zoom
-            if not view.has_point(screen): continue
+            if not view.has_point(screen) or (fog_enabled and not _inside_watch(point,watches)): continue
             var tangent: Vector2=path_end-path_start+Vector2(0,-4.0*arc_height*(1.0-2.0*progress))
             map_layer.draw_set_transform(screen,tangent.angle(),Vector2.ONE*camera_zoom)
             map_layer.draw_texture_rect(BATTLE_ARROW,arrow_rect,false)
         map_layer.draw_set_transform(view_offset,0.0,Vector2.ONE*camera_zoom)
         var impact_age: float=airborne-flight
-        if impact_age>=0.0 and impact_age<0.085 and camera_zoom>=0.75:
+        if impact_age>=0.0 and impact_age<0.085 and camera_zoom>=0.75 and _knows_field_point(to):
             _draw_arrow_impact(impact,direction,impact_age/0.085)
 
 func _draw_arrow_impact(point: Vector2, incoming: Vector2, life: float) -> void:
@@ -4710,6 +4712,11 @@ func _toggle_enemy_watch() -> void:
     if _show_enemy_watch(): _refresh_visibility()
     map_layer.queue_redraw()
 
+func _inside_watch(point: Vector2, observers: Array[Vector3], exposure: float=1.0) -> bool:
+    for watch in observers:
+        if point.distance_squared_to(Vector2(watch.x,watch.y))<=watch.z*watch.z*exposure*exposure: return true
+    return false
+
 func _refresh_visibility() -> void:
     # Only an indication of the same actual player visibility used for unit disclosure.
     # Cached low-resolution mask; no simulation advantage from rendering.
@@ -4719,12 +4726,8 @@ func _refresh_visibility() -> void:
     for y in range(57):
         for x in range(90):
             var p: Vector2 = Vector2((float(x)+0.5)/90.0,(float(y)+0.5)/57.0)*sim.field_size
-            var visible_now := false
             var exposure:=sim.terrain_exposure(p) if enemy_view else 1.0
-            for watch in observers:
-                if p.distance_squared_to(Vector2(watch.x,watch.y)) <= watch.z*watch.z*exposure*exposure:
-                    visible_now = true
-                    break
+            var visible_now:=_inside_watch(p,observers,exposure)
             var shade:=Color(0.025,0.045,0.045,0.0 if visible_now else 0.43)
             if enemy_view: shade=Color(0.75,0.18,0.12,0.31 if visible_now else 0.0)
             image.set_pixel(x,y,shade)
