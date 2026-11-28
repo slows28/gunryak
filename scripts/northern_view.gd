@@ -9,10 +9,11 @@ var campaign
 var font: Font
 var launch: Callable
 var back: Callable
-var slot_choice: OptionButton
+var corps_buttons: Array[Button]=[]
+var commander_heading: Label
+var assign_button: Button
 var officer_choice: OptionButton
 var type_choice: OptionButton
-var equip_choice: OptionButton
 var owner_list: ItemList
 var summary: Label
 var brief: Label
@@ -42,55 +43,69 @@ func configure(model,face: Font,_art: Texture2D,start: Callable,exit: Callable) 
 func _ready() -> void:
     size=Vector2(1280,800)
     mouse_filter=Control.MOUSE_FILTER_STOP
-    block(Rect2(0,0,1280,800),Color("#131d22"))
-    block(Rect2(26,96,732,570),Ink)
-    block(Rect2(780,96,474,570),Color("#233134"))
-    text("北伐  /  장안으로 가는 길",32,18,740,46,30,Gold)
-    summary=text("",34,62,1160,26,17,Paper)
+    block(Rect2(0,0,1280,800),Color("#152021"))
+    block(Rect2(30,110,724,290),Ink)
+    block(Rect2(30,420,724,230),Ink)
+    block(Rect2(776,110,474,540),Color("#223132"))
+    text("북벌 전역",39,19,325,26,16,Gold)
+    summary=text("",36,46,900,50,31,Paper)
+    difficulty=option(969,44,273)
+    for t in ["입문 · 전체 관전 가능","보통 · 아군 정찰","어려움 · 아군 정찰"]: difficulty.add_item("난이도   "+t)
+    difficulty.item_selected.connect(func(i):
+        if campaign.preparing(): campaign.state.difficulty=i;persist())
     canvas=Route.new()
-    canvas.position=Vector2(42,116)
+    canvas.position=Vector2(42,119)
     canvas.size=Vector2(700,220)
     canvas.paint=_route
+    canvas.mouse_filter=Control.MOUSE_FILTER_IGNORE
     add_child(canvas)
-    brief=text("",48,355,683,75,18,Paper)
-    text("보유 장비",48,438,370,28,20,Gold)
-    owner_list=ItemList.new()
-    place(owner_list,48,476,336,158)
-    owner_list.item_selected.connect(func(i): equip_choice.select(i+1);_describe())
-    description=text("",402,478,330,145,16,Paper)
-    text("출전 편성",803,114,330,32,22,Gold)
-    slot_choice=option(803,160,230)
-    slot_choice.item_selected.connect(func(i): slot=i; refresh())
-    type_choice=option(1043,160,185)
+    brief=text("",48,342,683,54,16,Paper)
+    text("출전 군단",48,429,215,32,20,Gold)
+    var group:=ButtonGroup.new()
+    for i in campaign.state.active.size():
+        var card:=button("",48+(i%4)*173,471+floori(float(i)/4)*54,162,_select_corps.bind(i))
+        card.size.y=45
+        card.toggle_mode=true
+        card.button_group=group
+        card.add_theme_font_size_override("font_size",17)
+        var selected:=StyleBoxFlat.new()
+        selected.bg_color=Color("#514b38")
+        selected.border_color=Gold
+        selected.set_border_width_all(1)
+        selected.set_corner_radius_all(4)
+        card.add_theme_stylebox_override("pressed",selected)
+        card.add_theme_stylebox_override("hover_pressed",selected)
+        corps_buttons.append(card)
+    commander_heading=text("",800,123,250,40,26,Paper)
+    type_choice=option(1078,123,144)
     for t in ["보병","궁병","기병"]: type_choice.add_item(t)
     type_choice.item_selected.connect(func(i):
         if campaign.preparing(): campaign.state.types[slot]=type_choice.get_item_text(i); persist(); refresh())
-    army=text("",805,212,424,30,16,Paper)
-    officer_choice=option(803,264,250)
+    army=text("",802,165,426,30,15,Gold)
+    officer_choice=option(800,211,261)
     for o in campaign.officers: officer_choice.add_item("%s · %s · 판단 %d" % [o["name"],o["personality"],o["stats"][3]])
-    button("장수 배치",1063,264,165,func():
+    officer_choice.item_selected.connect(func(i): assign_button.disabled=not campaign.preparing() or i==campaign.state.active[slot])
+    assign_button=button("장수 교체",1073,211,149,func():
         if campaign.assign(slot,officer_choice.selected): persist();refresh())
-    innate=text("",805,323,420,91,15,Paper)
-    equipped=text("",805,424,420,30,16,Gold)
-    equip_choice=option(803,467,251)
-    equip_choice.item_selected.connect(func(_i): _describe())
-    equip_button=button("장비 재배치",1063,467,165,func():
-        var id: String=equip_choice.get_item_metadata(equip_choice.selected)
-        if campaign.equip(campaign.state.active[slot],id):
-            persist(); refresh()
-        else: status.text="같은 장수의 고유 스킬과 겹치는 장비입니다.")
-    difficulty=option(803,575,425)
-    for t in ["입문 · 전체 관전 가능","보통 · 아군 정찰","어려움 · 아군 정찰"]: difficulty.add_item("전투 난이도 · "+t)
-    difficulty.item_selected.connect(func(i):
-        if campaign.preparing(): campaign.state.difficulty=i;persist())
+    block(Rect2(800,273,422,1),Color("#45514c"))
+    innate=text("",802,284,420,83,16,Paper)
+    equipped=text("",802,375,420,32,18,Gold)
+    owner_list=ItemList.new()
+    owner_list.add_theme_font_size_override("font_size",15)
+    place(owner_list,800,419,226,143)
+    owner_list.item_selected.connect(func(_i): _describe())
+    description=text("",1041,416,186,151,15,Paper)
+    equip_button=button("",800,581,422,_change_gear)
     reward_bar=HBoxContainer.new()
-    place(reward_bar,42,675,930,45)
-    action=button("작전 지도 열기",977,685,250,func():
+    place(reward_bar,40,661,1170,45)
+    button("메인 메뉴",39,731,142,back)
+    button("기록 저장",194,731,142,func(): persist())
+    status=text("",356,728,569,45,15,Gold)
+    action=button("작전 지도 열기",973,720,267,func():
         if campaign.state.complete: back.call()
         elif not launch.call(campaign.state.stage): status.text=campaign.save_error)
-    button("타이틀",35,740,135,back)
-    button("기록 저장",180,740,145,func(): persist())
-    status=text("",350,740,870,40,15,Gold)
+    action.size.y=59
+    get_parent()._primary_button(action)
     refresh()
 
 func place(node: Control,x:int,y:int,w:int,h:int) -> void:
@@ -152,20 +167,53 @@ func _route(layer:Control) -> void:
         var b:=point+Vector2(-48,24)
         layer.draw_string_outline(font,b,title,HORIZONTAL_ALIGNMENT_CENTER,96,14,4,Color("#293331"))
         layer.draw_string(font,b,title,HORIZONTAL_ALIGNMENT_CENTER,96,14,Paper)
+func _select_corps(index: int) -> void:
+    slot=index
+    refresh()
+
 func _describe() -> void:
-    var id: String=equip_choice.get_item_metadata(equip_choice.selected)
-    description.text=Skills.describe(id) if id!="" else "장비를 고르면 조건과 효과를 확인할 수 있습니다."
-    if id!="": owner_list.select(campaign.state["items"].find(id))
+    var rows:=owner_list.get_selected_items()
+    equip_button.disabled=true
+    if rows.is_empty():
+        description.text="장비를 선택하세요."
+        equip_button.text="장비 선택"
+        return
+    var id: String=owner_list.get_item_metadata(rows[0])
+    description.text=Skills.describe(id)
+    var idx: int=campaign.state.active[slot]
+    var name_text: String=campaign.officers[idx].name
+    var owner: Variant=campaign.state.gear.find_key(id)
+    if id==campaign.INNATE[idx]:
+        equip_button.text="고유 전술과 동일"
+        return
+    if owner==str(idx): equip_button.text="%s · 장착 해제" % name_text
+    elif owner!=null: equip_button.text="%s → %s · 장비 이전" % [campaign.officers[int(owner)].name,name_text]
+    else: equip_button.text="%s에게 장착" % name_text
+    equip_button.disabled=not campaign.preparing()
+
+func _change_gear() -> void:
+    var rows:=owner_list.get_selected_items()
+    if rows.is_empty(): return
+    var idx: int=campaign.state.active[slot]
+    var id: String=owner_list.get_item_metadata(rows[0])
+    if campaign.state.gear.get(str(idx),"")==id: id=""
+    if campaign.equip(idx,id):
+        persist()
+        refresh()
+
 func refresh() -> void:
-    if not is_instance_valid(slot_choice): return
+    if corps_buttons.is_empty(): return
     var s: Dictionary=campaign.state
     var idx:int=s.active[slot]
     var chapter: Array=Field.CHAPTERS[int(s.stage)-1]
-    summary.text="%02d장  %s    ·    %d개 군단 출전" % [s.stage,chapter[0],s.active.size()]
-    brief.text="장안 함락 · 북벌 완수" if s.complete else ("%s 승전 · 아래에서 전리품 하나를 고르십시오." % chapter[0] if s.reward else chapter[3])
-    slot_choice.clear()
-    for i in s.active.size(): slot_choice.add_item("%02d군  %s" % [i+1,campaign.officers[s.active[i]].name])
-    slot_choice.select(slot)
+    summary.text="%02d장   %s" % [s.stage,chapter[0]]
+    brief.text="장안 함락 · 북벌 완수" if s.complete else ("%s 승전 · 아래에서 전리품 하나를 고르세요." % chapter[0] if s.reward else chapter[3])
+    for i in s.active.size():
+        var name_text: String=campaign.officers[s.active[i]].name
+        corps_buttons[i].text="%s   ·   %s" % [name_text,s.types[i]]
+        corps_buttons[i].tooltip_text="%d군  %s  ·  병력 %d명" % [i+1,name_text,campaign.TROOPS[i]]
+        corps_buttons[i].set_pressed_no_signal(i==slot)
+    commander_heading.text="%s  ·  제%d군" % [campaign.officers[idx].name,slot+1]
     officer_choice.select(idx)
     type_choice.select(["보병","궁병","기병"].find(s.types[slot]))
     army.text="%s · 판단력 %d · 병력 %s명" % [campaign.officers[idx].personality,campaign.officers[idx].stats[3],campaign.TROOPS[slot]]
@@ -173,20 +221,17 @@ func refresh() -> void:
     innate.text="고유 전술   %s\n%s\n%s" % [Skills.CATALOG[campaign.INNATE[idx]][1],innate_lines[1],innate_lines[2]]
     var gear: String=s.gear.get(str(idx),"")
     equipped.text="장착 장비   "+("없음" if gear=="" else str(Skills.CATALOG[gear][0]))
-    equip_choice.clear()
     owner_list.clear()
-    equip_choice.add_item("장착 해제")
-    equip_choice.set_item_metadata(0,"")
     for id: String in s["items"]:
         var owner: Variant=s.gear.find_key(id)
         var title: String=Skills.CATALOG[id][0]
         owner_list.add_item(title+"  ·  "+("미장착" if owner==null else str(campaign.officers[int(owner)].name)))
-        equip_choice.add_item(title)
-        equip_choice.set_item_metadata(equip_choice.item_count-1,id)
-    equip_choice.select(s["items"].find(gear)+1)
+        owner_list.set_item_metadata(owner_list.item_count-1,id)
+    if owner_list.item_count>0: owner_list.select(maxi(0,s["items"].find(gear)))
     _describe()
     difficulty.select(s.difficulty)
-    for node in [slot_choice,type_choice,officer_choice,equip_choice,equip_button,difficulty]: node.disabled=not campaign.preparing()
+    for node in [type_choice,officer_choice,difficulty]: node.disabled=not campaign.preparing()
+    assign_button.disabled=true
     for child in reward_bar.get_children(): reward_bar.remove_child(child);child.queue_free()
     for id: String in campaign.choices():
         var b:=Button.new()

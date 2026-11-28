@@ -25,6 +25,14 @@ func click_at(at: Vector2) -> void:
         root.push_input(event,true)
     await process_frame
 
+func press_key(code: Key) -> void:
+    for down in [true,false]:
+        var key:=InputEventKey.new()
+        key.keycode=code
+        key.pressed=down
+        root.push_input(key,true)
+    await process_frame
+
 func review_roster() -> void:
     var ids: Array=game.sim.command_ids(0)
     var area: Rect2=game.corps_grid.get_global_rect()
@@ -75,21 +83,74 @@ func _play():
     root.add_child(game)
     await process_frame
     game.set_process(false)
-    game._begin_campaign()
-    game.campaign.save_path="user://northern-screen-verify.json"
+    var menu=game.title_screen
+    game.campaign.save_path="user://northern-screen-%s.json" % Time.get_ticks_usec()
+    menu.refresh("")
+    if not menu.record_available: expect(menu.primary.text=="북벌 시작" and not menu.new_record.visible,"first visit has a single campaign action")
+    await frame("00-title")
+    for i in 9:
+        await press_key(KEY_TAB)
+        expect(menu.is_ancestor_of(root.gui_get_focus_owner()),"Tab stays on the title screen")
+    var fog: bool=game.fog_enabled
+    await press_key(KEY_V)
+    expect(game.fog_enabled==fog,"menu ignores battlefield shortcuts")
+    await click_at(menu.audio.get_global_rect().get_center())
+    expect(menu.audio.text=="음향 꺼짐" and not game.sound_enabled,"audio state shown")
+    await click_at(menu.audio.get_global_rect().get_center())
+    await click_at(menu.practice_entry.get_global_rect().get_center())
+    expect(menu.practice.visible and menu.difficulty.is_visible_in_tree(),"solo difficulty with solo entry")
+    await frame("00-practice")
+    await press_key(KEY_ESCAPE)
+    expect(menu.home.visible and not menu.practice.visible,"Escape returns to campaign")
+    if menu.record_available: await click_at(menu.new_record.get_global_rect().get_center())
+    else: await click_at(menu.primary.get_global_rect().get_center())
     var prep=game.strategy_view
-    prep.slot_choice.select(2)
-    prep.slot_choice.item_selected.emit(2)
-    prep.equip_choice.select(1)
-    prep.equip_choice.item_selected.emit(1)
-    prep.equip_button.pressed.emit()
+    for i in prep.corps_buttons.size():
+        var card: Button=prep.corps_buttons[i]
+        expect(card.is_visible_in_tree() and card.text.contains(game.campaign.state.types[i]),"all troop types visible before departure")
+    await click_at(prep.corps_buttons[2].get_global_rect().get_center())
+    await click_at(prep.equip_button.get_global_rect().get_center())
     expect(game.campaign.state.gear.get("2","")=="pace","select and equip from preparation")
     expect(prep.description.text.contains("이동 속도 증가") and prep.innate.text.contains("재사용"),"readable effects and cooldowns")
+    expect(prep.equip_button.text.contains("해제"),"equipped item has an explicit removal action")
+    await click_at(prep.corps_buttons[0].get_global_rect().get_center())
+    expect(prep.equip_button.text.contains("위연 → 왕평"),"transfer shows both officers before confirmation")
+    await click_at(prep.corps_buttons[2].get_global_rect().get_center())
     await frame("01-preparation")
+    var stored:=FileAccess.get_file_as_string(game.campaign.save_path)
+    await press_key(KEY_ESCAPE)
+    expect(menu.primary.text=="편성으로 돌아가기" and menu.reload_record.visible,"active preparation and disk record separately available")
+    await click_at(menu.new_record.get_global_rect().get_center())
+    expect(menu.confirm.visible and menu.cancel.has_focus(),"starting over defaults to cancel")
+    await frame("01-confirm")
+    await press_key(KEY_ESCAPE)
+    expect(not menu.confirm.visible and FileAccess.get_file_as_string(game.campaign.save_path)==stored,"cancel preserves saved file")
+    await click_at(menu.reload_record.get_global_rect().get_center())
+    expect(menu.confirm.visible,"reloading warns before leaving the current screen")
+    await click_at(menu.proceed.get_global_rect().get_center())
+    expect(prep.visible and game.campaign.state.gear.get("2","")=="pace","real saved load restores equipment")
     prep.action.pressed.emit()
     expect(game.order_view.visible and game.sim.command_ids(0).size()==12,"preparation opens real orders")
     await frame("02-orders")
-    game._start()
+    await click_at(game.order_view.guard_button.get_global_rect().get_center())
+    var plan: Dictionary=game.order_view.drafts.duplicate(true)
+    expect(plan.size()==1 and game.order_view.launch.text.contains("미확정 1"),"draft count visible on start action")
+    await press_key(KEY_ESCAPE)
+    expect(menu.primary.text=="작전 지도로 돌아가기" and menu.detail.text.contains("미확정 지시 1개"),"menu names the operation and its draft")
+    await frame("02-resume")
+    await click_at(menu.primary.get_global_rect().get_center())
+    expect(game.order_view.visible and game.order_view.drafts==plan,"resume preserves the draft")
+    await click_at(game.order_view.launch.get_global_rect().get_center())
+    expect(not game.sim.started and game.order_view.visible,"review cannot accidentally start battle")
+    await click_at(game.order_view.apply.get_global_rect().get_center())
+    await click_at(game.order_view.launch.get_global_rect().get_center())
+    await press_key(KEY_ESCAPE)
+    expect(game.sim.paused and menu.primary.text=="전투 계속","live battle pauses in menu")
+    menu.primary.release_focus()
+    await press_key(KEY_SPACE)
+    expect(game.sim.paused,"battle clock stays paused while menu is open")
+    await click_at(menu.primary.get_global_rect().get_center())
+    expect(not game.sim.paused and not menu.visible,"resume restores the running battle")
     expect(game.sim.started and game.general_cards.size()==12 and game.friendly_tab.text=="아군 12","twelve live cards and roster count")
     game.camera_zoom=1.5
     game.camera_center=game.sim.field_size*0.5
@@ -146,11 +207,13 @@ func _play():
     game.reward_options.get_child(0).pressed.emit()
     game.campaign_next.pressed.emit()
     expect(prep.visible and game.campaign.state.stage==2,"next stage preparation")
-    prep.equip_choice.select(4)
-    prep.equip_button.pressed.emit()
+    prep.owner_list.select(3)
+    prep.owner_list.item_selected.emit(3)
+    await click_at(prep.equip_button.get_global_rect().get_center())
     expect(game.campaign.state.gear.get("2","")=="strike","earned item transferred to commander")
     await frame("05-next-loadout")
     prep.action.pressed.emit()
     expect("strike" in sim.find_unit(2).skill_ids and sim.scenario_title=="천수 공략전","equipped skill enters next battle")
+    DirAccess.remove_absolute(ProjectSettings.globalize_path(game.campaign.save_path))
     print("NORTHERN_SCREEN_PASS" if not failed else "NORTHERN_SCREEN_FAIL")
     game._quit_game(1 if failed else 0)

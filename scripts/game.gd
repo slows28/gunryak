@@ -29,7 +29,7 @@ const GENERAL_PORTRAITS=preload("res://assets/art/general_portraits.svg")
 const FIELD_SITES=preload("res://assets/art/field_sites.svg")
 const PORTRAIT_NAMES=["왕평","마속","위연","강유","관흥","장익","장합","손례","대릉","곽회","비요","왕쌍"]
 const FIELDCRAFT = preload("res://assets/art/fieldcraft.svg")
-const TITLE_ART = preload("res://assets/art/title_art.webp")
+const TitleMenu = preload("res://scripts/title_menu.gd")
 const TROOP_CELL := 56
 const FOOT_ANCHOR := 47.0/56.0
 const SOLDIER_SCALE: float = 0.72
@@ -215,7 +215,10 @@ var last_warning: String = ""
 var heard_urgent_deliveries:=0
 var last_audio_clock: float = -100.0
 var finish_seen: bool = false
-var title_screen: Control
+var title_screen: TitleMenu
+var menu_origin: Control
+var menu_focus: Control
+var menu_was_paused := false
 var outcome_dialog: Control
 var outcome_text: Label
 var outcome_cards: VBoxContainer
@@ -345,8 +348,9 @@ func _ui_box(background: Color, border: Color=Color.TRANSPARENT) -> StyleBoxFlat
     return style
 
 func _build_interface() -> void:
-    var seal:=_button("軍略",Vector2(16,8),Vector2(75,39),_show_title)
-    seal.add_theme_font_size_override("font_size",24)
+    var seal:=_button("메뉴",Vector2(16,8),Vector2(75,39),_show_title)
+    seal.tooltip_text="메인 메뉴 · Esc"
+    seal.add_theme_font_size_override("font_size",18)
     seal.add_theme_stylebox_override("normal",_ui_box(Color("#593a30"),Color("#987456")))
     seal.add_theme_color_override("font_color",Color("#f6e2b7"))
     battle_title_label = _label("",Vector2(111,5),Vector2(260,29),24,COL_TEXT)
@@ -3751,6 +3755,7 @@ func _toggle_sound() -> void:
         sound_player.stop()
         for channel in combat_players: channel.stop()
     score.set_enabled(sound_enabled)
+    if is_instance_valid(title_screen): title_screen.update_sound()
     _refresh_hud()
 
 func _play_cue(stream: AudioStream) -> void:
@@ -3814,10 +3819,45 @@ func _update_audio_and_warning() -> void:
             _play_combat_audio({"kind":"질주", "from":unit["pos"], "to":unit["pos"]})
             break
 
+func _input(event: InputEvent) -> void:
+    var backward:=event.is_action_pressed("ui_focus_prev")
+    if not backward and not event.is_action_pressed("ui_focus_next"): return
+    # Only the visible page participates in Tab navigation. The battlefield stays drawn below it.
+    for page: Control in [title_screen,order_view,strategy_view,outcome_dialog]:
+        if not is_instance_valid(page) or not page.visible: continue
+        var stops: Array[Control]=[]
+        for node: Control in page.find_children("*","Control",true,false):
+            if node.get_viewport()!=get_viewport() or not node.is_visible_in_tree(): continue
+            if node.focus_mode==Control.FOCUS_ALL and not (node is BaseButton and node.disabled): stops.append(node)
+        if not stops.is_empty():
+            var at:=stops.find(get_viewport().gui_get_focus_owner())
+            var next:=stops.size()-1 if backward and at<0 else posmod(at+(-1 if backward else 1),stops.size())
+            stops[next].grab_focus()
+            get_viewport().set_input_as_handled()
+        return
+
 func _unhandled_key_input(event: InputEvent) -> void:
     if event is InputEventKey and event.pressed and not event.echo:
-        if is_instance_valid(order_view) and order_view.visible: return
-        if event.keycode >= KEY_0 and event.keycode <= KEY_9 and not title_screen.visible and not strategy_view.visible:
+        if title_screen.visible:
+            if event.keycode==KEY_ESCAPE:
+                if title_screen.confirm.visible: title_screen.cancel_confirmation()
+                elif title_screen.practice.visible: title_screen.leave_practice()
+                elif is_instance_valid(menu_origin): _resume_from_title()
+                get_viewport().set_input_as_handled()
+            return
+        if strategy_view.visible:
+            if event.keycode==KEY_ESCAPE:
+                _show_title()
+                get_viewport().set_input_as_handled()
+            return
+        if outcome_dialog.visible: return
+        if event.keycode==KEY_ESCAPE:
+            if order_view.visible and order_view.post_mode!="": order_view._set_post_mode("")
+            else: _show_title()
+            get_viewport().set_input_as_handled()
+            return
+        if order_view.visible: return
+        if event.keycode >= KEY_0 and event.keycode <= KEY_9:
             var index: int = 9 if event.keycode==KEY_0 else int(event.keycode-KEY_1)
             _select_general_card(index)
             return
@@ -3860,68 +3900,46 @@ func _portrait_index(name: String) -> int:
         _: return 0
 
 func _build_title_screen() -> void:
-    title_screen=Control.new()
-    title_screen.size=Vector2(1280,800)
+    title_screen=TitleMenu.new()
     add_child(title_screen)
-    var background := ColorRect.new()
-    background.color=COL_BG
-    background.size=title_screen.size
-    title_screen.add_child(background)
-    var art := TextureRect.new()
-    art.texture=TITLE_ART
-    art.position=Vector2(598,0)
-    art.size=Vector2(682,800)
-    art.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
-    art.stretch_mode=TextureRect.STRETCH_KEEP_ASPECT_COVERED
-    art.mouse_filter=Control.MOUSE_FILTER_IGNORE
-    title_screen.add_child(art)
-    var blend := Gradient.new()
-    blend.colors=PackedColorArray([COL_BG,Color(COL_BG,0)])
-    var texture := GradientTexture2D.new()
-    texture.gradient=blend
-    texture.width=196
-    texture.height=2
-    var seam := TextureRect.new()
-    seam.texture=texture
-    seam.position=art.position
-    seam.size=Vector2(196,800)
-    seam.expand_mode=TextureRect.EXPAND_IGNORE_SIZE
-    seam.mouse_filter=Control.MOUSE_FILTER_IGNORE
-    title_screen.add_child(seam)
-    var heading := _label("군략",Vector2(82,107),Vector2(440,104),77,COL_TEXT)
-    heading.reparent(title_screen,false)
-    var sub := _label("삼국지 군단 지휘",Vector2(88,218),Vector2(420,28),21,COL_GOLD)
-    sub.reparent(title_screen,false)
-    _title_button("새 북벌 캠페인",Vector2(88,288),Vector2(428,56),_begin_campaign,true)
-    _title_button("캠페인 이어하기",Vector2(88,355),Vector2(428,50),_continue_campaign)
-    _title_button("단독 전투",Vector2(88,416),Vector2(208,50),_leave_title)
-    _title_button("지형 시험장",Vector2(308,416),Vector2(208,50),_leave_title.bind(WarSim.TRAINING_SCENARIO))
-    standalone_difficulty=_options(Vector2(88,472),["단독·시험장 시야   입문 · 전체 관전 가능","단독·시험장 시야   보통 · 아군 정찰","단독·시험장 시야   어려움 · 아군 정찰"],title_screen)
-    standalone_difficulty.size=Vector2(428,35)
-    standalone_difficulty.select(1)
-    _title_button("전장 브리핑",Vector2(88,517),Vector2(208,43),_title_brief)
-    _title_button("도움말 / 조작",Vector2(308,517),Vector2(208,43),_open_demo_help)
-    _title_button("음향 전환",Vector2(88,571),Vector2(208,43),_toggle_sound)
-    _title_button("종료",Vector2(308,571),Vector2(208,43),_quit_game)
-    var version := _label(str(ProjectSettings.get_setting("application/config/version")),Vector2(88,730),Vector2(210,21),12,COL_MUTED)
-    version.reparent(title_screen,false)
-    title_screen.show()
-
-func _title_button(caption: String, position: Vector2, extent: Vector2, callback: Callable, primary: bool=false) -> void:
-    var button := _button(caption,position,extent,callback)
-    button.reparent(title_screen,false)
-    button.alignment=HORIZONTAL_ALIGNMENT_LEFT
-    button.add_theme_font_size_override("font_size",18)
-    if primary: _primary_button(button)
+    standalone_difficulty=title_screen.difficulty
 
 func _show_title() -> void:
-    if is_instance_valid(order_view): order_view.hide()
-    if is_instance_valid(strategy_view): strategy_view.hide()
-    if is_instance_valid(outcome_dialog): outcome_dialog.hide()
-    if sim.started and not sim.finished:
-        sim.paused = true
-    title_screen.show()
+    if title_screen.visible: return
+    menu_focus=get_viewport().gui_get_focus_owner()
+    menu_was_paused=sim.paused
+    var caption: String
+    if order_view.visible:
+        menu_origin=order_view
+        caption="작전 지도로 돌아가기"
+    elif strategy_view.visible:
+        menu_origin=strategy_view
+        caption="편성으로 돌아가기"
+    elif sim.finished:
+        menu_origin=outcome_dialog
+        caption="전투 결과로 돌아가기"
+    elif sim.started:
+        menu_origin=map_layer
+        caption="전투 계속"
+    else:
+        menu_origin=null
+    order_view.hide()
+    strategy_view.hide()
+    outcome_dialog.hide()
+    if sim.started and not sim.finished: sim.paused=true
     move_child(title_screen,get_child_count()-1)
+    title_screen.show()
+    title_screen.refresh(caption)
+
+func _resume_from_title() -> void:
+    title_screen.hide()
+    if menu_origin in [order_view,strategy_view,outcome_dialog]:
+        menu_origin.show()
+        move_child(menu_origin,get_child_count()-1)
+    sim.paused=menu_was_paused
+    menu_origin=null
+    if is_instance_valid(menu_focus) and menu_focus.is_visible_in_tree(): menu_focus.grab_focus()
+    _refresh_hud()
 
 func _leave_title(scenario: int=0) -> void:
     campaign_active = false
@@ -4117,7 +4135,11 @@ func _show_outcome() -> void:
     campaign_next.text = "전략 지도로 돌아가기"
     if campaign_active and campaign is North:
         campaign_next.text="북벌 결산" if campaign.state.complete else ("다음 출전 준비" if sim.winning_side==0 else "재도전 준비")
-        if reward_options.visible: outcome_text.text+="   /   전리품 한 가지 선택"
+        if reward_options.visible:
+            campaign_next.text="전리품을 먼저 선택"
+            outcome_text.text+="   /   전리품 한 가지 선택"
+        elif not campaign.state.complete:
+            campaign_next.text=("다음 출전" if sim.winning_side==0 else "재도전")+" · "+North.Field.CHAPTERS[campaign.state.stage-1][0]
     outcome_comparison.queue_redraw()
     outcome_dialog.show()
 
@@ -4275,8 +4297,8 @@ func _launch_campaign_battle(target: int) -> bool:
     _open_order_map()
     return true
 
-func _continue_campaign() -> void:
-    _campaign_mode(FileAccess.file_exists("user://gunryak_northern_v1.json") or not FileAccess.file_exists("user://gunryak_demo_v3.json"))
+func _continue_campaign(north: bool=true) -> void:
+    _campaign_mode(north)
     if campaign.load_save():
         campaign_active = true
         title_screen.hide()

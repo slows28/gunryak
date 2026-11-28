@@ -35,7 +35,7 @@ func _capture() -> void:
     game.call("_begin_campaign")
     await process_frame
     await RenderingServer.frame_post_draw
-    if game.strategy_view.slot_choice.item_count != 12:
+    if game.strategy_view.corps_buttons.size() != 12:
         push_error("VISUAL_CAPTURE_FAIL: campaign slots missing")
         quit(1)
         return
@@ -1061,11 +1061,12 @@ func _capture_training_field() -> bool:
     game=MAIN_SCENE.instantiate()
     root.add_child(game)
     game.set_process(false)
+    game.title_screen.practice_entry.pressed.emit()
     var entry: Button
-    for child in game.title_screen.get_children():
-        if child is Button and child.text=="지형 시험장": entry=child
+    for child in game.title_screen.practice.get_children():
+        if child is Button and child.text=="지형 시험장" and child.is_visible_in_tree(): entry=child
     if entry==null:
-        push_error("VISUAL_CAPTURE_FAIL: training field missing from title")
+        push_error("VISUAL_CAPTURE_FAIL: training field missing from solo menu")
         return false
     entry.pressed.emit()
     var sheet: Control=game.order_view

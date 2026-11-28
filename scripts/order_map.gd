@@ -48,6 +48,7 @@ var destination_label: Label
 var title: Label
 var launch: Button
 var apply: Button
+var cancel_draft: Button
 var post_buttons: Dictionary={}
 var post_mode: String=""
 var post_cursor:=Vector2.INF
@@ -142,20 +143,20 @@ func configure(owner_game: Control,used_font: Font) -> void:
     march_preview=_label("",Vector2(35,599),Vector2(277,22),13,SHEET_MUTED)
     apply=_button("지시 확정",Vector2(35,625),Vector2(135,43),_apply)
     game._primary_button(apply)
-    var cancel := _button("초안 취소",Vector2(176,625),Vector2(135,43),func():
+    cancel_draft=_button("초안 취소",Vector2(176,625),Vector2(135,43),func():
         drafts.erase(selected_id)
         draft_dirty=false
         _select(selected_id)
         feedback.text="이 군단의 미확정 변경을 취소했습니다.")
-    _paper_button(cancel)
+    _paper_button(cancel_draft)
+    cancel_draft.add_theme_stylebox_override("disabled",game._ui_box(Color("#e3d7bf")))
+    cancel_draft.add_theme_color_override("font_disabled_color",Color("#786a55"))
     council_reports=_button("전령 회신",Vector2(1078,448),Vector2(85,29),func(): game.call("_open_situations",council_letter))
     council_reports.hide()
     feedback=_label("",Vector2(274,727),Vector2(776,52),15,Color("#f3ecdc"))
     feedback.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     _button("상세 편성",Vector2(18,733),Vector2(126,41),func(): game.call("_open_planning"))
     _button("메뉴",Vector2(153,733),Vector2(100,41),func():
-        if _review_pending_draft(): return
-        hide()
         game.call("_show_title"))
     launch=_button("전투 개시",Vector2(1067,725),Vector2(198,57),_launch)
     game._primary_button(launch)
@@ -229,7 +230,7 @@ func open(mid_battle:bool=false)->void:
         roster.add_item("%s  %s명"%[u["name"],_troop_text(int(u["troops"]))],portrait)
         roster.set_item_tooltip(roster.item_count-1,str(u["type"])+" · "+str(u["mission"]))
         roster.set_item_metadata(roster.item_count-1,id)
-    feedback.text="거점을 고른 뒤 군단의 행동을 확정하세요."
+    feedback.text="기본 작전으로 바로 출전하거나 군단별 지시를 변경할 수 있습니다."
     if mid_battle: feedback.text="5일차부터 명령을 보냅니다. 전령이 도착하면 적용됩니다."
     if sim.commander_captured(0):
         title.text="작전 지도   /   "+sim.scenario_title
@@ -354,6 +355,8 @@ func _refresh_draft_roster() -> void:
 
 func _update_destination()->void:
     _refresh_draft_roster()
+    cancel_draft.disabled=not draft_dirty
+    launch.text="전장 복귀" if in_battle else ("미확정 %d개 검토" % drafts.size() if not drafts.is_empty() else "전투 개시")
     guard_summary.text=sim.home_guard_roster()
     guard_summary.tooltip_text=guard_summary.text
     var officer: Dictionary=sim.find_unit(selected_id)
@@ -413,7 +416,7 @@ func _update_destination()->void:
 
 func _refresh_map_hint() -> void:
     if post_mode=="":
-        map_hint.text=("지도에서 거점 선택\n군단과 행동을 지정하세요" if not in_battle else "거점 또는 위치를 선택해\n군단에 전령을 보내세요") if march_diagram.is_empty() else "행군 대형\n%s 속도 기준" % march_diagram["limiter"]
+        map_hint.text="" if march_diagram.is_empty() else "행군 대형\n%s 속도 기준" % march_diagram["limiter"]
         return
     if post_cursor==Vector2.INF:
         map_hint.text=post_mode+" 위치를 지도에서 선택"
