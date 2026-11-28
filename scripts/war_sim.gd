@@ -2783,7 +2783,7 @@ func _update_scouts(dt: float) -> void:
         var p: Vector2 = scout["pos"]
         var threat: Dictionary = {}
         var threat_d: float = 10000.0
-        var sight := 190.0 * terrain_sight_factor(p) * watch_factor(p,side)
+        var sight := _scout_sight(p,side)
         for enemy in units:
             if int(enemy["side"]) == side or float(enemy["troops"]) <= 0.0 or bool(enemy["routed"]):
                 continue
@@ -3353,6 +3353,22 @@ func _within_watch(origin: Vector2, point: Vector2, radius: float, factor: float
     var distance := origin.distance_squared_to(point)
     if distance > pow(radius * factor * 1.5,2.0): return false
     return distance <= pow(_watch_range(origin,radius) * factor,2.0)
+
+func _scout_sight(point: Vector2, side: int) -> float:
+    return 190.0 * terrain_sight_factor(point) * watch_factor(point,side)
+
+# The learning overlay uses the same detection distances as autonomous decisions.
+func enemy_watch_posts() -> Array[Vector3]:
+    var sources: Array[Vector3]=[]
+    for unit in units:
+        if unit["side"]!=1 or unit["troops"]<=0 or unit["routed"]: continue
+        var p: Vector2=unit["pos"]
+        sources.append(Vector3(p.x,p.y,_vision_range(unit)))
+    for scout in scouts:
+        if scout["side"]!=1 or not scout["alive"]: continue
+        var p: Vector2=scout["pos"]
+        sources.append(Vector3(p.x,p.y,_scout_sight(p,1)))
+    return sources
 
 func player_watch_posts() -> Array[Vector3]:
     var sources: Array[Vector3] = []

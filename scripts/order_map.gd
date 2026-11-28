@@ -524,7 +524,9 @@ func _refresh_survey() -> void:
         "하천": note="도하 불가 · 교량 이용" if sim.long_operation else note
         "성문","목책":
             var structure: Dictionary=sim.structures[0 if survey_key=="성문" else 1]
-            note="적 시설 · 통행 제한" if float(structure["hp"])>0.0 else "파괴 · 통행 가능"
+            note="시설 상태 미확인"
+            if structure["side"]==0 or game._knows_field_point(point):
+                note="시설 · 통행 제한" if float(structure["hp"])>0.0 else "파괴 · 통행 가능"
         "보급기지": note="군량·화살 보충" if sim.bases[0]["state"]=="가동" else str(sim.bases[0]["state"])
         "점령 거점": note="성문 파괴 후 거점 확보"
     survey_detail.text = "%s  %s" % [_grid_ref(point),note]
@@ -736,7 +738,7 @@ func _draw()->void:
     # Reserve visible army counters before placing the names of nearby sites.
     var occupied: Array[Rect2]=[]
     for structure in sim.structures:
-        if structure["hp"]>0:
+        if structure["hp"]>0 or (structure["side"]!=0 and not game._knows_field_point(structure["rect"].get_center())):
             var fort: Rect2=structure["rect"]
             occupied.append(Rect2(_point(fort.position),_point(fort.end)-_point(fort.position)).grow(2))
     for unit in sim.units:
@@ -747,7 +749,7 @@ func _draw()->void:
     # Cartographic objective symbols do not imply a castle on open ground.
     for site in sim.planning_sites():
         var p:Vector2=_point(site["pos"])
-        var known:bool=not game.fog_enabled or not sim.started or sim.finished or sim.player_can_see(site["pos"])
+        var known:bool=game._knows_field_point(site["pos"])
         var owner:int=int(site.get("owner",-1)) if known else -1
         var color:Color=BLUE if owner==0 else (Color("#a04f3d") if owner==1 else INK)
         if site.has("terrain_post"):
@@ -770,7 +772,7 @@ func _draw()->void:
         var a:Vector2=_point(area.position)
         var b:Vector2=_point(area.end)
         var box:=Rect2(a,b-a)
-        if float(structure["hp"])<=0.0:
+        if float(structure["hp"])<=0.0 and (structure["side"]==0 or game._knows_field_point(area.get_center())):
             draw_rect(box.grow(1),Color(0.35,0.26,0.17,0.28),false,1)
             continue
         var gate:bool=str(structure["kind"])=="성문"
@@ -785,6 +787,7 @@ func _draw()->void:
         draw_rect(Rect2(edge,MAP.end-edge),Color(0.18,0.13,0.10,0.16))
         draw_dashed_line(edge,Vector2(edge.x,MAP.end.y),INK,1.5,7.0)
     for home in sim.headquarters:
+        if home["side"]!=0 and not game._knows_field_point(home["pos"]): continue
         var position_on_map:=_point(home["pos"])
         var ink: Color=BLUE if home["side"]==0 else RED
         draw_rect(Rect2(position_on_map-Vector2(6,6),Vector2(12,12)),ink)

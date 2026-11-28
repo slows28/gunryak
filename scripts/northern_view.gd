@@ -80,7 +80,7 @@ func _ready() -> void:
             persist(); refresh()
         else: status.text="같은 장수의 고유 스킬과 겹치는 장비입니다.")
     difficulty=option(803,575,425)
-    for t in ["입문","보통","어려움"]: difficulty.add_item("전투 난이도 · "+t)
+    for t in ["입문 · 전체 관전 가능","보통 · 아군 정찰","어려움 · 아군 정찰"]: difficulty.add_item("전투 난이도 · "+t)
     difficulty.item_selected.connect(func(i):
         if campaign.preparing(): campaign.state.difficulty=i;persist())
     reward_bar=HBoxContainer.new()

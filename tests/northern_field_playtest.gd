@@ -13,13 +13,13 @@ func _initialize() -> void:
     for token in options:
         var key: String="seed" if token.begins_with("seed=") else token
         var valid: bool=not seen_options.has(key)
-        if token in ["assault","rush","split","wings","paired","relay","vanguard","recapture"]:
+        if token in ["assault","rush","split","wings","paired","relay","vanguard","recapture","free"]:
             valid=valid and plan=="brief"
             plan=token
         elif token.begins_with("seed="):
             seed_text=token.trim_prefix("seed=")
             valid=valid and (seed_text=="game" or seed_text.is_valid_int())
-        elif token not in ["equipped","relief","receipts","watch","garrison"]:
+        elif token not in ["equipped","relief","receipts","watch","garrison","supply"]:
             valid=false
         if not valid:
             push_error("Unknown, duplicate or incompatible option: "+token)
@@ -32,7 +32,7 @@ func _initialize() -> void:
     var watch: bool=options.has("watch")
     var garrison: bool=options.has("garrison")
     if (plan=="relay" and n!=11) or (plan=="recapture" and n!=3) or n<1 or n>North.Field.CHAPTERS.size() or ((watch or garrison) and n!=11) or (watch and garrison) or (relief and n not in [7,13]) or (receipts and n not in [10,11]):
-        push_error("Use -- CHAPTER [assault | rush | split | wings | paired | relay (11) | vanguard | recapture (3)] [seed=game|INTEGER] [equipped] [relief (7/13) | receipts (10/11)] [watch | garrison (11)]")
+        push_error("Use -- CHAPTER [assault | rush | split | wings | paired | relay (11) | vanguard | recapture (3) | free] [seed=game|INTEGER] [equipped] [relief (7/13) | receipts (10/11)] [watch | garrison (11)] [supply]")
         quit(2)
         return
     var campaign:=North.new()
@@ -62,7 +62,13 @@ func _initialize() -> void:
     var start_blue:=sim.total_troops(0)
     var start_red:=sim.total_troops(1)
     if seed_text!="game": sim.rng.seed=int(seed_text)
-    if plan!="brief":
+    if plan=="free":
+        for id in sim.command_ids(0):
+            if not sim.issue_map_order(id,"자유 재량",Vector2.INF):
+                push_error("Opening delegation failed")
+                quit(1)
+                return
+    elif plan!="brief":
         var objective: Vector2=sim.outposts[0].pos
         var gate: bool=sim.chapter.mode in ["siege","capital"]
         var ids:=sim.command_ids(0)
@@ -114,8 +120,11 @@ func _initialize() -> void:
     var dispatched: Dictionary={}
     var wing_orders: Dictionary={}
     var receipt_orders: Dictionary={}
+    var audit:=SupplyAudit.new() if options.has("supply") else null
     while not sim.finished and sim.step_count<3800:
+        if audit: audit.before_supply(sim)
         sim.step(0.1)
+        if audit: audit.after_step(sim)
         if sim.turn<sim.COURIER_TURN or sim.step_count%20!=0 or sim.finished: continue
         if watch and guard_id<0 and (sim.home_approach_seen() or sim.headquarters[0].occupation>0):
             var candidate:=sim.home_relief_candidate()
@@ -159,6 +168,7 @@ func _initialize() -> void:
             var dest:=inside
             if u.type=="궁병": dest+=Vector2(-28,-18)
             if sim.issue_map_order(id,"지역 사수",dest): dispatched[id]=true
+    if audit: print("SUPPLY_RUN ",JSON.stringify({"chapter":n,"seed":seed_text,"plan":plan,"sides":audit.sides}))
     if guard_id>=0: print("GUARD_RESULT ",sim.find_unit(guard_id).name," ",sim.map_dispatches.get(guard_id,{})," ",sim.headquarters_state(0))
     if receipts: print("COUNCIL_ORDERS ",JSON.stringify(receipt_orders.values()))
     var uses: Dictionary={}
@@ -170,3 +180,79 @@ func _initialize() -> void:
     for site in sim.outposts: sites.append({"name":site.name,"owner":site.owner,"held":roundi(site.hold*sim.operation_scale())})
     print("CHAPTER_RUN ",JSON.stringify({"chapter":n,"plan":plan,"seed":seed_text,"details":sim.result_detail,"wing_orders":wing_orders.size(),"relay_orders":dispatched.size() if plan=="relay" else 0,"post_breach_orders":dispatched.size() if relief else 0,"recapture_orders":dispatched.size() if plan=="recapture" else 0,"gear":"earned" if equipped else "starters","title":sim.scenario_title,"elapsed":roundi(sim.operation_elapsed()),"blue_start":start_blue,"red_start":start_red,"blue":sim.total_troops(0),"red":sim.total_troops(1),"winner":sim.winning_side,"why":sim.result,"uses":uses,"sites":sites,"gate_hp":roundi(sim.structures[0].hp) if sim.chapter.mode in ["siege","capital"] else -1}))
     quit(0 if sim.finished and sim.validate_state().is_empty() else 1)
+
+# Index sides by the attacking force, including the effects on its opponent.
+class SupplyAudit:
+    var sides: Array=[]
+    var previous_action: Dictionary={}
+    var last_proposal: Dictionary={}
+    var shipments: Dictionary={}
+    var previous_work: Dictionary={}
+    var contributors: Dictionary={}
+    var intended: Dictionary={}
+    var lost: Dictionary={}
+    var crew_alive: Array=[true,true]
+    var previously_supplied: Array=[false,false]
+
+    func _init() -> void:
+        for side in 2:
+            sides.append({"proposals":0,"raid_orders":0,"crew_chases":0,"raid_starts":0,
+                "depot_losses":0,"directed_losses":0,"crew_losses":0,"cutoff_ticks":0,
+                "replaced_by":{},"rerouted":0,"reroute_delay_ticks":0,"unreplaced":0})
+
+    func before_supply(sim) -> void:
+        contributors.clear()
+        shipments.clear()
+        for i in sim.bases.size(): previous_work[i]=sim.bases[i].raid_work
+        for unit in sim.units:
+            if unit.troops>0 and unit.get("shipment_from",-1)>=0:
+                shipments[unit.id]=Vector2(unit.shipment_from,unit.delivery_left)
+            if unit.action!="기지 습격" or not sim._can_attack_troops(unit): continue
+            var i: int=unit.raid_base
+            if i<0 or i>=sim.bases.size(): continue
+            var base: Dictionary=sim.bases[i]
+            if base.alive and unit.side!=base.side and unit.pos.distance_to(base.pos)<=sim.RAID_RADIUS and not sim._river_separates(unit.pos,base.pos):
+                contributors[i]=true
+
+    func after_step(sim) -> void:
+        for unit in sim.units:
+            var side: Dictionary=sides[unit.side]
+            if unit.last_raid>last_proposal.get(unit.id,-999.0):
+                side.proposals+=1
+                if unit.action!="기지 습격": side.replaced_by[unit.action]=int(side.replaced_by.get(unit.action,0))+1
+                last_proposal[unit.id]=unit.last_raid
+            if unit.troops<=0: continue
+            var action: String=unit.action
+            if action!=previous_action.get(unit.id,""):
+                if action=="기지 습격": side.raid_orders+=1
+                if action=="보급부대 추격": side.crew_chases+=1
+            previous_action[unit.id]=action
+        var operating: Array=[false,false]
+        for i in sim.bases.size():
+            var base: Dictionary=sim.bases[i]
+            var side: Dictionary=sides[1-base.side]
+            if base.alive and base.state=="가동": operating[base.side]=true
+            var work: float=base.raid_work
+            if work<=0: intended.erase(i)
+            if work>previous_work.get(i,0.0):
+                if previous_work.get(i,0.0)==0: side.raid_starts+=1
+                if contributors.has(i): intended[i]=true
+            if base.state=="파괴" and not lost.has(i):
+                lost[i]=true
+                side.depot_losses+=1
+                if intended.has(i): side.directed_losses+=1
+                for id: int in shipments:
+                    var shipment: Vector2=shipments[id]
+                    if int(shipment.x)!=i: continue
+                    var unit: Dictionary=sim.find_unit(id)
+                    if unit.shipment_from<0: side.unreplaced+=1
+                    else:
+                        side.rerouted+=1
+                        side.reroute_delay_ticks+=roundi((float(unit.delivery_left)-(shipment.y-0.1))*10.0)
+        for victim in 2:
+            var side: Dictionary=sides[1-victim]
+            var alive: bool=sim.supply_crews[victim].strength>0
+            if not alive and crew_alive[victim]: side.crew_losses+=1
+            crew_alive[victim]=alive
+            if operating[victim]: previously_supplied[victim]=true
+            elif previously_supplied[victim]: side.cutoff_ticks+=1

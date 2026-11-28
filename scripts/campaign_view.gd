@@ -98,7 +98,7 @@ func _ready() -> void:
     add_child(roster)
     _button("등용",Vector2(869,550),Vector2(180,38),_recruit)
     _button("선택 군에 배치",Vector2(1060,550),Vector2(180,38),_assign)
-    difficulty_choice = _choice(Vector2(869,597),Vector2(371,34),["난이도 · 입문","난이도 · 보통","난이도 · 어려움"])
+    difficulty_choice = _choice(Vector2(869,597),Vector2(371,34),["입문 · 전체 관전 가능","보통 · 아군 정찰","어려움 · 아군 정찰"])
     difficulty_choice.item_selected.connect(_difficulty)
     history = _label("",Vector2(869,641),Vector2(371,105),12)
     history.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

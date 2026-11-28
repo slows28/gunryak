@@ -106,14 +106,17 @@ var plan_deputy: OptionButton
 var plan_fog: CheckButton
 var plan_takeover: Button
 var map_mode: String = "선택"
+var standalone_difficulty: OptionButton
+var battle_difficulty := 1
 var recon_selected := false
 var automatic_night_fog := false
 var fog_enabled: bool:
-    get: return recon_selected or automatic_night_fog
+    get: return battle_difficulty > 0 or recon_selected or automatic_night_fog
     set(value): recon_selected = value
 var enemy_list: ItemList
 var enemy_tab: Button
 var friendly_tab: Button
+var enemy_watch_button: Button
 var fog_button: Button
 var observing_enemy: bool = false
 var observed_enemy_id: int = -1
@@ -464,9 +467,13 @@ func _build_command_panel() -> void:
     combat_exchange=_label("",Vector2(978,229),Vector2(268,22),13,COL_GOLD,command_panel)
     combat_exchange.text_overrun_behavior=TextServer.OVERRUN_TRIM_ELLIPSIS
     _build_commander_desk()
-    enemy_intel=_label("",Vector2(978,431),Vector2(268,104),15,COL_TEXT,command_panel)
+    enemy_intel=_label("",Vector2(978,431),Vector2(268,76),15,COL_TEXT,command_panel)
     enemy_intel.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
     enemy_intel.hide()
+    enemy_watch_button=_button("적 관측 범위",Vector2(978,513),Vector2(268,32),_toggle_enemy_watch,command_panel)
+    enemy_watch_button.toggle_mode=true
+    enemy_watch_button.tooltip_text="붉은 영역은 적 군단이나 정찰대가 일반 부대를 발견할 수 있는 땅입니다. 숲과 갈대밭의 은폐가 반영됩니다."
+    enemy_watch_button.hide()
     _button("브리핑",Vector2(970,609),Vector2(70,34),_open_briefing,command_panel)
     _button("도움말",Vector2(1048,609),Vector2(70,34),_open_demo_help,command_panel)
     _button("초기화",Vector2(970,651),Vector2(70,34),_reset,command_panel)
@@ -655,9 +662,15 @@ func _refresh_enemy_roster() -> void:
     enemy_tab.text="적군 %d" % visible_ids.size()
     friendly_tab.set_pressed_no_signal(not observing_enemy)
     enemy_tab.set_pressed_no_signal(observing_enemy)
+    enemy_watch_button.visible=observing_enemy and sim.started and not sim.finished and battle_difficulty==0 and not fog_enabled
+    if not enemy_watch_button.visible: enemy_watch_button.set_pressed_no_signal(false)
     fog_button.set_pressed_no_signal(fog_enabled)
-    fog_button.disabled = automatic_night_fog
-    if is_instance_valid(plan_fog): plan_fog.disabled = automatic_night_fog
+    fog_button.disabled = battle_difficulty>0 or automatic_night_fog
+    fog_button.tooltip_text = "보통·어려움에서는 아군이 관측한 적만 표시합니다." if battle_difficulty>0 else ("밤에는 아군 시야로 제한됩니다." if automatic_night_fog else "전체 시야와 아군 정찰 시야 전환 · V")
+    if is_instance_valid(plan_fog):
+        plan_fog.disabled = fog_button.disabled
+        plan_fog.tooltip_text = fog_button.tooltip_text
+        plan_fog.set_pressed_no_signal(fog_enabled)
     fog_button.text="야간 시야" if automatic_night_fog else ("정찰 시야" if fog_enabled else "전체 시야")
 
 # Actual activity takes priority over the strategic mission or inferred intent.
@@ -803,6 +816,7 @@ func _start() -> void:
     read_messengers.clear()
     next_combat_ms.clear()
     sim.start()
+    if fog_enabled: _refresh_visibility()
     last_audio_clock=-100.0
     last_audio_event=-1.0
     last_warning=""
@@ -1002,7 +1016,7 @@ func _process(delta: float) -> void:
         _update_audio_and_warning()
         queue_redraw()
         portrait.queue_redraw()
-    if fog_enabled and sim.started and not sim.finished and sim.battle_time-visibility_stamp >= 2.0:
+    if (fog_enabled or _show_enemy_watch()) and sim.started and not sim.finished and sim.battle_time-visibility_stamp >= 2.0:
         _refresh_visibility()
     if is_instance_valid(map_layer) and (not sim.paused or not sim.started):
         map_layer.queue_redraw()
@@ -1790,7 +1804,7 @@ func _draw_map(_canvas: Control) -> void:
     var dark: float = sim.night_depth()
     if dark > 0.0:
         map_layer.draw_rect(map_rect,Color(0.045,0.095,0.22,0.72 * dark))
-    if fog_enabled and sim.started and not sim.finished and visibility_texture != null:
+    if (fog_enabled or _show_enemy_watch()) and sim.started and not sim.finished and visibility_texture != null:
         map_layer.draw_texture_rect(visibility_texture,map_rect,false)
     if sim.wide_field:
         for crossing in [390.0,850.0,1300.0]:
@@ -1802,6 +1816,7 @@ func _draw_map(_canvas: Control) -> void:
         for y in range(22,int(sim.field_size.y)-18,36):
             map_layer.draw_line(Vector2(270*sim.layout_scale,y),Vector2(270*sim.layout_scale,y+16),Color(COL_BLUE,0.5),1.5)
     for home in sim.headquarters:
+        if home["side"]!=0 and not _knows_field_point(home["pos"]): continue
         _draw_field_site(0,home["pos"],1.08,Color.WHITE.lerp(Color("#b3bdd1"),dark))
         if dark > 0.0 and not home["occupied"] and (home["side"] == 0 or not fog_enabled or sim.player_can_see(home["pos"])):
             _draw_watch_fire(home["pos"],WarSim.CAMP_LIGHT_RADIUS,dark)
@@ -2006,8 +2021,8 @@ func _draw_map(_canvas: Control) -> void:
         var at: Vector2=home["pos"]
         if not field_view.has_point(at): continue
         var own: bool=home["side"]==0
-        var observed: bool=own or not fog_enabled or sim.player_can_see(at)
-        var danger: bool=observed and home["occupation"]>0
+        if not own and not _knows_field_point(at): continue
+        var danger: bool=home["occupation"]>0
         var tint: Color=COL_RED if danger or not own else COL_BLUE
         if danger:
             map_layer.draw_arc(at,sim.RAID_RADIUS,0,TAU,48,Color(tint,0.60),2/camera_zoom,true)
@@ -3138,7 +3153,7 @@ func _clear_route() -> void:
 
 func _open_timeline() -> void:
     planning_dialog.hide()
-    timeline_view.text = sim.timeline_text() if sim.finished or not fog_enabled else "시야 제한 중에는 전체 타임라인을 공개하지 않습니다. 전투 종료 후 확인하거나 전체 관전 모드로 전환하세요."
+    timeline_view.text = sim.timeline_text() if sim.finished or not fog_enabled else "시야 제한 중에는 전체 타임라인을 공개하지 않습니다. 전투 종료 후 확인할 수 있습니다."
     timeline_dialog.popup_centered()
 
 func _update_night_watch() -> void:
@@ -3151,8 +3166,21 @@ func _update_night_watch() -> void:
     if highlight_active: highlight_seen=FrontView.milestones(sim,fog_enabled)
     _refresh_hud()
 
+func _set_battle_visibility(level: int) -> void:
+    battle_difficulty=level
+    recon_selected=false
+    automatic_night_fog=false
+    visibility_stamp=-100.0
+    visibility_texture=null
+    observing_enemy=false
+    observed_enemy_id=-1
+    _clear_journal()
+
+func _knows_field_point(point: Vector2) -> bool:
+    return not fog_enabled or sim.finished or sim.player_can_see(point)
+
 func _toggle_fog(value: bool) -> void:
-    if automatic_night_fog: return
+    if battle_difficulty>0 or automatic_night_fog: return
     if fog_enabled!=value:
         _clear_journal()
     fog_enabled = value
@@ -3175,6 +3203,9 @@ func _public_event(message: String) -> bool:
     # Conservative filtering of identifiable enemy-only events in limited view.
     if "적군" in message or "위군" in message:
         return false
+    for fort in sim.structures:
+        if fort["side"]!=0 and str(fort["name"]) in message and not _knows_field_point(fort["rect"].get_center()):
+            return false
     for unit in sim.units:
         if int(unit["side"]) == 1 and str(unit["name"]) in message:
             return false
@@ -3849,6 +3880,9 @@ func _build_title_screen() -> void:
     _title_button("캠페인 이어하기",Vector2(88,355),Vector2(428,50),_continue_campaign)
     _title_button("단독 전투",Vector2(88,416),Vector2(208,50),_leave_title)
     _title_button("지형 시험장",Vector2(308,416),Vector2(208,50),_leave_title.bind(WarSim.TRAINING_SCENARIO))
+    standalone_difficulty=_options(Vector2(88,472),["단독·시험장 시야   입문 · 전체 관전 가능","단독·시험장 시야   보통 · 아군 정찰","단독·시험장 시야   어려움 · 아군 정찰"],title_screen)
+    standalone_difficulty.size=Vector2(428,35)
+    standalone_difficulty.select(1)
     _title_button("전장 브리핑",Vector2(88,517),Vector2(208,43),_title_brief)
     _title_button("도움말 / 조작",Vector2(308,517),Vector2(208,43),_open_demo_help)
     _title_button("음향 전환",Vector2(88,571),Vector2(208,43),_toggle_sound)
@@ -3875,6 +3909,7 @@ func _show_title() -> void:
 
 func _leave_title(scenario: int=0) -> void:
     campaign_active = false
+    _set_battle_visibility(standalone_difficulty.selected)
     if is_instance_valid(strategy_view): strategy_view.hide()
     sim.reset()
     sim.set_scenario(scenario)
@@ -4070,7 +4105,8 @@ func _show_outcome() -> void:
 func _draw_fortifications() -> void:
     for structure in sim.structures:
         var area: Rect2 = structure["rect"]
-        var hp: float = float(structure["hp"])
+        var known: bool=structure["side"]==0 or _knows_field_point(area.get_center())
+        var hp: float = float(structure["hp"] if known else structure["max_hp"])
         var ratio: float = hp/maxf(1.0,float(structure["max_hp"]))
         map_layer.draw_rect(area.grow(4.0),Color(0.12,0.10,0.08,0.36))
         if hp <= 0.0:
@@ -4084,8 +4120,9 @@ func _draw_fortifications() -> void:
             _paint_tile(tile,Rect2(area.position.x-5.0,cursor,area.size.x+10.0,h),Color(1.0,0.75+ratio*0.25,0.55+ratio*0.45))
             cursor += h
         var p: Vector2 = area.get_center()
-        map_layer.draw_rect(Rect2(p+Vector2(-19,-10),Vector2(38,4)),Color("#332a1d"))
-        map_layer.draw_rect(Rect2(p+Vector2(-19,-10),Vector2(38*ratio,4)),COL_GOLD)
+        if known:
+            map_layer.draw_rect(Rect2(p+Vector2(-19,-10),Vector2(38,4)),Color("#332a1d"))
+            map_layer.draw_rect(Rect2(p+Vector2(-19,-10),Vector2(38*ratio,4)),COL_GOLD)
         if detailed_map or structure["kind"]=="성문": _map_plate(str(structure["name"]),p+Vector2(0,-16),COL_TEXT,11)
 
 func _campaign_mode(north: bool) -> void:
@@ -4194,6 +4231,7 @@ func _launch_campaign_battle(target: int) -> bool:
     if not campaign.prepare(target,sim):
         return false
     campaign_active = true
+    _set_battle_visibility(int(campaign.state["difficulty"]))
     _ensure_cards(sim.command_ids(0).size())
     battle_recorded = false
     strategy_view.hide()
@@ -4665,20 +4703,31 @@ func _map_plate(value: String,p: Vector2,accent: Color,fs: int) -> Rect2:
     map_layer.draw_set_transform(origin,0.0,Vector2.ONE*camera_zoom)
     return world_rect
 
+func _show_enemy_watch() -> bool:
+    return battle_difficulty==0 and not fog_enabled and observing_enemy and enemy_watch_button.button_pressed
+
+func _toggle_enemy_watch() -> void:
+    if _show_enemy_watch(): _refresh_visibility()
+    map_layer.queue_redraw()
+
 func _refresh_visibility() -> void:
     # Only an indication of the same actual player visibility used for unit disclosure.
     # Cached low-resolution mask; no simulation advantage from rendering.
     var image := Image.create_empty(90,57,false,Image.FORMAT_RGBA8)
-    var observers: Array[Vector3] = sim.player_watch_posts()
+    var enemy_view:=_show_enemy_watch()
+    var observers: Array[Vector3] = sim.enemy_watch_posts() if enemy_view else sim.player_watch_posts()
     for y in range(57):
         for x in range(90):
             var p: Vector2 = Vector2((float(x)+0.5)/90.0,(float(y)+0.5)/57.0)*sim.field_size
             var visible_now := false
+            var exposure:=sim.terrain_exposure(p) if enemy_view else 1.0
             for watch in observers:
-                if p.distance_squared_to(Vector2(watch.x,watch.y)) <= watch.z*watch.z:
+                if p.distance_squared_to(Vector2(watch.x,watch.y)) <= watch.z*watch.z*exposure*exposure:
                     visible_now = true
                     break
-            image.set_pixel(x,y,Color(0.025,0.045,0.045,0.0 if visible_now else 0.43))
+            var shade:=Color(0.025,0.045,0.045,0.0 if visible_now else 0.43)
+            if enemy_view: shade=Color(0.75,0.18,0.12,0.31 if visible_now else 0.0)
+            image.set_pixel(x,y,shade)
     visibility_texture = ImageTexture.create_from_image(image)
     visibility_stamp = sim.battle_time
 

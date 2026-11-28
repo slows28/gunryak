@@ -222,6 +222,7 @@ func _run() -> void:
     game=Main.instantiate()
     root.add_child(game)
     game.set_process(false)
+    game.standalone_difficulty.select(0) # Observe both forces in the visual replay.
     game._leave_title(5)
     sim=game.sim
     for side in 2:

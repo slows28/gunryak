@@ -42,6 +42,7 @@ func _capture() -> void:
     if not _save_frame("campaign_map.png"):
         quit(1)
         return
+    game.standalone_difficulty.select(0) # Observe both forces in the visual replay.
     game.call("_leave_title")
     await process_frame
     await RenderingServer.frame_post_draw
@@ -107,7 +108,7 @@ func _capture() -> void:
     game.call("_start")
     var own_id: int=game.selected_id
     if game.fog_enabled or game.enemy_list.item_count!=10:
-        push_error("VISUAL_CAPTURE_FAIL: both sides must be visible in default demo")
+        push_error("VISUAL_CAPTURE_FAIL: both sides must be visible in the introductory spectator replay")
         quit(1)
         return
     game.call("_show_enemy_roster")
