@@ -368,6 +368,7 @@ func _build_interface() -> void:
     _label("목표",Vector2(17,108),Vector2(31,23),13,COL_GOLD)
     objective_label=_label("",Vector2(52,102),Vector2(298,38),13,COL_TEXT)
     objective_label.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+    objective_label.add_theme_constant_override("line_spacing",-4)
     objective_label.max_lines_visible=2
     objective_label.vertical_alignment=VERTICAL_ALIGNMENT_CENTER
     objective_label.mouse_filter=Control.MOUSE_FILTER_PASS

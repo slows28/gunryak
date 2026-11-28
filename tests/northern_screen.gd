@@ -38,6 +38,7 @@ func review_roster() -> void:
         var u: Dictionary=game.sim.find_unit(ids[i])
         expect(card.commander.text==u.name and card.troop_type.text==u.type,"each roster card names its commander and current troop type")
         expect(card.troop_type.is_visible_in_tree() and not card.troop_type.get_global_rect().intersects(card.action.get_global_rect()),"troop and action occupy separate readable columns")
+    expect(game.objective_label.get_line_count()<=2 and game.objective_label.get_global_rect().end.y<=game.map_clip.get_global_rect().position.y,"Qishan objective fits above the field")
     for sector in game.sector_cards: expect(not sector.own.visible,"compact fronts show the situation")
     game.map_detail_button.pressed.emit()
     for sector in game.sector_cards: expect(sector.own.visible and sector.enemy.visible,"detailed fronts show both permitted totals")
