@@ -1,7 +1,14 @@
 extends Control
 # Strategic map and army-management interface. All buttons modify the real campaign state.
 const Campaign = preload("res://scripts/campaign.gd")
-const TerrainArt = preload("res://scripts/terrain_art.gd")
+const Theater = preload("res://scripts/northern_atlas.gd")
+# The original six-region campaign uses the same place anchors. Its supply corridor is fictional.
+const LOCATIONS = {
+    "한중":Theater.HANZHONG, "기산 관문":Theater.SITES[0][1], "진창 고지":Theater.SITES[6][1],
+    "가정":Theater.SITES[3][1], "보급 회랑":Vector2(106.15,33.33), "천수":Theater.SITES[1][1],
+}
+const MAP_CROP := Rect2(136,0,564,260)
+const MAP_AREA := Rect2(0,60,820,378)
 const GOLD = Color("#e7c589")
 const TEXT = Color("#efe6d2")
 const BLUE = Color("#70bfd8")
@@ -27,8 +34,6 @@ var formation_choice: OptionButton
 const SHAPES: Array[String] = ["횡대","종대","방진","어린진","학익진","봉시진","안행진"]
 var difficulty_choice: OptionButton
 var map_canvas: Control
-var land_texture: ImageTexture
-var land_key: String = ""
 var current_region: Label
 
 class MapCanvas extends Control:
@@ -175,34 +180,43 @@ func refresh() -> void:
     for i in range(maxi(0,state["history"].size()-3),state["history"].size()):
         records.append(str(state["history"][i]))
     history.text = "최근 전략 기록\n"+"\n".join(records)
-    var key: String = str(state["owned"])
-    if land_texture == null or key != land_key:
-        land_texture = TerrainArt.campaign_map(Campaign.NODES,state["owned"])
-        land_key = key
     map_canvas.queue_redraw()
 
+func _site_position(i: int) -> Vector2:
+    return MAP_AREA.position+(Theater.project_point(LOCATIONS[Campaign.NODES[i]["name"]])-MAP_CROP.position)*MAP_AREA.size/MAP_CROP.size
+
+func _site_label(i: int) -> Rect2:
+    var width:=maxf(78.0,font.get_string_size(Campaign.NODES[i]["name"],HORIZONTAL_ALIGNMENT_LEFT,-1,17).x+20.0)
+    return Rect2(_site_position(i)+Vector2(-width*0.5,-56 if i==0 else 14),Vector2(width,26))
+
 func _map_input(event: InputEvent) -> void:
-    if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-        for i in range(Campaign.NODES.size()):
-            var at: Array = Campaign.NODES[i]["pos"]
-            if event.position.distance_to(Vector2(at[0],at[1])) <= 57.0:
-                selected_node = i
-                refresh()
-                return
+    if event is InputEventMouseButton and event.pressed and event.button_index==MOUSE_BUTTON_LEFT:
+        var best: float=52.0
+        var hit: int=-1
+        for i in Campaign.NODES.size():
+            if _site_label(i).has_point(event.position):
+                hit=i
+                break
+            var distance: float=event.position.distance_to(_site_position(i))
+            if distance<best:
+                best=distance
+                hit=i
+        if hit>=0:
+            selected_node=hit
+            refresh()
 
 func _draw_map(canvas: Control) -> void:
     canvas.draw_rect(Rect2(0,0,820,570),Color("#34453b"))
-    if land_texture != null:
-        canvas.draw_texture_rect(land_texture,Rect2(0,0,820,570),false)
-    # The strategic province graphics use the exact campaign adjacency nodes.
+    var scale_factor:=Theater.RELIEF.get_size()/Theater.MAP_SIZE
+    var source:=Rect2(MAP_CROP.position*scale_factor,MAP_CROP.size*scale_factor)
+    canvas.draw_texture_rect_region(Theater.RELIEF,MAP_AREA,source)
     var state: Dictionary = campaign.state
     for i in range(Campaign.NODES.size()):
         var node: Dictionary = Campaign.NODES[i]
-        var a := Vector2(node["pos"][0],node["pos"][1])
+        var a := _site_position(i)
         for j in node["links"]:
             if int(j) > i:
-                var dest: Dictionary = Campaign.NODES[int(j)]
-                var b := Vector2(dest["pos"][0],dest["pos"][1])
+                var b := _site_position(j)
                 var mid: Vector2 = (a+b)*0.5+(b-a).normalized().orthogonal()*13.0
                 var route := PackedVector2Array([a,mid,b])
                 canvas.draw_polyline(route,Color("#313d34"),6,true)
@@ -211,31 +225,31 @@ func _draw_map(canvas: Control) -> void:
                     canvas.draw_circle(mid,4.0,GOLD)
     for i in range(Campaign.NODES.size()):
         var node: Dictionary = Campaign.NODES[i]
-        var p := Vector2(node["pos"][0],node["pos"][1])
+        var p := _site_position(i)
         var ours: bool = i in state["owned"]
         var c: Color = BLUE if ours else RED
-        canvas.draw_circle(p+Vector2(4,5),33,Color(0.08,0.12,0.12,0.50))
-        canvas.draw_circle(p,30,Color("#253832"))
+        var fort:=p-Vector2(0,8)
+        canvas.draw_circle(fort+Vector2(2,2),23,Color(0.08,0.12,0.12,0.50))
+        canvas.draw_circle(fort,21,Color("#253832"))
         if i == selected_node:
-            canvas.draw_arc(p,41,0,TAU,48,GOLD,3,true)
+            canvas.draw_arc(fort,29,0,TAU,48,GOLD,3,true)
         elif campaign.available(i):
-            canvas.draw_arc(p,38,0,TAU,48,Color(GOLD,0.75),1.5,true)
-        canvas.draw_texture_rect_region(atlas,Rect2(p-Vector2(34,38),Vector2(68,68)),Rect2(6*128,5*128,128,128))
-        canvas.draw_texture_rect_region(atlas,Rect2(p+Vector2(20,-33),Vector2(26,35)),Rect2((6 if ours else 7)*128,4*128,128,128))
+            canvas.draw_arc(fort,27,0,TAU,48,Color(GOLD,0.75),1.5,true)
+        canvas.draw_texture_rect_region(atlas,Rect2(fort-Vector2(24,26),Vector2(48,48)),Rect2(6*128,5*128,128,128))
+        canvas.draw_texture_rect_region(atlas,Rect2(fort+Vector2(14,-25),Vector2(20,27)),Rect2((6 if ours else 7)*128,4*128,128,128))
         var label: String = str(node["name"])
-        var width: float = maxf(78.0,font.get_string_size(label,HORIZONTAL_ALIGNMENT_LEFT,-1,17).x+20.0)
-        var plate := Rect2(p+Vector2(-width*0.5,30),Vector2(width,26))
+        var plate := _site_label(i)
         canvas.draw_rect(plate,Color(0.07,0.13,0.14,0.92))
         canvas.draw_rect(Rect2(plate.position,Vector2(3,26)),c)
-        canvas.draw_string(font,p+Vector2(-width*0.5+10,49),label,HORIZONTAL_ALIGNMENT_LEFT,-1,17,TEXT)
-    canvas.draw_rect(Rect2(15,14,297,34),Color(0.07,0.13,0.14,0.88))
+        canvas.draw_string(font,plate.position+Vector2(10,19),label,HORIZONTAL_ALIGNMENT_LEFT,-1,17,TEXT)
+    canvas.draw_rect(Rect2(15,10,297,32),Color(0.07,0.13,0.14,0.88))
     canvas.draw_string(font,Vector2(25,36),"촉군 영토  /  위군 영토  /  공격 가능",HORIZONTAL_ALIGNMENT_LEFT,-1,14,GOLD)
     var cp := Vector2(780,45)
     canvas.draw_circle(cp,23,Color(0.07,0.13,0.14,0.60))
     canvas.draw_arc(cp,23,0,TAU,36,GOLD,1.2,true)
     canvas.draw_colored_polygon(PackedVector2Array([cp+Vector2(0,-17),cp+Vector2(-6,6),cp,cp+Vector2(6,6)]),GOLD)
     canvas.draw_string(font,cp+Vector2(-4,17),"N",HORIZONTAL_ALIGNMENT_LEFT,-1,10,TEXT)
-    canvas.draw_string(font,Vector2(24,454),"가상 북벌 전역 · 지리 및 영토 경계는 게임용 도식",HORIZONTAL_ALIGNMENT_LEFT,-1,11,TEXT)
+    canvas.draw_string(font,Vector2(328,36),"농우 · 관중    /    보급 회랑은 가상 거점",HORIZONTAL_ALIGNMENT_LEFT,-1,14,TEXT)
 
 func _tell(ok: bool, success: String) -> void:
     message.text = success if ok else "실행 불가: 자원·장수 상태·작전 조건을 확인하십시오."

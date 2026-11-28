@@ -57,6 +57,16 @@ func _run() -> void:
     var game: Control = Main.instantiate()
     root.add_child(game)
     await process_frame
+    game._campaign_mode(false)
+    var legacy=game.strategy_view
+    for i in legacy.campaign.NODES.size():
+        for spot in [legacy._site_position(i), legacy._site_label(i).get_center()]:
+            var click:=InputEventMouseButton.new()
+            click.pressed=true
+            click.button_index=MOUSE_BUTTON_LEFT
+            click.position=spot
+            legacy._map_input(click)
+            check(legacy.selected_node==i,"legacy geographic site and label select the same campaign region")
     game.call("_begin_campaign")
     check(game.strategy_view.visible,"campaign UI opens")
     check(game.call("_launch_campaign_battle",1),"campaign UI launches real battle")

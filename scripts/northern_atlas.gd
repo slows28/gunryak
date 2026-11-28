@@ -35,7 +35,7 @@ func set_progress(chapter: int, finished: bool) -> void:
     complete=finished
     queue_redraw()
 
-func project_point(lon_lat: Vector2) -> Vector2:
+static func project_point(lon_lat: Vector2) -> Vector2:
     return Vector2(inverse_lerp(BOUNDS.x,BOUNDS.z,lon_lat.x),inverse_lerp(BOUNDS.w,BOUNDS.y,lon_lat.y))*MAP_SIZE
 
 func _draw() -> void:
