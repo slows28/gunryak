@@ -1364,3 +1364,14 @@ Godot 4.7.2 정적 구조 및 엔진 검사 20개가 통과했다. 실행 명령
 - 로컬 Windows x64 ZIP은 `/workspace/Gunryak-Windows-db81db8.zip`이며 52,601,604바이트다. SHA-256은 `88e6ee4a7f2e73226d45248f0901cc0d88b11878287a5c47ad940721fe3ed2af`. 모든 ZIP 항목의 CRC와 동봉 EXE의 SHA-256을 내보낸 원본과 대조했다. Wine에서 기존 기록으로 편성 열기, 단독 전투 시작, 전투 중 메뉴로 나갔다가 복귀, 종료 확인까지 실제 입력으로 재현했다.
 - 메뉴 복귀는 실행 중인 세션에서 작동한다. 프로그램 종료 후에는 캠페인 저장 지점에서 다시 시작한다. 작전 지도의 거점·임무·협동 대상은 여전히 한 번에 보여 준다. 다음 사용성 검증은 처음 플레이하는 사람이 설명 없이 두 군단에 서로 다른 지시를 확정할 수 있는지 관찰하는 것이다.
 - 실행판을 별도 디렉터리에 풀어 Godot 4.7.2에서 `python3 tools_check_structure.py`, `python3 tools_run_engine_tests.py --godot /usr/local/bin/godot --project . --timeout 700` 통합 27개를 모두 통과했다. Xvfb·OpenGL에서 `godot --rendering-driver opengl3 --audio-driver Dummy --path . --script res://tests/screenshot.gd`의 75장과 같은 옵션으로 실행한 `res://tests/northern_screen.gd`의 10장을 1280×800 PNG로 검증했다. 북벌 파일을 읽을 수 없고 구형 전역 기록이 유효한 경우에도 실제 구형 편성이 열리고 새 게임 취소 후 기록의 해시가 일치했다. 로그와 원본 화면은 `test_results/usability-db81db8`에 있다.
+
+## 2026-11-28 제갈량과 북벌 전역의 실제 지형
+
+기준판 `b1068fc`, 북벌 지도 `1937977`, 구형 전역까지 반영한 실행판 `65a725b`. [실제 메뉴와 기산 전역도 전후 비교](docs/northern-expedition-atlas.jpg)
+
+- `assets/art/title_art.webp`를 윤건을 쓰고 깃털 부채를 든 제갈량의 게임용 초상으로 교체했다. 첫 실제 렌더에서 큰 원본 텍스처의 최소 크기가 메뉴 너비를 밀어내 얼굴이 잘렸다. `scripts/title_menu.gd`의 크기 적용 순서를 고쳤고, `tests/northern_screen.gd`에서 초상이 화면 안에 들어오는지 검증한다.
+- `scripts/northern_atlas.gd`와 `northern_view.gd`가 지그재그 장 목록을 실제 경위도의 전역도로 대체한다. 위수와 한수, 진령산맥 및 한중 출발지를 표시하고 중국 윤곽 안에 전역 범위를 넣었다. 가까운 장안권 전장의 명패에는 별도 지시선을 그린다. 기산에서 장안까지 13개 전장이 각각 현재 장일 때 모든 명패가 지도 안에 들어오며 서로 겹치지 않는지 실제 UI 글꼴로 검사한다.
+- `scripts/campaign_view.gd`는 구형 6거점 캠페인의 점령 상태, 인접 관계와 전장 선택을 같은 지형 위에 표시한다. 기산·천수 등 모든 거점의 표식과 이름을 각각 선택하는 회귀를 `tests/demo_smoke.gd`에 추가했다.
+- `art_source/render_northern_atlas.py`가 Basemap 2.0.0의 2분각 세계 지형 음영과 Natural Earth v5.1.2의 위수·한수 등 하천 및 중국 윤곽에서 전역 이미지를 굽는다. 새 Windows 패키지와 CI 배포물에 Basemap 라이선스를 포함했다. 전장 표식은 연관 지역을 대표한다. 고대 하도와 개별 군단의 실제 행군 경로에는 별도 문헌 대조가 필요하다. [자료 출처와 좌표 기준](art_source/northern_atlas.md)
+- Windows x64 테스트판은 `/workspace/Gunryak-Windows-65a725b.zip`, 54,330,039바이트, SHA-256 `ab658a4eb86c41b19d8300d804adac8c8a152e5df05a1c88b9f55b2d5c492ae2`다. 모든 항목의 CRC와 EXE의 원본 해시를 검증했다. Wine에서 패키지와 동일한 EXE로 제갈량 메뉴, 북벌 편성 지도, 단독 전투와 메뉴 복귀를 확인했다.
+- 최종 실행판을 별도 체크아웃으로 검증했다. Godot 4.7.2에서 `python3 tools_check_structure.py`와 `python3 tools_run_engine_tests.py --godot /usr/local/bin/godot --project . --timeout 700`의 27개 통합 검사를 통과했다. `xvfb-run -a -s '-screen 0 1280x800x24' godot --audio-driver Dummy --rendering-driver opengl3 --path . --script res://tests/screenshot.gd`의 75장과 같은 인자로 실행한 `res://tests/northern_screen.gd`의 화면 10장을 검증했다. 승리 조건을 통제한 13장 캠페인 재현에서 농서·오장원·장안·완료 상태를 추가 촬영했다. 구형 기록을 불러와 6개 거점의 표식과 이름 총 12곳을 클릭했고, 1280×720 창에서도 북벌 지도 진입과 메뉴 복귀를 확인했다. 로그와 원본은 `test_results/northern-atlas-65a725b`에 보관했다.
