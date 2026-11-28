@@ -29,7 +29,6 @@ static func decide(sim, unit: Dictionary, enemy: Dictionary, action: String) -> 
             var best := 245.0
             for friend in sim.units:
                 if friend.side != unit.side or friend.id == unit.id or friend.troops <= 0 or friend.routed or friend.reserve: continue
-                if unit.assigned_link >= 0 and friend.id != unit.assigned_link: continue
                 var gap := here.distance_to(friend.pos)
                 if gap >= best or Vector2(friend.pos).distance_to(enemy.pos) > 150.0 or sim._river_separates(here,friend.pos): continue
                 ally = friend

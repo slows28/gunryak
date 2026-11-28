@@ -383,10 +383,11 @@ func _run() -> void:
     game.planning_dialog.hide()
     game.call("_leave_title")
     check(game.order_view.visible and not game.sim.started,"independent planning map opens before battle")
-    check(int(game.order_view.partner_choice.get_item_metadata(0))==-1,"no-partner selection retains explicit sentinel")
-    check(game.order_view.action_buttons.size()==9,"eight positional actions and freedom of command")
-    game.order_view.call("_choose_action",3)
-    check(game.order_view.action_choice.selected==3 and game.order_view.action_buttons[3].button_pressed,"action tiles update the authoritative selection")
+    check(game.order_view.action_buttons.size()==3 and game.order_view.task_choice.item_count==7,"three encounter responses and seven tasks")
+    var screen_task: int=game.order_view.TASKS.find(3)
+    game.order_view.task_choice.select(screen_task)
+    game.order_view.task_choice.item_selected.emit(screen_task)
+    check(game.order_view.action_choice.selected==3 and not game.order_view.response_caption.visible,"specialist task updates the authoritative order")
     game.order_view.draft_dirty=false
     game.order_view.call("_select",game.selected_id)
     var map_sim=game.sim
@@ -435,7 +436,6 @@ func _run() -> void:
     game.order_view.call("_select",1)
     game.order_view.destination=next_dest
     game.order_view.has_destination=true
-    game.order_view.partner_choice.select(0)
     game.order_view.call("_choose_action",2)
     check(not game.order_view.apply.disabled,"day-three order can be confirmed on the map")
     game.order_view.apply.pressed.emit()

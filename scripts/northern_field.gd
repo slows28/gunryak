@@ -12,7 +12,7 @@ const CHAPTERS := [
     ["미현 공략전",1,"line","미현의 외곽 방어선과 안쪽 거점을 함께 장악하십시오.",Vector2(1700,855),Rect2(1430,620,175,230),["charge","pursue","enclose"]],
     ["오장원 전투",0,"duel","오장원에서 적의 가용 전력을 줄이십시오. 18분 이후 병력 우세와 중앙 거점이 필요합니다.",Vector2(1430,875),Rect2(945,505,245,180),["chain","bastion","war_drum"]],
     ["위수 도하전",0,"river","두 군단 이상이 위수를 건너고 동쪽 교두보를 확보하십시오.",Vector2(1690,847),Rect2(1740,960,220,150),["ford","bridge","surprise"]],
-    ["무공 전투",1,"link","협동 대상을 지정하거나 장수의 자율 연계를 활용하십시오. 연계한 두 군단이 같은 적에 피해 120명을 내고 무공을 확보해야 합니다.",Vector2(1530,855),Rect2(1310,1050,210,165),["cascade","reshape","reverse"]],
+    ["무공 전투",1,"link","서로 다른 병과를 같은 지역으로 보내십시오. 연계한 두 군단이 같은 적에 피해 120명을 내고 무공을 확보해야 합니다.",Vector2(1530,855),Rect2(1310,1050,210,165),["cascade","reshape","reverse"]],
     ["장안 외곽 전투",0,"decisive","위군 주력의 병력을 개전 대비 30% 이상 줄이고 거점 두 곳을 확보하십시오.",Vector2(1630,870),Rect2(1600,1050,260,185),["tiger","thunder","ram"]],
     ["장안 함락전",4,"capital","장안 성문을 열고 궁성 앞을 2분간 유지하십시오.",Vector2(2190,865),Rect2(1590,545,245,160),[]]
 ]
@@ -161,10 +161,9 @@ static func opening_orders(sim) -> void:
                 if distance<nearest: leader=u;nearest=distance
             if leader.is_empty(): continue
             var guard: bool=kind=="보병" and mode not in ["siege","capital","flank"]
-            var partner: int=taken[0] if mode=="link" and not taken.is_empty() else -1
             var mission: String="지역 사수" if guard else "공격"
             if mode=="flank" and kind=="기병": mission="측후방 기동"
-            if sim.issue_map_order(leader["id"],mission,target,partner):
+            if sim.issue_map_order(leader["id"],mission,target):
                 taken.append(leader["id"])
 
 static func victory(sim) -> void:

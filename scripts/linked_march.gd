@@ -35,6 +35,14 @@ static func _companies(sim, edit_id: int=-1, partner_override: int=-1) -> Array:
                 guides[key]=unit["id"]
                 continue
             partner_id=guides[key]
+        if partner_id<0 and unit.mission=="지정 위치 이동" and unit.get("rally_station",{}).get("members",[]).size()<=4:
+            for id: int in unit.get("rally_station",{}).get("members",[]):
+                if id>=unit.id: continue
+                var neighbor: Dictionary=sim.find_unit(id)
+                if neighbor.mission!=unit.mission or not _available(neighbor) or neighbor.has("order_group"): continue
+                if Vector2(unit.pos).distance_squared_to(neighbor.pos)>320.0*320.0 or sim._river_separates(unit.pos,neighbor.pos): continue
+                partner_id=id
+                break
         if partner_id<0: continue
         var partner: Dictionary=sim.find_unit(partner_id)
         if partner.is_empty() or partner.get("order_group",0)!=unit.get("order_group",0) or partner["side"]!=unit["side"] or not _available(partner): continue

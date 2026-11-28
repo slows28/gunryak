@@ -42,17 +42,19 @@ func _run() -> void:
     for u in sim.units: check(u.facing==(Vector2.RIGHT if u.side==0 else Vector2.LEFT),"opening facing "+u.name)
     await click(sheet.deploy_button.get_global_rect().get_center())
     var point:=Vector2(190,740)
-    await click(sheet._point(point))
-    check(Vector2(foot.pos).distance_to(point)<5 and foot.facing==Vector2.RIGHT,"map places the active corps facing the enemy")
     var old: Vector2=foot.pos
-    var ally_old: Vector2=friend.pos
-    check(not sim.deploy_corps([foot.id,friend.id],Vector2(2100,800)).is_empty() and old==foot.pos and ally_old==friend.pos,"illegal group placement is atomic")
-    var shift:=Vector2(75,65)
-    check(sim.deploy_corps([foot.id,friend.id],old+shift).is_empty() and foot.pos==old+shift and friend.pos==ally_old+shift,"moving linked corps keeps their spacing")
-    var shape: int=sim.LARGE_FORMATIONS.find("학익진")
-    sheet.formation_choice.select(shape)
-    sheet.formation_choice.item_selected.emit(shape)
-    check(foot.formation=="학익진" and not sheet.site_choice.visible and sheet.formation_choice.visible,"deployment previews the selected opening formation")
+    await click(sheet._point(point))
+    check(foot.pos==old and foot.facing==Vector2.RIGHT,"reviewing a location cannot drag the commander's station")
+    check(foot.deployment==94 and friend.deployment==48 and foot.has("deployment_reason"),"officers have personal deployment ratings")
+    sim.Deployment.arrange(sim)
+    check(foot.pos==old and not sheet.site_choice.visible and sheet.deployment_caption.text.contains("배치 능력"),"opening review shows the actual decision and repeated planning is stable")
+    var score: int=friend.deployment
+    friend.deployment=92
+    sim.Deployment.arrange(sim)
+    check(friend.formation=="안행진" and friend.pos.x<Vector2(friend.assembly_origin).x-55,"a skilled archer chooses a deeper screened rank")
+    friend.deployment=score
+    sim.Deployment.arrange(sim)
+    check(friend.formation=="횡대","a weaker deployment rating changes the actual opening shape")
     await capture("deployment")
     await click(sheet.deploy_button.get_global_rect().get_center())
     var site: Dictionary=sim.planning_sites()[0]
@@ -115,5 +117,19 @@ func _run() -> void:
         foot.encounter=mode
         sim._decide(foot)
         check(foot.field_choice.get("target",-1)==foe.id and (mode!="사수" or foot.goal==foot.pos) and (mode!="지원" or foot.field_choice.get("ally",-1)==friend.id),"encounter directive "+mode)
+    for u in [foot,friend,foe]:
+        u.erase("order_group")
+        u.erase("rally_station")
+        u.erase("group_signal")
+        u.assigned_link=-1
+        u.reserve=false
+    friend.mission="중앙 진격"
+    sim.battle_time+=8.0
+    sim.RallyOrders.signal_contact(sim,foot,foe.id,foe.pos)
+    sim.battle_time+=2.0
+    var assistance: Dictionary=sim.RallyOrders.group_response(sim,friend)
+    check(assistance.get("ally",-1)==foot.id and assistance.get("target",-1)==foe.id and assistance.reason.contains("같은 지역"),"a local witness responds without a group or partner")
+    friend.pos=foot.pos+Vector2(0,400)
+    check(sim.RallyOrders.group_response(sim,friend).is_empty(),"leaving the region releases the local response")
     print("STANDING_ORDERS_PASS" if not failed else "STANDING_ORDERS_FAIL")
     game._quit_game(1 if failed else 0)

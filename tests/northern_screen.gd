@@ -142,7 +142,7 @@ func _play():
     await click_at(prep.corps_buttons[2].get_global_rect().get_center())
     await frame("01-preparation")
     await click_at(prep.corps_buttons[10].get_global_rect().get_center())
-    expect(prep.innate.text.contains("용담 돌파") and prep.army.text.contains("충성") and prep.trait_pins.size()==4,"Zhao Yun's signature, five abilities and four traits")
+    expect(prep.innate.text.contains("용담 돌파") and prep.army.text.contains("배치 93") and prep.trait_pins.size()==4,"Zhao Yun's signature, six abilities and four traits")
     await frame("01-zhao")
     await click_at(prep.corps_buttons[1].get_global_rect().get_center())
     var original: int=prep.officer_choice.selected

@@ -6,10 +6,16 @@ const MISSIONS = ["지정 위치 이동", "지역 사수", "예비 대기", "공
 
 # A field signal carries a witnessed position. An unseen attacker cannot be tracked.
 static func signal_contact(sim, struck: Dictionary, attacker_id: int, source: Vector2) -> void:
-    if not struck.has("order_group") or sim.battle_time-struck.get("last_group_call",-100.0)<3.0: return
+    if not sim.long_operation or sim.battle_time-struck.get("last_group_call",-100.0)<3.0: return
     struck["last_group_call"]=sim.battle_time
     for member in sim.units:
-        if member["side"]!=struck["side"] or member.get("order_group",-1)!=struck["order_group"] or member["troops"]<=0: continue
+        if member.side!=struck.side or member.troops<=0 or member.reserve or member.routed: continue
+        var grouped: bool=struck.has("order_group") and member.get("order_group",-1)==struck.order_group
+        if not grouped:
+            if member.id==struck.id or member.mission in ["예비 대기","본진 방어","철수","보급기지 수색"]: continue
+            # Corps already on shared stations keep their existing ranked relief logic.
+            if struck.id in member.get("rally_station",{}).get("members",[]) and Vector2(struck.pos).distance_to(struck.rally_station.point)<=115.0 and Vector2(member.pos).distance_to(member.rally_station.point)<=155.0: continue
+            if not _local_help(sim,member,struck): continue
         var prior: Dictionary=member.get("group_signal",{})
         var gap: float=Vector2(member["pos"]).distance_to(struck["pos"])
         if not prior.is_empty() and sim.battle_time<prior["expires"]:
@@ -17,16 +23,21 @@ static func signal_contact(sim, struck: Dictionary, attacker_id: int, source: Ve
             if prior["ally"]==struck["id"] and prior["target"]==attacker_id: continue
             if prior["ally"]!=struck["id"] and prior["gap"]<=gap: continue
         var arrives: float=sim.battle_time+gap/160.0
-        member["group_signal"]={"ally":struck["id"],"target":attacker_id,"source":source,"point":struck["pos"],"gap":gap,"arrives":arrives,"expires":arrives+6.0}
+        member["group_signal"]={"ally":struck["id"],"target":attacker_id,"source":source,"point":struck["pos"],"gap":gap,"arrives":arrives,"expires":arrives+6.0,"local":not grouped}
 
 static func group_response(sim, unit: Dictionary) -> Dictionary:
     var call: Dictionary=unit.get("group_signal",{})
     if call.is_empty() or sim.battle_time<call["arrives"] or sim.battle_time>=call["expires"]: return {}
-    if not unit.has("order_group") or unit["routed"] or unit["reserve"] or unit["mission"] in ["철수","본진 방어"] or unit["morale"]<32 or unit["tactical_until"]>sim.battle_time: return {}
+    if unit["routed"] or unit["reserve"] or unit["mission"] in ["철수","본진 방어"] or unit["morale"]<32 or unit["tactical_until"]>sim.battle_time: return {}
     var ally: Dictionary=sim.find_unit(call["ally"])
-    if ally.is_empty() or ally.get("order_group",-1)!=unit["order_group"] or ally["troops"]<=0: return {}
+    if ally.is_empty() or ally.troops<=0 or ally.routed: return {}
+    var local: bool=call.get("local",false)
+    if local:
+        if not _local_help(sim,unit,ally): return {}
+    elif not unit.has("order_group") or ally.get("order_group",-1)!=unit.order_group: return {}
     var foe: Dictionary=sim.find_unit(call["target"])
     var seen: bool=not foe.is_empty() and sim._locally_observed(unit,foe)
+    if local and not seen: return {}
     var point: Vector2=call["point"]
     var source: Vector2=foe["pos"] if seen else call["source"]
     var front:=point.direction_to(source)
@@ -44,7 +55,16 @@ static func group_response(sim, unit: Dictionary) -> Dictionary:
     if unit["mission"] in ["지역 사수","예비 대기"] and unit["has_destination"]:
         var anchor: Vector2=unit["order_destination"]
         goal=anchor+(goal-anchor).limit_length(142.0)
-    return {"action":"아군 보호","goal":sim._field_point(goal),"ally":ally["id"],"target":foe["id"] if seen else -1,"reason":"%s군 피격 방향으로 연계 대응" % ally["name"],"rally_cover":true}
+    return {"action":"아군 보호","goal":sim._field_point(goal),"ally":ally["id"],"target":foe["id"] if seen else -1,"reason":("%s군 피격 · 같은 지역에서 지원" if local else "%s군 피격 방향으로 연계 대응") % ally["name"],"rally_cover":true}
+
+static func _local_help(sim, unit: Dictionary, ally: Dictionary) -> bool:
+    var here: Vector2=unit.pos
+    var point: Vector2=ally.pos
+    if here.distance_squared_to(point)>185.0*185.0 or sim._river_separates(here,point): return false
+    if unit.mission in ["예비 대기","본진 방어","철수","보급기지 수색"] or unit.troops<600 or unit.cohesion<40 or unit.morale<35: return false
+    if unit.has_destination and unit.mission=="지역 사수" and point.distance_to(unit.order_destination)>135.0: return false
+    if unit.type=="궁병" and unit.ammo<12: return false
+    return true
 
 static func refresh(sim) -> void:
     var groups: Array[Array] = []
@@ -59,7 +79,7 @@ static func refresh(sim) -> void:
         for members in groups:
             var leader: Dictionary = members[0]
             var anchor: Vector2 = leader["order_destination"]
-            if leader.get("order_group",0)!=unit.get("order_group",0) or leader["side"]!=unit["side"] or (leader["mission"]=="예비 대기")!=(unit["mission"]=="예비 대기"): continue
+            if leader["side"]!=unit["side"] or (leader["mission"]=="예비 대기")!=(unit["mission"]=="예비 대기"): continue
             if pin.distance_to(anchor)>32.0 or sim._river_separates(pin,anchor) or sim._detour_goal(unit,pin,anchor)!=anchor: continue
             members.append(unit)
             matched = true

@@ -7,6 +7,7 @@ const FieldJudgment = preload("res://scripts/field_judgment.gd")
 const RallyOrders = preload("res://scripts/rally_orders.gd")
 const MountedVanguard = preload("res://scripts/mounted_vanguard.gd")
 const BreakContact = preload("res://scripts/break_contact.gd")
+const Deployment = preload("res://scripts/corps_deployment.gd")
 const StandingOrders = preload("res://scripts/standing_orders.gd")
 const LinkedMarch = preload("res://scripts/linked_march.gd")
 const GeneralMind = preload("res://scripts/general_mind.gd")
@@ -250,6 +251,7 @@ func reset() -> void:
     for unit in units:
         if unit["mission"] == "본진 방어" and unit["defense_set"]:
             unit["hq_defense_offset"] = Vector2(unit["defense_anchor"]) - _home_point(unit["side"])
+    Deployment.arrange(self)
     _log("출전 편성 준비: " + scenario_title)
 
 func _add_unit(side: int, title: String, unit_type: String, disposition: String, ability: float, start: Vector2, mission: String, people: float) -> void:
@@ -2809,6 +2811,7 @@ func _set_general_profile(unit: Dictionary) -> void:
     unit["intelligence"] = profile[2]
     unit["judgment"] = profile[3]
     unit["loyalty"] = profile[4]
+    unit["deployment"] = Skills.Profiles.DEPLOYMENT.get(unit.name,roundi(a))
 
 func _effective_stat(unit: Dictionary, key: String) -> float:
     if bool(unit["active_deputy"]):
@@ -3231,12 +3234,13 @@ func swap_generals(first_id: int, second_id: int) -> bool:
     var second: Dictionary = find_unit(second_id)
     if first.is_empty() or second.is_empty() or int(first["side"]) != 0 or int(second["side"]) != 0:
         return false
-    for key in ["name","personality","ability","leadership","martial","intelligence","judgment","loyalty","deputy_index","specialty","mind","skill_ids","field_skill","skill_stats","skill_ready"]:
+    for key in ["name","personality","ability","leadership","martial","intelligence","judgment","loyalty","deployment","deputy_index","specialty","mind","skill_ids","field_skill","skill_stats","skill_ready"]:
         var value: Variant=first.get(key)
         if second.has(key): first[key]=second[key]
         else: first.erase(key)
         if value!=null: second[key]=value
         else: second.erase(key)
+    Deployment.arrange(self)
     return true
 
 # These staging points follow the actual scenario geometry. Victory sites stay
@@ -3339,20 +3343,6 @@ func place_post(post: String, point: Vector2) -> bool:
 
 func deployment_area() -> Rect2:
     return Rect2(Vector2(35,22), Vector2(270.0*layout_scale-35.0,field_size.y-40.0))
-
-func set_opening_formation(ids: Array, shape: String) -> bool:
-    if started or finished or ids.is_empty() or shape not in LARGE_FORMATIONS: return false
-    for id: int in ids:
-        var unit:=find_unit(id)
-        if unit.is_empty() or unit.side!=0 or unit.troops<=0 or unit.reserve: return false
-    for id: int in ids:
-        var unit:=find_unit(id)
-        unit.formation=shape
-        unit.next_formation=""
-        unit.form_remaining=0.0
-        unit.erase("drill")
-        unit.erase("dressed_files")
-    return true
 
 func deploy_corps(ids: Array, point: Vector2) -> String:
     if started or finished: return "출전 전에만 배치할 수 있습니다."
@@ -4556,6 +4546,10 @@ func _has_combined_arms(unit: Dictionary,enemy: Dictionary,targets: Dictionary =
     return _combined_arms_partner(unit,enemy,targets)>=0
 
 func _working_pair(unit: Dictionary, ally: Dictionary) -> bool:
+    if ally.is_empty(): return false
+    if ally.id in unit.get("rally_station",{}).get("members",[]): return true
+    if unit.get("rally_covering",false) and unit.get("field_choice",{}).get("ally",-1)==ally.id: return true
+    if ally.get("rally_covering",false) and ally.get("field_choice",{}).get("ally",-1)==unit.id: return true
     return LinkedMarch._partner(unit,battle_time)==ally["id"] or LinkedMarch._partner(ally,battle_time)==unit["id"]
 
 func _combined_arms_partner(unit: Dictionary,enemy: Dictionary,targets: Dictionary) -> int:

@@ -1029,15 +1029,17 @@ func _capture_linked_march() -> bool:
     game._leave_title(5)
     var sheet: Control=game.order_view
     var destination:=Vector2(650,1460)
-    for entry in [[0,Vector2(650,400)],[1,Vector2(630,275)],[2,Vector2(500,385)]]:
-        if not game.sim.place_unit(entry[0],entry[1]): return false
     for id in [0,2,1]:
         sheet._select(id)
         sheet.destination=destination
         sheet.has_destination=true
-        if id!=0: sheet.partner_choice.select(1)
         sheet._choose_action(0)
         sheet._apply()
+    # Place the three marchers at the start of the recorded track. Local
+    # cooperation must recognise the independently issued regional orders.
+    for entry in [[0,Vector2(650,400)],[1,Vector2(630,275)],[2,Vector2(500,385)]]:
+        if not game.sim.place_unit(entry[0],entry[1]): return false
+    sheet._select(1)
     if sheet.march_diagram.get("group",[]).size()!=3 or not sheet.march_preview.text.contains("궁병 후열") or sheet.march_diagram["forward"].y<0.95:
         push_error("VISUAL_CAPTURE_FAIL: southbound company missing from order sheet")
         return false

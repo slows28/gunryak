@@ -244,7 +244,8 @@ func refresh() -> void:
     type_choice.select(["보병","궁병","기병"].find(s.types[slot]))
     var officer: Dictionary=campaign.officers[idx]
     var stats: Array=officer.stats
-    army.text="통솔 %d    무력 %d    지력 %d    판단 %d    충성 %d" % stats
+    army.text="통솔 %d  무력 %d  지력 %d  판단 %d  충성 %d  배치 %d" % (stats+[Skills.Profiles.DEPLOYMENT[officer.name]])
+    army.tooltip_text="배치 능력은 병종과 지형에 맞는 출전 위치와 진형 선택에 쓰입니다."
     var axes: Array=Skills.Profiles.DATA[officer.name][0]
     for i in axes.size():
         var poles: Array=Skills.Profiles.AXES[i]
