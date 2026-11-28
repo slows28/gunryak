@@ -1535,7 +1535,7 @@ func _refresh_mind_report() -> void:
         var age: float=maxf(0.0,sim.battle_time-float(m["decision_at"]))*sim.operation_scale()
         var mood: String=str(m["mood"])
         lines.append("[color=#8ed5e7][b][font_size=19]%s[/font_size][/b][/color]  %s / %s  ·  [color=#%s]%s[/color]  ·  %d명" % [str(u["name"]),str(u["personality"]),str(u["type"]),_mood_color(mood).to_html(false),mood,roundi(float(u["troops"]))])
-        lines.append("자신감 %d   긴장 %d   명령 신뢰 %d   병사 사기 %d   |   판단 %.1f초 전" % [roundi(float(m["confidence"])),roundi(float(m["stress"])),roundi(float(m["trust"])),roundi(float(u["morale"])),age])
+        lines.append("자신감 %d   긴장 %d   명령 신뢰 %d   병사 사기 %d   |   판단력 %d · %.1f초 전" % [roundi(float(m["confidence"])),roundi(float(m["stress"])),roundi(float(m["trust"])),roundi(float(u["morale"])),roundi(sim._effective_stat(u,"judgment")),age])
         lines.append("[color=#efc878][b]판단:[/b][/color] %s  →  %s" % [str(m["action"]),str(m["reason"])])
         lines.append("[color=#a6b6b4]관측:[/color] %s   |   [color=#a6b6b4]우려:[/color] %s" % [str(m["observed"]),str(m["concern"])])
         var pending: String=""

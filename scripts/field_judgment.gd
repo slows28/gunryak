@@ -30,7 +30,8 @@ static func choose(sim, unit: Dictionary, enemy: Dictionary, action: String) -> 
         opening=clampf((advantage-1.0)*55.0,0,38)+maxf(0,60.0-enemy["cohesion"])*0.85+maxf(0,54.0-enemy["morale"])*0.5
         if unit["personality"]=="공격": opening+=8.0
         if role=="공격": opening+=6.0
-    var best_score:=45.0
+    # More discerning generals act on less obvious changes in cohesion or pressure.
+    var best_score:=lerpf(62.0,39.0,sim._effective_stat(unit,"judgment")/100.0)
     var result: Dictionary={}
     var partner: int=sim.LinkedMarch._partner(unit,sim.battle_time)
     for ally in sim.units:

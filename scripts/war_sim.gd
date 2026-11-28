@@ -5,6 +5,7 @@ const FormationDrill = preload("res://scripts/formation_drill.gd")
 
 const FieldJudgment = preload("res://scripts/field_judgment.gd")
 const RallyOrders = preload("res://scripts/rally_orders.gd")
+const MountedVanguard = preload("res://scripts/mounted_vanguard.gd")
 const BreakContact = preload("res://scripts/break_contact.gd")
 const LinkedMarch = preload("res://scripts/linked_march.gd")
 const GeneralMind = preload("res://scripts/general_mind.gd")
@@ -1112,7 +1113,10 @@ func _decide(unit: Dictionary) -> void:
             goal = screen_pos+behind*100.0
             action = "전열 지원"
             reason = "보병 엄호 하에 후방 사격 위치 확보"
-    if six_armies and (scenario_id!=3 or LinkedMarch.role(unit,battle_time) in LinkedMarch.COOPERATIVE_MISSIONS):
+    var mounted_anchor:=MountedVanguard.station(self,unit) if long_operation else Vector2.INF
+    var mounted_foes:=MountedVanguard.contacts(self,unit,mounted_anchor)
+    var on_station:=mounted_anchor!=Vector2.INF and (not mounted_foes.is_empty() or unit.has("mounted_anchor"))
+    if not on_station and six_armies and (scenario_id!=3 or LinkedMarch.role(unit,battle_time) in LinkedMarch.COOPERATIVE_MISSIONS):
         var cooperation: Dictionary = _coordinated_order(unit,nearest,action,reason,goal)
         action=cooperation["action"]
         reason=cooperation["reason"]
@@ -1176,6 +1180,20 @@ func _decide(unit: Dictionary) -> void:
     if long_operation:
         var local_order := BreakContact.decision(self,unit)
         if local_order.is_empty(): local_order = RallyOrders.decision(self,unit,nearest,action)
+        var mounted_order: Dictionary={}
+        if on_station and action not in MountedVanguard.OVERRIDES and local_order.get("action","") not in MountedVanguard.OVERRIDES and not local_order.get("arrival_cover",false):
+            mounted_order=MountedVanguard.decide(self,unit,mounted_anchor,mounted_foes)
+        if not mounted_order.is_empty():
+            local_order=mounted_order
+            unit["mounted_anchor"]=mounted_anchor
+            unit["mounted_partner"]=mounted_order.get("ally",-1)
+            if mounted_order["action"]=="기병 대기":
+                unit["flank_target"]=-1
+                unit["flank_phase"]=0
+        elif unit.erase("mounted_anchor"):
+            unit.erase("mounted_partner")
+            unit["flank_target"]=-1
+            unit["flank_phase"]=0
         unit["rally_covering"]=local_order.get("arrival_cover",false)
         if not local_order.is_empty():
             action = local_order["action"]
@@ -1365,7 +1383,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
             goal = pos
             meeting_contact = true
     var dressing_line: bool=long_operation and not enemy.is_empty() and unit["action"] in ["후열 정렬","엄호 사격","전열 유지","거리 유지","궁병 보호","협동 엄호"]
-    if not enemy.is_empty() and not (unit["action"]=="본진 수비" and unit["has_destination"]) and str(unit["action"]) not in ["포위 이탈","거점 차단","거점 엄호 사격","수레 공격", "후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호","아군 보호","후열 정렬","엄호 사격","전열 유지"]:
+    if not enemy.is_empty() and not (unit["action"]=="본진 수비" and unit["has_destination"]) and str(unit["action"]) not in ["기병 대기","포위 이탈","거점 차단","거점 엄호 사격","수레 공격", "후퇴", "기지 습격", "방어", "거리 유지", "측면 우회", "보급 호위", "재집결", "휴식", "탄약 보충", "보급 복귀", "거점 점령", "거점 방어", "측면 방어", "전열 지원", "패주", "매복", "정보 확인", "명령 수행", "계획 경유", "방어선 사수", "긴급 방어", "전술 철수", "긴급 지원", "전술 재집결","협동 우회","협동 엄호","구원 지원","협동 대기","지정 위치 이동","지정 지역 사수","예비 대기","궁병 보호","아군 보호","후열 정렬","엄호 사격","전열 유지"]:
         var distance: float = pos.distance_to(enemy["pos"])
         var range_goal: float = 143.0 if str(unit["type"]) == "궁병" else 32.0
         if distance <= range_goal:
@@ -1384,7 +1402,7 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
     if march.is_empty() and unit.has("skill_ids"):
         var skill: Dictionary=unit["field_skill"]
         if not skill.is_empty() and Skills.mission(unit,battle_time) in skill["missions"]:
-            if skill["effect"]=="feint" and not enemy.is_empty() and not meeting_contact and unit["action"]!="포위 이탈":
+            if skill["effect"]=="feint" and not unit.has("mounted_anchor") and not enemy.is_empty() and not meeting_contact and unit["action"]!="포위 이탈":
                 goal=_field_point(Vector2(skill["anchor"])+Vector2(enemy["pos"]).direction_to(skill["anchor"])*62.0)
             elif skill["effect"]=="stride" or (skill["effect"]=="pursue" and not enemy.is_empty() and enemy["routed"] and pos.direction_to(goal).dot(pos.direction_to(enemy["pos"]))>0.65):
                 rate*=1.0+float(skill["power"])
@@ -3655,7 +3673,9 @@ func _move_relief_riders(dt: float) -> void:
         if report.has("site") and battle_time-report["written_at"]>24.0: reason="오래된 전황 보고"
         if report.has("site") and (commander_captured(side) or ally["mission"]=="본진 방어" or ally["defense_set"] or ally["has_destination"] or ally.has("post_watch")): reason="기존 방어 임무 유지"
         var text: String="%s → %s군 구원 " % [ally["name"],report["sender"]]
-        if reason.is_empty():
+        if reason.is_empty() and ally.get("mounted_partner",-1)==report["unit_id"] and ally["action"] in ["협동 우회","돌파"]:
+            text+="협동 중 · 같은 적에 대한 측면 지원 계속"
+        elif reason.is_empty():
             ally["tactical_order"]="지원"
             ally["tactical_target"]=report["unit_id"]
             ally["tactical_until"]=battle_time+24.0
@@ -4436,6 +4456,13 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
     var previous: Dictionary=find_unit(int(unit["flank_target"]))
     if not previous.is_empty() and _locally_observed(unit,previous) and (battle_time<float(unit["flank_until"]) or (long_operation and int(unit["flank_phase"])>=1)):
         enemy=previous
+    return _flank_order(unit,ally,enemy)
+
+func _flank_order(unit: Dictionary,ally: Dictionary,enemy: Dictionary,local_sortie: bool=false) -> Dictionary:
+    var p: Vector2=unit["pos"]
+    var ap: Vector2=ally["pos"]
+    var forward: Vector2=ally["facing"]
+    if forward.is_zero_approx(): forward=Vector2.RIGHT if unit["side"]==0 else Vector2.LEFT
     if long_operation and battle_time<float(unit["flank_recovery"]):
         return {"action":"협동 대기","reason":"우회 재정비 후 재기동","goal":_field_point(ap-forward*45.0+forward.orthogonal()*100.0)}
     if enemy.is_empty():
@@ -4465,8 +4492,18 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
         return {"action":"협동 대기","reason":"우회 시간 초과, 재정비","goal":p}
     if int(unit["flank_target"])!=int(enemy["id"]) or battle_time>=float(unit["flank_until"]):
         var sign_value: float=1.0 if lateral.dot(p-ep)>=0.0 else -1.0
+        var wing:=_field_point(ep+lateral*sign_value*155.0-ef*45.0)
+        if local_sortie:
+            var reachable:=false
+            for candidate in [wing,_field_point(ep-lateral*sign_value*155.0-ef*45.0)]:
+                if in_open_water(candidate) or _river_separates(p,candidate) or _river_separates(candidate,ep): continue
+                if _detour_goal(unit,p,candidate)!=candidate or _detour_goal(unit,candidate,ep)!=ep: continue
+                wing=candidate
+                reachable=true
+                break
+            if not reachable: return {}
         unit["flank_target"]=enemy["id"]
-        unit["flank_goal"]=_field_point(ep+lateral*sign_value*155.0-ef*45.0)
+        unit["flank_goal"]=wing
         var maneuver_budget: float = 24.0
         if long_operation:
             # Wide-field travel and a committed bridge can exceed the old fixed timeout.
@@ -4538,6 +4575,8 @@ func _valid_partner(unit: Dictionary,partner: int) -> bool:
 
 func _reset_cooperation(unit: Dictionary,partner: int) -> void:
     unit.erase("opening_screen")
+    unit.erase("mounted_anchor")
+    unit.erase("mounted_partner")
     unit.erase("escape_step")
     unit.erase("rally_covering")
     unit["ai_role"]=""

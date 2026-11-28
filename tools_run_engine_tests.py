@@ -32,6 +32,7 @@ TESTS = [
     ("field_operations", ["--headless", "--path", "{project}", "--script", "res://tests/field_operations.gd"], "GUNRYAK_FIELD_OPERATIONS_PASS"),
     ("post_deployment", ["--headless", "--path", "{project}", "--script", "res://tests/post_deployment.gd"], "GUNRYAK_POST_DEPLOYMENT_PASS"),
     ("field_judgment", ["--headless", "--path", "{project}", "--script", "res://tests/field_judgment.gd"], "GUNRYAK_FIELD_JUDGMENT_PASS"),
+    ("mounted_vanguard", ["--headless", "--path", "{project}", "--script", "res://tests/mounted_vanguard.gd"], "MOUNTED_VANGUARD_PASS"),
     ("mutual_roles", ["--headless", "--path", "{project}", "--script", "res://tests/mutual_roles.gd"], "MUTUAL_ROLES_PASS"),
     ("rally_escape", ["--headless", "--path", "{project}", "--script", "res://tests/rally_escape.gd"], "RALLY_ESCAPE_PASS"),
     ("linked_march", ["--headless", "--path", "{project}", "--script", "res://tests/linked_march.gd"], "GUNRYAK_LINKED_MARCH_PASS"),

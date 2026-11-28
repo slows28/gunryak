@@ -12,11 +12,13 @@ static func role(unit: Dictionary, now: float) -> String:
 
 static func _partner(unit: Dictionary, now: float) -> int:
     if int(unit["assigned_link"])>=0: return unit["assigned_link"]
+    if unit.get("mounted_partner",-1)>=0: return unit["mounted_partner"]
     if has_field_role(unit,now):
         return unit["ai_partner"]
     return unit["link_id"] if unit["mission"] in COOPERATIVE_MISSIONS else int(unit.get("opening_screen",-1))
 
 static func _available(unit: Dictionary) -> bool:
+    if unit.has("mounted_anchor"): return false
     if unit["mission"]=="본진 방어" and unit.get("has_destination",false): return false
     return unit["troops"]>0 and not unit["routed"] and unit["mission"]!="철수" and unit["action"] not in INTERRUPTS
 

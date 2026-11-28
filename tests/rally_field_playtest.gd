@@ -35,6 +35,8 @@ func _initialize() -> void:
                 return
     var protect_ticks := [0,0]
     var assigned := [{},{}]
+    var waited := [{},{}]
+    var sorties := [{},{}]
     var cover_ticks := 0
     var arrived := {}
     var simultaneous := 0
@@ -58,6 +60,9 @@ func _initialize() -> void:
             if u.ai_role_until>sim.battle_time and u.ai_partner>=0: assigned[u.side][u.id]=true
             if u.action in ["아군 보호","궁병 보호"]: protect_ticks[u.side]+=1
             if u.get("rally_covering",false): cover_ticks+=1
+            if u.action=="기병 대기": waited[u.side][u.id]=u.name
+            if u.has("mounted_anchor") and u.action=="돌파": sorties[u.side][u.id]=u.name
     print("MUGONG_RALLY post=",post.name," arrived=",arrived.keys()," simultaneous=",simultaneous," exits=",exits.keys()," Zhao=",zhao.general_state," troops=",roundi(zhao.troops)," outcome=",sim.result)
     print("ROLE_RUN delegated=",delegated," automatic_corps=",assigned[0].size(),"/",assigned[1].size()," protection_corps_ticks=",protect_ticks," arrival_cover_corps_ticks=",cover_ticks)
+    print("MOUNTED_FIELD waited=",waited[0].values(),"/",waited[1].values()," committed=",sorties[0].values(),"/",sorties[1].values())
     quit(0 if sim.finished and sim.validate_state().is_empty() else 1)

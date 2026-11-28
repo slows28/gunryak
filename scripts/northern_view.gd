@@ -67,7 +67,7 @@ func _ready() -> void:
         if campaign.preparing(): campaign.state.types[slot]=type_choice.get_item_text(i); persist(); refresh())
     army=text("",805,212,424,30,16,Paper)
     officer_choice=option(803,264,250)
-    for o in campaign.officers: officer_choice.add_item(o["name"]+" · "+o["personality"])
+    for o in campaign.officers: officer_choice.add_item("%s · %s · 판단 %d" % [o["name"],o["personality"],o["stats"][3]])
     button("장수 배치",1063,264,165,func():
         if campaign.assign(slot,officer_choice.selected): persist();refresh())
     innate=text("",805,323,420,91,15,Paper)
@@ -168,7 +168,7 @@ func refresh() -> void:
     slot_choice.select(slot)
     officer_choice.select(idx)
     type_choice.select(["보병","궁병","기병"].find(s.types[slot]))
-    army.text="%s · %s · 출전 병력 %s명" % [campaign.officers[idx].name,campaign.officers[idx].personality,campaign.TROOPS[slot]]
+    army.text="%s · %s · 판단력 %d · 출전 병력 %s명" % [campaign.officers[idx].name,campaign.officers[idx].personality,campaign.officers[idx].stats[3],campaign.TROOPS[slot]]
     var innate_lines:=Skills.describe(campaign.INNATE[idx]).split("\n")
     innate.text="고유 전술   %s\n%s\n%s" % [Skills.CATALOG[campaign.INNATE[idx]][1],innate_lines[1],innate_lines[2]]
     var gear: String=s.gear.get(str(idx),"")
