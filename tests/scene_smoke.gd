@@ -240,7 +240,7 @@ func _process(_dt: float) -> bool:
             ticks += 1
             var sim = instance.get("sim")
             if instance.order_view.visible:
-                if meetings>=2 or sim.turn!=5*(meetings+1) or instance.order_view.council_round!=meetings+1 or not sim.paused:
+                if sim.turn!=3+2*meetings or instance.order_view.council_round!=meetings+1 or not sim.paused:
                     push_error("GUNRYAK_SCENE_FAIL: unexpected mid-battle order map")
                     instance._quit_game(1)
                     return false
@@ -267,7 +267,7 @@ func _process(_dt: float) -> bool:
                     return false
             if bool(sim.get("finished")):
                 var result: String = str(sim.get("result"))
-                if result.is_empty() or meetings!=mini(2,floori(sim.turn/5.0)):
+                if result.is_empty() or meetings!=floori((sim.turn-1)/2.0) and not sim.commander_captured(0):
                     push_error("GUNRYAK_SCENE_FAIL: missing battle result or scheduled council")
                     quit(1)
                 else:

@@ -5,7 +5,7 @@ const COOPERATIVE_MISSIONS = ["전열 엄호","측후방 기동","구원 지원"
 const INTERRUPTS = ["포위 이탈","거점 차단","거점 엄호 사격","후퇴","패주","재집결","전술 재집결","휴식","탄약 보충","보급 복귀","전술 철수","거리 유지","측면 방어","긴급 방어","긴급 지원","아군 보호","공격 지속","궁병 보호","교전","반격","전열 유지","후열 정렬","엄호 사격"]
 
 static func has_field_role(unit: Dictionary, now: float) -> bool:
-    return unit.get("assigned_link",-1)<0 and now<float(unit.get("ai_role_until",0.0)) and unit.get("ai_role","") in COOPERATIVE_MISSIONS
+    return not unit.has("order_group") and unit.get("assigned_link",-1)<0 and now<float(unit.get("ai_role_until",0.0)) and unit.get("ai_role","") in COOPERATIVE_MISSIONS
 
 static func role(unit: Dictionary, now: float) -> String:
     return unit["ai_role"] if has_field_role(unit,now) else unit["mission"]
@@ -25,11 +25,19 @@ static func _available(unit: Dictionary) -> bool:
 static func _companies(sim, edit_id: int=-1, partner_override: int=-1) -> Array:
     var groups: Array=[]
     var neighbors: Dictionary={}
+    var guides := {}
     for unit in sim.units:
         var partner_id:=partner_override if unit["id"]==edit_id else _partner(unit,sim.battle_time)
-        if partner_id<0 or not _available(unit): continue
+        if not _available(unit): continue
+        if unit.has("order_group"):
+            var key := Vector2i(unit["side"],unit["order_group"])
+            if not guides.has(key):
+                guides[key]=unit["id"]
+                continue
+            partner_id=guides[key]
+        if partner_id<0: continue
         var partner: Dictionary=sim.find_unit(partner_id)
-        if partner.is_empty() or partner["side"]!=unit["side"] or not _available(partner): continue
+        if partner.is_empty() or partner.get("order_group",0)!=unit.get("order_group",0) or partner["side"]!=unit["side"] or not _available(partner): continue
         var id: int=unit["id"]
         if not neighbors.has(id): neighbors[id]=[]
         if not neighbors.has(partner_id): neighbors[partner_id]=[]

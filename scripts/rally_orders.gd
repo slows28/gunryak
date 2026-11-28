@@ -4,6 +4,48 @@ extends RefCounted
 const March = preload("res://scripts/linked_march.gd")
 const MISSIONS = ["지정 위치 이동", "지역 사수", "예비 대기", "공격"]
 
+# A field signal carries a witnessed position. An unseen attacker cannot be tracked.
+static func signal_contact(sim, struck: Dictionary, attacker_id: int, source: Vector2) -> void:
+    if not struck.has("order_group") or sim.battle_time-struck.get("last_group_call",-100.0)<3.0: return
+    struck["last_group_call"]=sim.battle_time
+    for member in sim.units:
+        if member["side"]!=struck["side"] or member.get("order_group",-1)!=struck["order_group"] or member["troops"]<=0: continue
+        var prior: Dictionary=member.get("group_signal",{})
+        var gap: float=Vector2(member["pos"]).distance_to(struck["pos"])
+        if not prior.is_empty() and sim.battle_time<prior["expires"]:
+            if sim.battle_time<prior["arrives"]: continue
+            if prior["ally"]==struck["id"] and prior["target"]==attacker_id: continue
+            if prior["ally"]!=struck["id"] and prior["gap"]<=gap: continue
+        var arrives: float=sim.battle_time+gap/160.0
+        member["group_signal"]={"ally":struck["id"],"target":attacker_id,"source":source,"point":struck["pos"],"gap":gap,"arrives":arrives,"expires":arrives+6.0}
+
+static func group_response(sim, unit: Dictionary) -> Dictionary:
+    var call: Dictionary=unit.get("group_signal",{})
+    if call.is_empty() or sim.battle_time<call["arrives"] or sim.battle_time>=call["expires"]: return {}
+    if not unit.has("order_group") or unit["routed"] or unit["reserve"] or unit["mission"] in ["철수","본진 방어"] or unit["morale"]<32 or unit["tactical_until"]>sim.battle_time: return {}
+    var ally: Dictionary=sim.find_unit(call["ally"])
+    if ally.is_empty() or ally.get("order_group",-1)!=unit["order_group"] or ally["troops"]<=0: return {}
+    var foe: Dictionary=sim.find_unit(call["target"])
+    var seen: bool=not foe.is_empty() and sim._locally_observed(unit,foe)
+    var point: Vector2=call["point"]
+    var source: Vector2=foe["pos"] if seen else call["source"]
+    var front:=point.direction_to(source)
+    if front.is_zero_approx(): front=unit["facing"]
+    if not seen: source=point+front*32.0
+    var slot: Dictionary=unit.get("rally_station",{})
+    var lane:=clampf((Vector2(slot.get("point",unit["pos"]))-point).dot(front.orthogonal()),-48.0,48.0)
+    var goal:=point+front*minf(32.0,point.distance_to(source))+front.orthogonal()*lane
+    if unit["type"]=="궁병": goal=source-front*145.0+front.orthogonal()*lane
+    if unit["type"]=="기병" and ally["id"]!=unit["id"]:
+        # Screen the attacked wing. Cavalry only closes on a committed foe.
+        var occupied: bool=seen and foe.get("last_strike_target",-1)==ally["id"] and ally["type"]=="보병"
+        var wing:=front.orthogonal()*(1.0 if lane>=0.0 else -1.0)
+        goal=source+wing*44.0 if occupied and unit["cohesion"]>=45.0 else point-front*50.0+wing*42.0
+    if unit["mission"] in ["지역 사수","예비 대기"] and unit["has_destination"]:
+        var anchor: Vector2=unit["order_destination"]
+        goal=anchor+(goal-anchor).limit_length(142.0)
+    return {"action":"아군 보호","goal":sim._field_point(goal),"ally":ally["id"],"target":foe["id"] if seen else -1,"reason":"%s군 피격 방향으로 연계 대응" % ally["name"],"rally_cover":true}
+
 static func refresh(sim) -> void:
     var groups: Array[Array] = []
     for unit in sim.units:
@@ -17,7 +59,7 @@ static func refresh(sim) -> void:
         for members in groups:
             var leader: Dictionary = members[0]
             var anchor: Vector2 = leader["order_destination"]
-            if leader["side"]!=unit["side"] or (leader["mission"]=="예비 대기")!=(unit["mission"]=="예비 대기"): continue
+            if leader.get("order_group",0)!=unit.get("order_group",0) or leader["side"]!=unit["side"] or (leader["mission"]=="예비 대기")!=(unit["mission"]=="예비 대기"): continue
             if pin.distance_to(anchor)>32.0 or sim._river_separates(pin,anchor) or sim._detour_goal(unit,pin,anchor)!=anchor: continue
             members.append(unit)
             matched = true

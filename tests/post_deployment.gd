@@ -35,7 +35,7 @@ func _initialize() -> void:
     sim._supply_logic(0.1)
     check(base["pos"]==depot and base["state"]=="가동","manual depot stays where the player built it")
     check(sim._home_point(0)==advisor and sim.commanders[0]["pos"]==advisor,"strategist remains at relocated headquarters during the battle")
-    sim.turn=6
+    sim.turn=7
     check(sim.request_order(0,"공격","현장 판단") and sim.couriers.back()["pos"]==advisor,"courier originates from relocated headquarters")
     _check_sites_and_migration()
     var archer:=sim.find_unit(1)
@@ -271,8 +271,8 @@ func _check_capture() -> void:
     s.tactical_enabled=true
     check(s.place_post("본진",Vector2(162,1545)),"establish the isolated command post for the capture exercise")
     s.start()
-    s.battle_time=89.0
-    s.turn=6
+    s.battle_time=7.0*s.turn_duration()-1.0
+    s.turn=7
     var c: Dictionary=s.commanders[0]
     var general:=s.find_unit(0)
     var raider:=s.find_unit(3)
@@ -293,7 +293,7 @@ func _check_capture() -> void:
     s.paused=false
     var origin: Vector2=general["pos"]
     for tick in range(149): s.step(0.1)
-    check(s.turn>6 and s.command_confused(0) and c["recover_at"]==expires and general["pos"].distance_to(origin)<90.0,"full turn of confusion survives the turn boundary without recapture")
+    check(s.turn>7 and s.command_confused(0) and c["recover_at"]==expires and general["pos"].distance_to(origin)<90.0,"full turn of confusion survives the turn boundary without recapture")
     s.step(0.1)
     var decisions: int=general["decisions"]
     check(not s.command_confused(0) and s.commander_captured(0) and general["action"]!="지휘 혼란" and not s.command_confused(1),"living generals resume autonomous decisions exactly one turn later")

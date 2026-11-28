@@ -24,6 +24,7 @@ const LONG_LIMIT: float = 375.0
 const LONG_OBJECTIVE_OPEN: float = 270.0
 var field_size: Vector2 = Vector2(FIELD_W,FIELD_H)
 var layout_scale: float = 1.0
+signal skill_started(unit_id: int, title: String)
 signal messenger_arrived(report_id: int, sender: String, message: String)
 
 const COURIER_TURN: int = 5
@@ -125,6 +126,8 @@ var intercepted_orders: int = 0
 var delivered_orders: int = 0
 var map_dispatches: Dictionary = {}
 var march_plans: Dictionary = {}
+var order_group_serial := 0
+var opening_letters: Dictionary = {}
 var march_sequence: int = 0
 
 func _init() -> void:
@@ -152,6 +155,8 @@ func reset() -> void:
     couriers.clear()
     map_dispatches.clear()
     march_plans.clear()
+    order_group_serial=0
+    opening_letters.clear()
     march_sequence=0
     events.clear()
     field_notices.clear()
@@ -321,6 +326,10 @@ func start() -> void:
     if long_operation: _pair_opening_ranks()
     for unit in units: unit["supply_mark"]=unit["pos"]
     started = true
+    for id: int in opening_letters:
+        var plan: Dictionary = opening_letters[id]
+        _send_map_letter(id,plan["mission"],plan["destination"],-1,plan["group"])
+    opening_letters.clear()
     _log("전투 개시. " + scenario_goal)
 
 func select_unit_mission(unit_id: int, mission: String, policy: String, partner: int = -1) -> bool:
@@ -330,6 +339,7 @@ func select_unit_mission(unit_id: int, mission: String, policy: String, partner:
     if unit.is_empty() or int(unit["side"]) != 0:
         return false
     if not _valid_partner(unit,partner): return false
+    opening_letters.erase(unit_id)
     unit["mission"] = mission
     unit["has_destination"]=false
     unit["destination_reached"]=false
@@ -346,23 +356,34 @@ func find_unit(unit_id: int) -> Dictionary:
             return unit
     return {}
 
+func strategic_order_day() -> bool:
+    return turn >= 3 and turn % 2 == 1
+
+func next_order_day() -> int:
+    return maxi(3, turn + (2 if turn % 2 == 1 else 1))
+
 func request_order(unit_id: int, mission: String, policy: String, partner: int = -1, destination: Vector2 = Vector2(-1,-1)) -> bool:
-    if not started or finished or turn < COURIER_TURN or commander_captured(0):
+    if not started or finished or not strategic_order_day() or commander_captured(0):
         return false
     var unit: Dictionary = find_unit(unit_id)
     if unit.is_empty() or int(unit["side"]) != 0 or float(unit["troops"]) <= 0.0:
         return false
     if not _valid_partner(unit,partner): return false
     # Limit unfinished courier orders; avoids accidental spam and runaway entities.
+    if unit.get("strategic_dispatch_day",0)==turn: return false
     for courier in couriers:
         if int(courier["unit_id"]) == unit_id:
             return false
+    _send_order(unit,mission,policy,partner,destination)
+    return true
+
+func _send_order(unit: Dictionary, mission: String, policy: String, partner: int, destination: Vector2) -> void:
+    unit["strategic_dispatch_day"]=turn
     couriers.append({
-        "pos":commanders[0]["pos"], "unit_id":unit_id,
+        "pos":commanders[0]["pos"], "unit_id":unit["id"],
         "mission":mission, "policy":policy, "side":int(unit["side"]), "partner":partner, "destination":destination
     })
     _log("전령 파견 → %s / %s" % [str(unit["name"]), mission])
-    return true
 
 func step(dt: float) -> void:
     if not started or finished or paused:
@@ -438,8 +459,8 @@ func step(dt: float) -> void:
 
 func _on_new_turn() -> void:
     _log("작전 %d일차 진입" % turn)
-    if turn == COURIER_TURN and not commander_captured(0):
-        _log("전령 명령 활성화 — 전달 시간은 책사 위치에서 계산")
+    if strategic_order_day() and not commander_captured(0):
+        _log("전체 명령일 · 장수에게 전령 파견 가능")
     if tactical_enabled and turn >= COURIER_TURN and not commander_captured(0):
         command_points = mini(4,command_points+1)
 
@@ -493,6 +514,7 @@ func _update_couriers(dt: float) -> void:
                 target["initiative_until"]=0.0
             var partner: int=int(letter.get("partner",-1))
             _reset_cooperation(target,partner if _valid_partner(target,partner) else -1)
+            if letter.get("group",0)>0: target["order_group"]=letter["group"]
             _apply_policy(target, str(letter["policy"]))
             target["waypoints"].clear()
             target["waypoint_index"] = 0
@@ -1182,6 +1204,7 @@ func _decide(unit: Dictionary) -> void:
         unit["field_choice"]={}
     if long_operation:
         var local_order := BreakContact.decision(self,unit)
+        if local_order.is_empty(): local_order = RallyOrders.group_response(self,unit)
         if local_order.is_empty(): local_order = RallyOrders.decision(self,unit,nearest,action)
         var mounted_order: Dictionary={}
         if on_station and action not in MountedVanguard.OVERRIDES and local_order.get("action","") not in MountedVanguard.OVERRIDES and not local_order.get("rally_cover",false):
@@ -1484,6 +1507,11 @@ func _move_unit(unit: Dictionary, dt: float) -> void:
         var desired: Vector2 = wheel_heading if not wheel_heading.is_zero_approx() else unit["facing"]
         if meeting_contact or (march.is_empty() and actual_move.is_zero_approx() and not enemy.is_empty() and unit["contact_target_id"] == enemy["id"] and not unit["routed"]):
             desired = pos.direction_to(enemy["pos"])
+        var hit: Dictionary=combat_contacts.get(unit["id"],{})
+        if not meeting_contact and not hit.is_empty() and not unit["routed"] and unit["action"] not in ["포위 이탈","후퇴","패주","전술 철수","재집결","협동 우회"]:
+            var engaged := find_unit(hit["defender_id"])
+            if not engaged.is_empty() and _locally_observed(unit,engaged) and pos.distance_squared_to(engaged["pos"])>1.0:
+                desired=pos.direction_to(engaged["pos"])
         var turn_rate := 2.8 if unit["type"] == "기병" else 2.1
         unit["facing"] = prior_heading.rotated(clampf(prior_heading.angle_to(desired), -turn_rate * dt, turn_rate * dt)).normalized()
 
@@ -2107,8 +2135,10 @@ func _combat(dt: float) -> void:
         if bool(entry.get("guarding",false)) and actual_damage>0.0:
             defender["guard_intercept_damage"]+=actual_damage
             defender["guard_intercept_ticks"]+=1
+        if battle_time-float(defender["last_hit"])>6.0: defender.erase("reported_contact")
         defender["last_hit"]=battle_time
         defender["last_attacker"]=entry["attacker_id"]
+        if actual_damage>0.0: RallyOrders.signal_contact(self,defender,entry["attacker_id"],entry["from"])
         if entry["kind"]=="화살": defender["last_arrow_hit"]=battle_time
         if bool(entry["braced"]): defender["brace_stops"]+=1
         if bool(entry["rear"]): defender["rear_losses"]+=actual_damage
@@ -3622,7 +3652,7 @@ func _move_reporting_messengers(dt: float) -> void:
         if side==0:
             if report["urgent"]: urgent_deliveries+=1
             _log("%s군 전령 도착 · %s" % [report["sender"],report["kind"]])
-            messenger_arrived.emit(report["id"],report["sender"],report["kind"])
+            messenger_arrived.emit(report["id"],report["sender"],report_request(report))
 
 func _field_rider(position: Vector2, side: int, id: int) -> Dictionary:
     return {"id":id,"side":side,"pos":position,"bridge_y":-1.0,"bridge_bank":0,"bridge_crossings":0,"blocked_water_steps":0}
@@ -3648,9 +3678,8 @@ func _relief_travel_distance(traveler: Dictionary, destination: Vector2) -> floa
     return p.distance_to(entry) + entry.distance_to(exit_point) + exit_point.distance_to(destination)
 
 func _send_relief_request(sender: Dictionary, report: Dictionary) -> void:
-    var nearest: Dictionary={}
+    var candidates: Array[Dictionary]=[]
     var radius: float=480.0 if long_operation else 180.0
-    var shortest := INF
     var rider:=_field_rider(sender["pos"],sender["side"],-11-report["id"]*3)
     for ally in units:
         if ally["side"]!=sender["side"] or ally["id"]==sender["id"] or ally.has("parent_id") or ally["troops"]<=0 or ally["reserve"] or ally["routed"]: continue
@@ -3659,15 +3688,19 @@ func _send_relief_request(sender: Dictionary, report: Dictionary) -> void:
             if Vector2(ally["pos"]).distance_to(outposts[report["site"]]["pos"])<OUTPOST_RADIUS*2: continue
         if (sender["pos"] as Vector2).distance_to(ally["pos"]) >= radius: continue
         var distance := _relief_travel_distance(rider, ally["pos"])
-        if distance < shortest:
-            shortest = distance
-            nearest = ally
+        candidates.append({"unit":ally,"distance":distance})
     sender["last_relief_request"]=battle_time
-    if nearest.is_empty():
+    if candidates.is_empty():
         report["relief_destination"]="인근에 연락 가능한 군단 없음"
         return
-    report["relief_destination"]=str(nearest["name"])+"에게 별도 구원 전령 파견"
-    relief_riders.append({"rider":rider,"recipient":nearest["id"],"report":report,"returning":false})
+    candidates.sort_custom(func(a,b): return a["distance"]<b["distance"])
+    var names:=PackedStringArray()
+    var limit:=2 if report.get("kind","")=="교전 지원 요청" else 1
+    for index in mini(limit,candidates.size()):
+        var recipient: Dictionary=candidates[index]["unit"]
+        names.append(recipient["name"])
+        relief_riders.append({"rider":rider.duplicate(true),"recipient":recipient["id"],"report":report,"returning":false})
+    report["relief_destination"]="·".join(names)+"에게 구원 전령 파견"
 
 func _relief_decision(ally: Dictionary, sender: Dictionary) -> String:
     if sender.is_empty() or sender["troops"]<=0: return "구원 대상 소멸"
@@ -3704,7 +3737,7 @@ func _move_relief_riders(dt: float) -> void:
             continue
         if not arrived: continue
         if returning:
-            report["relief_answer"]=request["answer"]
+            report["relief_answer"]=str(report["relief_answer"])+" / "+str(request["answer"]) if report.has("relief_answer") else request["answer"]
             if side==0:
                 _field_notice(request["answer"],report["pos"],report["unit_id"])
                 messenger_arrived.emit(-1,"구원 회신",request["answer"])
@@ -3717,6 +3750,9 @@ func _move_relief_riders(dt: float) -> void:
         var text: String="%s → %s군 구원 " % [ally["name"],report["sender"]]
         if reason.is_empty() and ally.get("mounted_partner",-1)==report["unit_id"] and ally["action"] in ["협동 우회","돌파"]:
             text+="협동 중 · 같은 적에 대한 측면 지원 계속"
+        elif reason.is_empty() and ally.has("order_group") and ally["order_group"]==sender.get("order_group",-1):
+            ally["ai_cooldown"]=0.0
+            text+="수락 · 연계 군단과 피격 방향 엄호"
         elif reason.is_empty() and report["unit_id"] in ally.get("rally_station",{}).get("members",PackedInt32Array()):
             ally["rally_request"]={"ally":report["unit_id"],"end":battle_time+24.0}
             ally["ai_cooldown"]=0.0
@@ -3732,6 +3768,12 @@ func _move_relief_riders(dt: float) -> void:
         GeneralMind.order(ally,text,battle_time)
         request["answer"]=text
         request["returning"]=true
+
+func report_request(report: Dictionary) -> String:
+    var proposal: String=report.get("proposal","")
+    if proposal.is_empty(): return report.get("kind","전황 보고")
+    if proposal=="지원": return "구원 요청"
+    return proposal+" 요청"
 
 func _scan_situations() -> void:
     if battle_time-last_situation_scan < 2.0:
@@ -3762,6 +3804,8 @@ func _scan_situations() -> void:
             kind = "전열 붕괴 위험"
         elif push.length()>=4.0:
             kind="전선 압박"
+        elif unit.has("last_attacker") and battle_time-float(unit["last_hit"])<=2.1 and not unit["routed"]:
+            kind = "교전 지원 요청"
         elif float(unit["rations"]) < 24.0:
             kind = "군량 부족"
         elif battle_time-float(unit["last_deviation"]) < 3.0:
@@ -3777,12 +3821,16 @@ func _scan_situations() -> void:
         if kind == "":
             continue
         var side: int=unit["side"]
-        var urgent:=kind in ["전열 붕괴 위험","포위 위험","전선 압박"]
+        var urgent:=kind in ["전열 붕괴 위험","포위 위험","전선 압박","교전 지원 요청"]
+        if kind=="교전 지원 요청":
+            if unit.get("reported_contact",-1)==unit["last_attacker"] or battle_time-float(unit.get("last_relief_request",-100.0))<30.0: continue
+            proposal="지원"
         if not urgent and (side==1 or commander_captured(side)): continue
         var key: String = "%d:%s" % [unit["id"],kind]
         if battle_time-float(situation_keys.get(key,-100.0)) < 30.0:
             continue
         situation_keys[key] = battle_time
+        if urgent and unit.has("last_attacker"): unit["reported_contact"]=unit["last_attacker"]
         if proposal.is_empty():
             proposal = "지원" if kind in ["포위 위험","전선 압박"] else ("사수" if kind == "명령 이탈" else "재집결")
         _send_situation(unit,kind,proposal,urgent,push,opponent,recent_losses,span)
@@ -4457,7 +4505,9 @@ func _coordinated_order(unit: Dictionary,enemy: Dictionary,action: String,reason
     var best: float=INF
     for friend in units:
         if int(friend["side"])!=int(unit["side"]) or int(friend["id"])==int(unit["id"]) or bool(friend["routed"]) or float(friend["troops"])<600.0: continue
-        if str(friend["mission"]) in ["본진 방어","측후방 기동","전열 엄호","구원 지원"]: continue
+        if unit.has("order_group"):
+            if friend.get("order_group",-1)!=unit["order_group"]: continue
+        elif str(friend["mission"]) in ["본진 방어","측후방 기동","전열 엄호","구원 지원"]: continue
         if mission=="전열 엄호" and str(friend["type"])!="보병": continue
         var score: float=p.distance_to(friend["pos"])-float(friend["front_pressure"])*180.0
         if mission=="구원 지원": score-=maxf(0.0,70.0-float(friend["morale"]))*3.0
@@ -4620,6 +4670,9 @@ func _valid_partner(unit: Dictionary,partner: int) -> bool:
     return not friend.is_empty() and int(friend["id"])!=int(unit["id"]) and int(friend["side"])==int(unit["side"]) and float(friend["troops"])>0.0 and not bool(friend["routed"])
 
 func _reset_cooperation(unit: Dictionary,partner: int) -> void:
+    unit.erase("group_signal")
+    unit.erase("last_group_call")
+    unit.erase("order_group")
     unit.erase("opening_screen")
     unit.erase("mounted_anchor")
     unit.erase("mounted_partner")
@@ -4686,11 +4739,42 @@ func map_order_issue(id: int, mission: String, destination: Vector2, partner: in
         return "지시할 수 있는 아군 군단을 선택하십시오."
     if mission=="본진 방어" and (unit["routed"] or unit["reserve"]): return "현재 출전 중인 군단에 수비를 지시하십시오."
     if not _valid_partner(unit,partner): return "현재 협동 대상에 지시를 연결할 수 없습니다."
-    if started and turn < COURIER_TURN: return "%d일차부터 전령을 파견할 수 있습니다." % COURIER_TURN
+    if started and not strategic_order_day(): return "다음 전체 명령은 %d일차입니다." % next_order_day()
     if started:
         for letter in couriers:
             if int(letter["unit_id"]) == id: return "이 군단에 이미 전령이 이동 중입니다."
+        if unit.get("strategic_dispatch_day",0)==turn: return "이번 명령일에 이미 파견했습니다. 다음 파견은 %d일차입니다." % next_order_day()
     return ""
+
+func group_order_issue(ids: Array, mission: String, destination: Vector2) -> String:
+    if ids.size()<2: return "연계할 군단을 두 곳 이상 선택하십시오."
+    if mission=="자유 재량": return "연계 군단이 함께 수행할 행동을 선택하십시오."
+    var seen := {}
+    for id: int in ids:
+        var problem := map_order_issue(id,mission,destination)
+        var unit:=find_unit(id)
+        if not problem.is_empty(): return "%s · %s" % [unit.get("name","군단"),problem]
+        if unit["reserve"] or unit["routed"]: return "%s군은 현재 연계 편성에 참여할 수 없습니다." % unit["name"]
+        if seen.has(id): return "같은 군단이 두 번 선택되었습니다."
+        seen[id]=true
+    return ""
+
+func issue_group_order(ids: Array, mission: String, destination: Vector2) -> bool:
+    if not group_order_issue(ids,mission,destination).is_empty(): return false
+    if mission=="본진 방어": destination=_home_point(0)
+    order_group_serial+=1
+    for id: int in ids:
+        if started:
+            _send_map_letter(id,mission,destination,-1,order_group_serial)
+        else:
+            opening_letters[id]={"mission":mission,"destination":destination,"group":order_group_serial}
+    return true
+
+func _send_map_letter(id: int,mission: String,destination: Vector2,partner: int,group: int=0) -> void:
+    _send_order(find_unit(id),mission,"현장 판단",partner,destination)
+    couriers.back()["map_dispatch"]=true
+    couriers.back()["group"]=group
+    map_dispatches[id]={"mission":mission,"status":"이동 중","destination":destination if mission=="자유 재량" else _field_point(destination),"time":operation_elapsed()}
 
 func issue_map_order(id: int,mission: String,destination: Vector2,partner: int=-1) -> bool:
     if mission=="본진 방어":
@@ -4702,9 +4786,7 @@ func issue_map_order(id: int,mission: String,destination: Vector2,partner: int=-
     if not map_order_issue(id,mission,destination,partner).is_empty(): return false
     var unit: Dictionary=find_unit(id)
     if started:
-        if not request_order(id,mission,"현장 판단",partner,destination): return false
-        couriers.back()["map_dispatch"] = true
-        map_dispatches[id] = {"mission":mission,"status":"이동 중","destination":destination if mission=="자유 재량" else _field_point(destination),"time":operation_elapsed()}
+        _send_map_letter(id,mission,destination,partner)
         return true
     if not select_unit_mission(id,mission,"현장 판단",partner): return false
     unit["has_destination"]=mission!="자유 재량"

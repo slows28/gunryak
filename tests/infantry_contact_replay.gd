@@ -68,6 +68,11 @@ func _replay() -> void:
         if frame == 72:
             game._change_zoom((4.25 if close else 2.55) - game.camera_zoom)
         game._process(1.0 / 24.0)
+        if game.order_view.visible:
+            if not sim.strategic_order_day() or not sim.paused:
+                game._quit_game(1)
+                return
+            game.order_view.launch.pressed.emit()
         if graphical: await RenderingServer.frame_post_draw
         if sim.step_count == tick: continue
         tick = sim.step_count

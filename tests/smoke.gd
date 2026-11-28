@@ -21,7 +21,7 @@ func _initialize() -> void:
     check(s.commanders.size() == 2, "both strategists exist")
     check(s.select_unit_mission(0, "중앙 진격", "방진 유지"), "planning before battle")
     check(str(s.find_unit(0)["formation"]) == "방진", "planned formation installed")
-    check(not s.request_order(0, "본진 방어", "현장 판단"), "courier prohibited before turn five")
+    check(not s.request_order(0, "본진 방어", "현장 판단"), "no strategic dispatch on opening day")
     s.start()
     check(s.started, "battle start")
     var first_step: float = s.battle_time
@@ -336,7 +336,7 @@ func _initialize() -> void:
     # (5) Couriers require a physical route and can be intercepted or escorted.
     var intercepted = WarSim.new()
     intercepted.start()
-    intercepted.turn = 6
+    intercepted.turn = 7
     var recipient: Dictionary = intercepted.find_unit(0)
     recipient["pos"] = Vector2(500, 260)
     intercepted.commanders[0]["pos"] = Vector2(200, 260)
@@ -349,7 +349,7 @@ func _initialize() -> void:
     check(str(recipient["mission"]) == old_mission, "interception preserves old orders")
     var escorted = WarSim.new()
     escorted.start()
-    escorted.turn = 6
+    escorted.turn = 7
     var escorted_recipient: Dictionary = escorted.find_unit(0)
     escorted_recipient["pos"] = Vector2(500, 260)
     escorted.commanders[0]["pos"] = Vector2(200, 260)

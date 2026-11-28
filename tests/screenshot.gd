@@ -615,12 +615,13 @@ func _capture() -> void:
     for i in range(320):
         game.call("_process",0.1)
         if game.order_view.visible:
-            if gate_captured or game.sim.turn!=5 or not game.sim.paused: quit(1); return
+            if not game.sim.strategic_order_day() or not game.sim.paused: quit(1); return
+            if not gate_captured and game.sim.turn!=3: quit(1); return
             gate_captured=true
-            if not await _deployment_frame("turn_five_dispatch.png"): quit(1); return
+            if not await _deployment_frame("day_%d_dispatch.png" % game.sim.turn): quit(1); return
             game.order_view.launch.pressed.emit()
     if not gate_captured:
-        push_error("VISUAL_CAPTURE_FAIL: turn five did not open dispatch map")
+        push_error("VISUAL_CAPTURE_FAIL: day three did not open dispatch map")
         quit(1)
         return
     game.call("_refresh_hud")
@@ -635,6 +636,9 @@ func _capture() -> void:
     for i in range(600):
         if game.sim.finished: break
         game.call("_process",0.1)
+        if game.order_view.visible:
+            if not game.sim.strategic_order_day() or not game.sim.paused: quit(1); return
+            game.order_view.launch.pressed.emit()
         if combat_captured: continue
         for fx in game.sim.visual_effects:
             var age: float=game.sim.battle_time-float(fx["time"])
@@ -701,8 +705,8 @@ func _capture() -> void:
     while not bool(simulator.get("finished")) and additional_steps < 4200:
         game.call("_process", 0.1)
         if game.order_view.visible:
-            if simulator.turn != 10 or game.order_view.council_round != 2 or not simulator.paused: quit(1); return
-            if not await _deployment_frame("day_ten_council.png"): quit(1); return
+            if not simulator.strategic_order_day() or game.order_view.council_round*2+1!=simulator.turn or not simulator.paused: quit(1); return
+            if simulator.turn==7 and not await _deployment_frame("day_seven_council.png"): quit(1); return
             game.order_view.launch.pressed.emit()
         additional_steps += 1
     if not bool(simulator.get("finished")):
@@ -823,7 +827,10 @@ func _capture_migration() -> bool:
         var day:=5*(index+1)
         while sim.turn<day and not sim.finished: sim.step(0.1)
         game._open_due_council()
-        if not sheet.visible or not sim.paused or sheet.council_round!=index+1: return false
+        if day==10:
+            if sheet.visible: return false
+            game._open_order_map()
+        if not sheet.visible or not sim.paused or sheet.council_round!=(2 if day==5 else 0): return false
         var move_button: Button=sheet.post_buttons["본진"]
         if move_button.disabled: return false
         move_button.pressed.emit()
@@ -1367,12 +1374,18 @@ func _capture_field_report() -> bool:
     # commander has the highest priority. Remove the fixture before resuming the operation.
     var other: Dictionary=report.duplicate(true)
     other["id"]=int(report["id"])+100000
-    other["unit_id"]=game.sim.command_ids(0)[(reporter_index+1)%game.general_cards.size()]
+    var other_index: int=-1
+    for next_index in game.general_cards.size():
+        if next_index!=reporter_index and not game.general_cards[next_index].report_link.visible:
+            other_index=next_index
+            break
+    if other_index<0: return false
+    other["unit_id"]=game.sim.command_ids(0)[other_index]
     other["pos"]=game.sim.find_unit(other["unit_id"])["pos"]
     other["kind"]="지휘 건의"
     game.sim.situation_reports.append(other)
     game.call("_refresh_hud")
-    var other_card=game.general_cards[(reporter_index+1)%game.general_cards.size()]
+    var other_card=game.general_cards[other_index]
     other_card.report_link.pressed.emit()
     await process_frame
     if game.situation_selected!=other["id"] or game.selected_id!=other["unit_id"] or not game.sim.paused:
@@ -1416,12 +1429,15 @@ func _capture_field_report() -> bool:
         return false
     for tick in range(1200):
         game.call("_process",0.1)
+        if game.order_view.visible:
+            if not game.sim.strategic_order_day() or not game.sim.paused: return false
+            game.order_view.launch.pressed.emit()
         if report["status"]=="실행 종료": break
     game.sim.paused=true
     game.situation_btn.pressed.emit()
     var row: int=game.situation_ids.find(report["id"])
     if row<0 or report["status"]!="실행 종료":
-        push_error("VISUAL_CAPTURE_FAIL: support order did not finish in the matched operation")
+        push_error("VISUAL_CAPTURE_FAIL: support order %s, row %d, day %d" % [report["status"],row,game.sim.turn])
         return false
     game.situation_list.select(row)
     game.situation_list.item_selected.emit(row)

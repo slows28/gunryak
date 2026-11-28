@@ -159,6 +159,10 @@ var plan_actions: Array[Button] = []
 var map_layer: Control
 var map_clip: Control
 var camera_zoom: float = 1.0
+var skill_shots: Array[Dictionary]=[]
+var skill_elapsed := 0.0
+var skill_return := Vector2.ZERO
+var skill_return_zoom := 1.0
 var camera_center: Vector2 = field_extent * 0.5
 var visibility_texture: ImageTexture
 var dust_texture: ImageTexture
@@ -270,6 +274,7 @@ func _ready() -> void:
     _build_outcome_dialog()
     _build_demo_help()
     _build_situations()
+    sim.skill_started.connect(_skill_started)
     sim.messenger_arrived.connect(_on_messenger_arrived)
     strategy_view = NorthView.new()
     strategy_view.configure(campaign,korean_font,PAINTED_ART,_launch_campaign_battle,_show_title)
@@ -736,6 +741,7 @@ func _recent_fights() -> Array[Dictionary]:
     return fights
 
 func _focus_combat() -> void:
+    skill_shots.clear()
     var fights: Array[Dictionary]=_recent_fights()
     if fights.is_empty():
         combat_focus_pair=Vector2i(-1,-1)
@@ -797,7 +803,7 @@ func _apply_order() -> void:
     var policy: String = policy_choice.get_item_text(policy_choice.selected)
     if not sim.started:
         runtime_notice = "사전 작전 반영 완료" if sim.select_unit_mission(selected_id, mission, policy,int(sim.find_unit(selected_id).get("assigned_link",-1))) else "작전 설정 불가"
-    elif sim.turn >= WarSim.COURIER_TURN:
+    elif sim.strategic_order_day():
         runtime_notice = "전령 출발 · 도착 전까지 기존 명령 유지" if sim.request_order(selected_id, mission, policy,int(sim.find_unit(selected_id).get("assigned_link",-1))) else "파견 불가 · 기존 전령 또는 부대 상태 확인"
     _select_unit()
     _refresh_hud()
@@ -824,6 +830,7 @@ func _start() -> void:
     _show_friendly_roster()
     map_mode = "선택"
     runtime_notice = ""
+    skill_shots.clear()
     councils_held=0
     automatic_night_fog = false
     read_messengers.clear()
@@ -945,16 +952,16 @@ func _reset() -> void:
         _open_order_map()
 
 func _open_due_council() -> void:
-    if not sim.started or sim.finished or councils_held >= 2: return
-    var due := 5 if councils_held == 0 else 10
-    if sim.turn < due or order_view.visible: return
+    if not sim.started or sim.finished or sim.commander_captured(0) or not sim.strategic_order_day(): return
+    var round_number := floori((sim.turn-1)*0.5)
+    if round_number<=councils_held or order_view.visible: return
     if sim.paused or title_screen.visible or strategy_view.visible: return
     for child in get_children():
         if child is Window and child.visible: return
     if highlight_active: _stop_highlight("전령 지시 개방",false)
     _open_order_map()
-    councils_held += 1
-    order_view.open_council(councils_held,due)
+    councils_held = round_number
+    order_view.open_council(councils_held,sim.turn)
 
 func _can_edge_pan() -> bool:
     if not sim.started or order_view.visible or not get_window().has_focus() or get_viewport().gui_get_drag_data()!=null:
@@ -974,7 +981,48 @@ func _edge_pan(point: Vector2) -> Vector2:
     var far_edge := (point-bounds.end+Vector2.ONE*margin)/margin
     return far_edge.clamp(Vector2.ZERO,Vector2.ONE)-near_edge.clamp(Vector2.ZERO,Vector2.ONE)
 
+func _skill_started(id: int, title: String) -> void:
+    if not sim.started or sim.finished or sim.paused or title_screen.visible or order_view.visible or strategy_view.visible or highlight_active: return
+    for child in get_children():
+        if child is Window and child.visible: return
+    var unit: Dictionary=sim.find_unit(id)
+    if unit.is_empty() or (unit["side"]!=0 and not sim.player_can_see(unit["pos"])): return
+    if skill_shots.is_empty():
+        skill_return=camera_center
+        skill_return_zoom=camera_zoom
+        skill_elapsed=0.0
+    skill_shots.append({"id":id,"title":title})
+    if skill_shots.size()==1: _frame_skill(unit)
+
+func _frame_skill(unit: Dictionary) -> void:
+    camera_center=unit["pos"]
+    camera_zoom=maxf(camera_zoom,1.65)
+    _clamp_camera()
+    map_layer.queue_redraw()
+
+func _advance_skill_shot(delta: float) -> void:
+    if skill_shots.is_empty(): return
+    if sim.finished or order_view.visible or title_screen.visible or strategy_view.visible:
+        _end_skill_shots()
+        return
+    if sim.paused: return
+    var unit: Dictionary=sim.find_unit(skill_shots[0]["id"])
+    if not unit.is_empty() and unit["troops"]>0 and (unit["side"]==0 or sim.player_can_see(unit["pos"])):
+        _frame_skill(unit)
+        skill_elapsed+=delta
+        if skill_elapsed<(0.72 if skill_shots.size()>1 else 1.05): return
+    skill_shots.pop_front()
+    skill_elapsed=0.0
+    if skill_shots.is_empty(): _end_skill_shots()
+
+func _end_skill_shots() -> void:
+    skill_shots.clear()
+    camera_center=skill_return
+    camera_zoom=skill_return_zoom
+    _clamp_camera()
+
 func _process(delta: float) -> void:
+    _advance_skill_shot(delta)
     _open_due_council()
     if sim.started and not sim.paused and not arrival_messages.is_empty():
         for i in range(arrival_messages.size()-1,-1,-1):
@@ -988,6 +1036,7 @@ func _process(delta: float) -> void:
             if pan.is_zero_approx() and _can_edge_pan():
                 pan = _edge_pan(get_local_mouse_position())
             if pan.length_squared() > 0.0:
+                skill_shots.clear()
                 camera_center += pan.limit_length(1.0)*minf(delta,0.15)*410.0/camera_zoom
                 _clamp_camera()
                 map_layer.queue_redraw()
@@ -1109,7 +1158,7 @@ func _refresh_hud() -> void:
         notice_label.size.x=284.0 if dispatch_headline.visible else 685.0
         if dispatch_headline.visible:
             var alarm: String="본진 피습 · "+sim.headquarters_state(0) if under_raid else "본진 인근 적 관측 · 주둔 %d개 군단" % sim._nearby_corps(0,sim.headquarters[0]["pos"],sim.GUARD_RADIUS)
-            var can_order: bool=sim.turn>=sim.COURIER_TURN and not captured
+            var can_order: bool=sim.strategic_order_day() and not captured
             dispatch_headline.text=alarm+("   수비 지시 ›" if can_order else "   위치 ›")
         situation_btn.text="받은 전령 %d" % count if count>0 else "받은 전령"
         situation_btn.disabled=not active
@@ -1122,8 +1171,8 @@ func _refresh_hud() -> void:
         highlight_button.disabled=not sim.started or sim.finished
         highlight_button.text="탐색 중 · 중지" if highlight_active else "다음 주요 상황 ▶"
     _collect_journal()
-    apply_btn.disabled = sim.started and (sim.turn < WarSim.COURIER_TURN or sim.finished or captured)
-    apply_btn.text = "초기 작전 설정" if not sim.started else "전령 보내기 (5일차~)"
+    apply_btn.disabled = sim.started and (not sim.strategic_order_day() or sim.finished or captured or sim.find_unit(selected_id).get("strategic_dispatch_day",0)==sim.turn)
+    apply_btn.text = "초기 작전 설정" if not sim.started else ("전령 보내기" if sim.strategic_order_day() else "%d일차에 파견" % sim.next_order_day())
     start_btn.visible=not sim.started
     pause_btn.visible=sim.started
     live_order_button.disabled=false
@@ -1429,7 +1478,7 @@ func _visit_journal_event(index: int) -> void:
 func _review_home_alert() -> void:
     if not sim.started or sim.finished: return
     _frame_milestone({"point":sim.headquarters[0]["pos"]})
-    if sim.turn<sim.COURIER_TURN or sim.commander_captured(0): return
+    if not sim.strategic_order_day() or sim.commander_captured(0): return
     _open_order_map()
     var id: int=sim.home_relief_candidate(order_view.drafts)
     if id<0:
@@ -2861,7 +2910,11 @@ func _draw_unit(unit: Dictionary) -> void:
         else: drawn_slots=_contact_slots(unit,_visual_slots(unit))
     _draw_corps_standard(unit,p+_render_offset(id,p),accent.a)
     var skill: Dictionary=unit.get("field_skill",{})
-    if not skill.is_empty() and sim.battle_time-skill["start"]<1.8 and (side==0 or sim.player_can_see(unit["pos"])):
+    if not skill_shots.is_empty() and skill_shots[0]["id"]==id:
+        if skill_elapsed>=0.22 and (side==0 or sim.player_can_see(unit["pos"])):
+            for offset in [Vector2(0,-62),Vector2(0,-87),Vector2(0,54),Vector2(86,-55),Vector2(-86,-55)]:
+                if _map_plate(str(unit["name"])+" · "+str(skill_shots[0]["title"]),p+offset/camera_zoom,Color("#efcea0"),14).has_area(): break
+    elif not skill.is_empty() and sim.battle_time-skill["start"]<1.8 and (side==0 or sim.player_can_see(unit["pos"])):
         var at:=p+Vector2(6,-36)/camera_zoom
         _map_plate(skill["title"],at,WarSim.Skills.SIGNAL[skill["effect"]],12)
     var forward: Vector2 = unit["facing"]
@@ -3265,6 +3318,7 @@ func _clamp_camera(focused_sector: int=-1, focused_objective: int=-1) -> void:
     camera_center.y = clampf(camera_center.y,minf(half.y,sim.field_size.y*0.5),maxf(sim.field_size.y-half.y,sim.field_size.y*0.5))
 
 func _change_zoom(delta: float, cursor: Vector2 = Vector2.INF) -> void:
+    skill_shots.clear()
     var anchor := _world_mouse(cursor) if cursor != Vector2.INF else camera_center
     camera_zoom = clampf(camera_zoom+delta,_overview_zoom(),4.25)
     if cursor != Vector2.INF: camera_center += anchor - _world_mouse(cursor)
@@ -3287,6 +3341,7 @@ func _reset_camera() -> void:
     queue_redraw()
 
 func _focus_selected() -> void:
+    skill_shots.clear()
     var unit: Dictionary = sim.find_unit(selected_id)
     if not unit.is_empty():
         camera_center = unit["pos"]
@@ -3344,7 +3399,7 @@ func _open_briefing() -> void:
     if campaign_active and int(campaign.state["pending"]) >= 0:
         if campaign is North: tactic=sim.scenario_goal
         else: story = str(Campaign.NODES[int(campaign.state["pending"])]["story"])+"\n"
-    brief_text.text = story + "%s\n\n승리 목표: %s\n제한 시간: %s (기본 배속)\n\n권장 전략: %s\n\n1~4일차에는 사전 작전을 수행합니다. 장수의 건의는 도착 즉시 회신할 수 있습니다. 5일차와 10일차에 중간회의가 열립니다.\n장수별 능력과 성향, 정찰 정보, 보급을 고려하십시오." % [sim.scenario_title,sim.scenario_goal,_operation_clock(sim.operation_limit()),tactic]
+    brief_text.text = story + "%s\n\n승리 목표: %s\n제한 시간: %s (기본 배속)\n\n권장 전략: %s\n\n3일차부터 이틀마다 전체 작전 회의가 열립니다. 명령은 각 군단에 전령이 도착할 때 적용됩니다. 장수의 건의에는 도착 즉시 회신할 수 있습니다.\n장수별 능력과 성향, 정찰 정보, 보급을 고려하십시오." % [sim.scenario_title,sim.scenario_goal,_operation_clock(sim.operation_limit()),tactic]
     brief_dialog.popup_centered()
 
 func _open_analysis() -> void:
@@ -3822,6 +3877,7 @@ func _update_audio_and_warning() -> void:
             break
 
 func _input(event: InputEvent) -> void:
+    if (event is InputEventMouseButton or event is InputEventKey) and event.pressed and not skill_shots.is_empty(): skill_shots.clear()
     var backward:=event.is_action_pressed("ui_focus_prev")
     if not backward and not event.is_action_pressed("ui_focus_next"): return
     # Only the visible page participates in Tab navigation. The battlefield stays drawn below it.
@@ -4324,7 +4380,7 @@ func _build_demo_help() -> void:
     tutorial_dialog = AcceptDialog.new()
     tutorial_dialog.title = "군략 · 첫 출전 안내"
     tutorial_dialog.ok_button_text = "확인"
-    tutorial_dialog.dialog_text = "전역에서 출전 장수와 장비를 편성한 뒤 작전 지도에서 각 군단이 맡을 거점과 행동을 지정하세요.\n장수는 명령 안에서 자율적으로 교전하고 전술을 사용합니다. 5일차와 10일차에는 중간회의가 열립니다.\n왼쪽 전령 보고를 선택해 회신하세요. 전투에서 이기면 전리품 하나를 골라 다음 전투에 장착합니다.\n휠로 확대하고 마우스를 전장 가장자리로 가져가 시야를 옮기세요. 방향키·가운데 버튼 이동, F 장수 중심, Home 전체 보기, Space 일시정지."
+    tutorial_dialog.dialog_text = "전역에서 출전 장수와 장비를 편성한 뒤 작전 지도에서 각 군단이 맡을 거점과 행동을 지정하세요.\n장수는 명령 안에서 자율적으로 교전하고 전술을 사용합니다. 3일차부터 이틀마다 전체 작전 회의가 열립니다.\n왼쪽 전령 보고를 선택해 회신하세요. 전투에서 이기면 전리품 하나를 골라 다음 전투에 장착합니다.\n휠로 확대하고 마우스를 전장 가장자리로 가져가 시야를 옮기세요. 방향키·가운데 버튼 이동, F 장수 중심, Home 전체 보기, Space 일시정지."
     var guide := tutorial_dialog.dialog_text
     tutorial_dialog.dialog_text = ""
     var content := VBoxContainer.new()
@@ -4477,9 +4533,7 @@ func _refresh_messenger_card(pending: Array[Dictionary]) -> void:
         var report:=newest
         messenger_id=report["id"]
         messenger_name.text=str(report["sender"])+"군 전령 도착   ›"
-        var push: Vector2=report.get("push",Vector2.ZERO)
-        var news: String="전열이 "+_push_direction(push)+"으로 밀림" if push.length()>=4.0 else str(report["kind"])
-        messenger_summary.text=_report_place(report)+" · "+news
+        messenger_summary.text=sim.report_request(report)+" · "+_report_place(report)
         messenger_portrait.texture=_commander_icon(report["sender"],0)
         messenger_card.tooltip_text="전령의 보고를 듣고 발신 위치를 봅니다."
         messenger_card.accessibility_name=messenger_name.text+" "+messenger_summary.text
@@ -4574,7 +4628,7 @@ func _report_sector(report: Dictionary) -> String:
 
 func _prioritized_situations() -> Array[Dictionary]:
     var pending: Array[Dictionary]=sim.open_situations()
-    const RANK={"포위 위험":0,"전열 붕괴 위험":0,"전선 압박":1,"장수 부상":1}
+    const RANK={"포위 위험":0,"전열 붕괴 위험":0,"전선 압박":1,"교전 지원 요청":1,"장수 부상":1}
     pending.sort_custom(func(a:Dictionary,b:Dictionary)->bool:
         var left: int=RANK.get(a.get("kind",""),2)
         var right: int=RANK.get(b.get("kind",""),2)
@@ -4913,7 +4967,7 @@ func _change_link(partner: int) -> void:
     var ok: bool=false
     if not sim.started:
         ok=sim.select_unit_mission(selected_id,str(unit["mission"]),str(unit["policy"]),partner)
-    elif sim.turn >= WarSim.COURIER_TURN and not sim.finished:
+    elif sim.strategic_order_day() and not sim.finished:
         ok=sim.request_order(selected_id,str(unit["mission"]),str(unit["policy"]),partner)
     plan_status.text="협동 대상 지정 완료" if ok and not sim.started else ("협동 대상 변경 전령 파견" if ok else "지정 불가: 자신·전멸 부대 또는 전령 제한")
     _refresh_hud()

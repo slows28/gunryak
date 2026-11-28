@@ -38,6 +38,7 @@ TESTS = [
     ("mutual_roles", ["--headless", "--path", "{project}", "--script", "res://tests/mutual_roles.gd"], "MUTUAL_ROLES_PASS"),
     ("qishan_relief", ["--headless", "--path", "{project}", "--script", "res://tests/qishan_relief.gd"], "QISHAN_RELIEF_PASS"),
     ("rally_escape", ["--headless", "--path", "{project}", "--script", "res://tests/rally_escape.gd"], "RALLY_ESCAPE_PASS"),
+    ("group_orders", ["--headless", "--path", "{project}", "--script", "res://tests/group_orders.gd"], "GROUP_ORDERS_PASS"),
     ("linked_march", ["--headless", "--path", "{project}", "--script", "res://tests/linked_march.gd"], "GUNRYAK_LINKED_MARCH_PASS"),
     ("terrain_range", ["--headless", "--path", "{project}", "--script", "res://tests/terrain_range.gd"], "GUNRYAK_TERRAIN_RANGE_PASS"),
     ("wide_field", ["--headless", "--path", "{project}", "--script", "res://tests/wide_field.gd"], "GUNRYAK_WIDE_PASS"),

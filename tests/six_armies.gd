@@ -415,7 +415,7 @@ func _run() -> void:
     game.order_view.destination=Vector2(1000,800)
     game.order_view.has_destination=true
     game.order_view.call("_choose_action",2)
-    check(game.order_view.apply.disabled and game.order_view.feedback.text.contains("5일차"),"early draft shows the courier gate before submission")
+    check(game.order_view.apply.disabled and game.order_view.feedback.text.contains("3일차"),"early draft shows the courier gate before submission")
     game.order_view.call("_launch")
     check(not game.order_view.visible and not map_sim.paused,"return to battle without discarding an early draft")
     game.call("_open_order_map")
@@ -423,13 +423,13 @@ func _run() -> void:
     game.order_view.drafts.clear()
     game.order_view.draft_dirty=false
     game.order_view.call("_launch")
-    map_sim.battle_time=4.0*map_sim.turn_duration()-0.05
-    map_sim.turn=4
+    map_sim.battle_time=2.0*map_sim.turn_duration()-0.05
+    map_sim.turn=2
     game.game_speed=4.0
     game.step_buffer=0.0
     game.call("_process",0.10)
-    check(map_sim.turn==5 and game.order_view.in_battle and game.order_view.feedback.text.contains("파견 가능"),"entering turn five opens the actionable dispatch map")
-    check(game.order_view.visible and map_sim.paused and game.order_view.title.text.contains("1차 중간회의"),"day five council pauses simulation")
+    check(map_sim.turn==3 and game.order_view.in_battle and game.order_view.feedback.text.contains("파견 가능"),"entering day three opens the actionable dispatch map")
+    check(game.order_view.visible and map_sim.paused and game.order_view.title.text.contains("1차 중간회의"),"day three council pauses simulation")
     var next_dest:=Vector2(12,800)
     var reachable_dest:=Vector2(18,800)
     game.order_view.call("_select",1)
@@ -437,7 +437,7 @@ func _run() -> void:
     game.order_view.has_destination=true
     game.order_view.partner_choice.select(0)
     game.order_view.call("_choose_action",2)
-    check(not game.order_view.apply.disabled,"turn-five order can be confirmed on the map")
+    check(not game.order_view.apply.disabled,"day-three order can be confirmed on the map")
     game.order_view.apply.pressed.emit()
     check(map_sim.has_pending_courier(1),"midbattle destination order dispatched")
     game.order_view.call("_select",0)

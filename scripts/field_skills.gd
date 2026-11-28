@@ -226,6 +226,7 @@ static func _activate(sim,u: Dictionary,chosen: String,target: int) -> void:
     var rule:=rule_for(chosen)
     var power:=float(rule[5])*float(Profiles.DATA[chosen][4] if signature else CATALOG[chosen][3])
     var duration:=minf(rule[6],3.0) if signature else float(rule[6])
+    sim.skill_started.emit(u["id"],title(chosen))
     var stat: Dictionary=u["skill_stats"].get(chosen,{"uses":0,"effect":0.0})
     stat["uses"]+=1
     u["skill_stats"][chosen]=stat

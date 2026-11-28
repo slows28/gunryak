@@ -82,8 +82,8 @@ func _initialize() -> void:
     company(sim,Vector2(600,750),Vector2.RIGHT)
     sim.step(0.1)
     var courier_target:=Vector2(600,1250)
-    sim.turn=6
-    sim.battle_time=75.0
+    sim.turn=7
+    sim.battle_time=6.0*sim.turn_duration()
     check(sim.issue_map_order(2,"지정 위치 이동",courier_target,-1) and sim.find_unit(2)["assigned_link"]==1,"a travelling courier leaves the existing link active")
     sim.couriers.back()["pos"]=sim.find_unit(2)["pos"]
     sim.step(0.1)
